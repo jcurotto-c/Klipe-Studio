@@ -73,6 +73,11 @@ export function renderFrame(ctx, source, opts) {
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
 
+  // High-quality bicubic so zoom upscales pull from the source's native pixels
+  // instead of a low-quality bilinear default.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
   drawBackground(ctx, cw, ch, background);
 
   const sw = source.videoWidth || source.displayWidth || displayWidth;

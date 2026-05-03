@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import { renderFrame } from '../lib/renderer.js';
 import CropOverlay from './CropOverlay.jsx';
 
@@ -20,12 +20,40 @@ export default function VideoCanvas({
   cropMode = false,
   onCropChange
 }) {
+  const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const rafRef = useRef(0);
   // Renderer reads these via ref so the rAF loop doesn't need to restart on
   // every crop tweak (which would jitter the preview during a drag).
   const propsRef = useRef({ segments, mouse, display, background, crop, cropMode });
   propsRef.current = { segments, mouse, display, background, crop, cropMode };
+
+  // Match the backing buffer to the CSS box × devicePixelRatio. Otherwise the
+  // canvas is rendered at a fixed low resolution and the browser bilinear-
+  // stretches it to fill the preview pane — visible as a soft, blurry zoom.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+
+    const apply = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = wrap.getBoundingClientRect();
+      const w = Math.max(1, Math.round(rect.width * dpr));
+      const h = Math.max(1, Math.round(rect.height * dpr));
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
+    };
+
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(wrap);
+    window.addEventListener('resize', apply);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', apply);
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -60,14 +88,15 @@ export default function VideoCanvas({
 
   return (
     <div
+      ref={wrapRef}
       className="canvas-wrap"
-      style={{ aspectRatio: `${width} / ${height}` }}
+      style={{ aspectRatio: `${sourceW} / ${sourceH}` }}
     >
-      <canvas ref={canvasRef} width={width} height={height} />
+      <canvas ref={canvasRef} width={sourceW} height={sourceH} />
       {cropMode && (
         <CropOverlay
-          canvasWidth={width}
-          canvasHeight={height}
+          canvasWidth={sourceW}
+          canvasHeight={sourceH}
           sourceWidth={sourceW}
           sourceHeight={sourceH}
           crop={crop}
