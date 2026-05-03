@@ -12,6 +12,7 @@ import { computeInsetRect, PREVIEW_PADDING_SCALE } from './layout.js';
 
 const RIPPLE_DURATION = 600; // ms
 const CURSOR_RADIUS = 12;
+const CORNER_RADIUS_RATIO = 0.025; // of min(drawW, drawH)
 
 function getNearestCursor(mouse, t) {
   if (!mouse || !mouse.events.length) return null;
@@ -109,15 +110,24 @@ export function renderFrame(ctx, source, opts) {
     drawY = Math.min(baseY, Math.max(baseY + baseH - drawH, drawY));
   }
 
+  const radius = Math.min(drawW, drawH) * CORNER_RADIUS_RATIO;
+
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur = 40;
   ctx.shadowOffsetY = 16;
   ctx.fillStyle = '#000';
-  ctx.fillRect(drawX, drawY, drawW, drawH);
+  ctx.beginPath();
+  ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+  ctx.fill();
   ctx.restore();
 
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+  ctx.clip();
   ctx.drawImage(source, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH);
+  ctx.restore();
 
   if (!showCursor || !mouse) return;
 
