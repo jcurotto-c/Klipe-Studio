@@ -1,9 +1,30 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import VideoCanvas from './VideoCanvas.jsx';
 import Timeline from './Timeline.jsx';
 import ExportPanel from './ExportPanel.jsx';
-import { generateZoomSegments } from '../lib/zoom-engine.js';
+import ZoomInspector from './ZoomInspector.jsx';
+import {
+  generateZoomSegments,
+  createManualSegment,
+  addSegment,
+  updateSegment,
+  removeSegment,
+  DEFAULT_ZOOM
+} from '../lib/zoom-engine.js';
 import { isFullCrop } from '../lib/layout.js';
+
+const DEFAULTS_KEY = 'klipe.zoomDefaults';
+
+function loadDefaults() {
+  try {
+    const raw = localStorage.getItem(DEFAULTS_KEY);
+    if (!raw) return DEFAULT_ZOOM;
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_ZOOM, ...parsed };
+  } catch {
+    return DEFAULT_ZOOM;
+  }
+}
 
 export default function EditorView({ recording, onNew }) {
   const videoRef = useRef(null);
@@ -14,17 +35,22 @@ export default function EditorView({ recording, onNew }) {
   const [background, setBackground] = useState('default');
   const [cropMode, setCropMode] = useState(false);
   const [crop, setCrop] = useState(null);
+  const [zoomDefaults, setZoomDefaults] = useState(loadDefaults);
+  const [segments, setSegments] = useState(() =>
+    recording.autoZoom === false ? [] : generateZoomSegments(recording.mouse)
+  );
+  const [selectedId, setSelectedId] = useState(null);
 
   const exportCrop = isFullCrop(crop) ? null : crop;
-
-  const segments = useMemo(
-    () => generateZoomSegments(recording.mouse),
-    [recording.mouse]
-  );
 
   const clicks = useMemo(
     () => recording.mouse.events.filter((e) => e.type === 'click'),
     [recording.mouse]
+  );
+
+  const selected = useMemo(
+    () => segments.find((s) => s.id === selectedId) || null,
+    [segments, selectedId]
   );
 
   useEffect(() => {
@@ -86,29 +112,78 @@ export default function EditorView({ recording, onNew }) {
     return `${String(m).padStart(2, '0')}:${r}`;
   };
 
+  const handleAddZoom = useCallback(() => {
+    const tMs = currentTime * 1000;
+    const seg = createManualSegment({
+      tMs,
+      durationMs: zoomDefaults.duration,
+      easeIn: zoomDefaults.easeIn,
+      easeOut: zoomDefaults.easeOut,
+      scale: zoomDefaults.scale,
+      display: recording.display
+    });
+    setSegments((prev) => addSegment(prev, seg));
+    setSelectedId(seg.id);
+  }, [currentTime, zoomDefaults, recording.display]);
+
+  const handleUpdateSegment = useCallback((id, patch) => {
+    setSegments((prev) => updateSegment(prev, id, patch));
+  }, []);
+
+  const handleRemoveSegment = useCallback((id) => {
+    setSegments((prev) => removeSegment(prev, id));
+    setSelectedId((cur) => (cur === id ? null : cur));
+  }, []);
+
+  const handleApplyToAll = useCallback((patch) => {
+    setSegments((prev) => prev.map((s) => ({ ...s, ...patch })));
+  }, []);
+
+  const handleSetDefault = useCallback((patch) => {
+    setZoomDefaults((prev) => {
+      const next = { ...prev, ...patch };
+      try { localStorage.setItem(DEFAULTS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   return (
     <div className="editor">
-      <div className="preview">
-        <video
-          ref={videoRef}
-          src={recording.url}
-          style={{ display: 'none' }}
-          muted
-          playsInline
-        />
-        <VideoCanvas
-          videoRef={videoRef}
-          segments={segments}
-          mouse={recording.mouse}
-          display={recording.display}
-          background={background}
-          width={1280}
-          height={720}
-          trim={trim}
-          crop={exportCrop}
-          cropMode={cropMode}
-          onCropChange={setCrop}
-        />
+      <div className="editor-main">
+        <div className="preview">
+          <video
+            ref={videoRef}
+            src={recording.url}
+            style={{ display: 'none' }}
+            muted
+            playsInline
+          />
+          <VideoCanvas
+            videoRef={videoRef}
+            segments={segments}
+            mouse={recording.mouse}
+            display={recording.display}
+            background={background}
+            width={1280}
+            height={720}
+            trim={trim}
+            crop={exportCrop}
+            cropMode={cropMode}
+            onCropChange={setCrop}
+          />
+        </div>
+
+        {selected && (
+          <ZoomInspector
+            segment={selected}
+            display={recording.display}
+            onChange={(patch) => handleUpdateSegment(selected.id, patch)}
+            onRemove={() => handleRemoveSegment(selected.id)}
+            onApplyToAll={handleApplyToAll}
+            onSetDefault={handleSetDefault}
+            onClose={() => setSelectedId(null)}
+          />
+        )}
       </div>
 
       <div style={{ display: 'grid', gap: 10 }}>
@@ -120,6 +195,14 @@ export default function EditorView({ recording, onNew }) {
           <span className="time">
             {fmt(currentTime)} / {fmt(duration)}
           </span>
+          <button
+            className="tool"
+            onClick={handleAddZoom}
+            disabled={!duration}
+            title="Add a zoom segment at the playhead"
+          >
+            ⊕ Add zoom
+          </button>
           <button
             className={cropMode ? 'tool active' : 'tool'}
             onClick={() => setCropMode((v) => !v)}
@@ -155,6 +238,9 @@ export default function EditorView({ recording, onNew }) {
             onSeek={seek}
             clicks={clicks}
             segments={segments}
+            selectedId={selectedId}
+            onSelectSegment={setSelectedId}
+            onUpdateSegment={handleUpdateSegment}
             trim={trim}
             onTrimChange={setTrim}
           />

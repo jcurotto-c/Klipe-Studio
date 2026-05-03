@@ -6,15 +6,33 @@ import {
   getPrimaryDisplaySize
 } from '../lib/capture.js';
 
+const AUTO_ZOOM_KEY = 'klipe.autoZoom';
+
+function loadAutoZoom() {
+  try {
+    const raw = localStorage.getItem(AUTO_ZOOM_KEY);
+    if (raw == null) return true;
+    return raw === 'true';
+  } catch {
+    return true;
+  }
+}
+
 export default function RecorderView({ onRecordingDone }) {
   const [sources, setSources] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [withMic, setWithMic] = useState(true);
+  const [autoZoom, setAutoZoom] = useState(loadAutoZoom);
   const [countdown, setCountdown] = useState(0);
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState(null);
   const [hudOpen, setHudOpen] = useState(false);
   const recorderRef = useRef(null);
+
+  const handleToggleAutoZoom = useCallback((next) => {
+    setAutoZoom(next);
+    try { localStorage.setItem(AUTO_ZOOM_KEY, String(next)); } catch {}
+  }, []);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -70,9 +88,10 @@ export default function RecorderView({ onRecordingDone }) {
       url,
       mimeType: result.mimeType,
       mouse: result.mouse,
-      display
+      display,
+      autoZoom
     });
-  }, [onRecordingDone]);
+  }, [onRecordingDone, autoZoom]);
 
   // Push recording state down to the HUD whenever it changes
   useEffect(() => {
@@ -161,6 +180,14 @@ export default function RecorderView({ onRecordingDone }) {
             onChange={(e) => setWithMic(e.target.checked)}
           />
           Capture microphone
+        </label>
+        <label className="toggle" title="Analyze cursor activity after recording and create zoom segments automatically.">
+          <input
+            type="checkbox"
+            checked={autoZoom}
+            onChange={(e) => handleToggleAutoZoom(e.target.checked)}
+          />
+          Create zooms automatically
         </label>
         <button className="ghost" onClick={refresh}>Refresh sources</button>
         <button

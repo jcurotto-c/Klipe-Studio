@@ -6,29 +6,48 @@
  * is just metadata; what matters for the timeline is `t`.)
  *
  * Output zoom segments:
- *   { center: { x, y }, scale, tStart, tEnd, easeIn, easeOut }
+ *   { id, source, center: { x, y }, scale, tStart, tEnd, easeIn, easeOut }
  *
- * Coordinates are screen-space pixels (matching the recorded video size after
- * normalization). The renderer converts to canvas-space.
+ * - `id` is stable across edits so React can key on it.
+ * - `source` is 'auto' (created from click analysis) or 'manual' (user-added).
+ * - `center` is in screen-space pixels matching the recorded video (the
+ *   renderer remaps to canvas-space).
  */
 
 export const SMOOTHSTEP = (t) => t * t * (3 - 2 * t);
 
-const DEFAULT_OPTS = {
+export const DEFAULT_ZOOM = {
   scale: 1.8,
   duration: 2000,
   easeIn: 400,
-  easeOut: 600,
+  easeOut: 600
+};
+
+const AUTO_OPTS = {
+  ...DEFAULT_ZOOM,
   mergeGap: 1500
 };
 
+let _idCounter = 0;
+const newId = () => `z_${Date.now().toString(36)}_${(_idCounter++).toString(36)}`;
+
+function sortInPlace(segs) {
+  segs.sort((a, b) => a.tStart - b.tStart);
+  return segs;
+}
+
+/**
+ * Auto-generate zoom segments from cursor click events.
+ */
 export function generateZoomSegments(mouse, opts = {}) {
-  const o = { ...DEFAULT_OPTS, ...opts };
+  const o = { ...AUTO_OPTS, ...opts };
   if (!mouse || !mouse.events) return [];
   const clicks = mouse.events.filter((e) => e.type === 'click');
   if (!clicks.length) return [];
 
   const raw = clicks.map((c) => ({
+    id: newId(),
+    source: 'auto',
     center: { x: c.x, y: c.y },
     scale: o.scale,
     tStart: Math.max(0, c.t - o.easeIn),
@@ -37,13 +56,11 @@ export function generateZoomSegments(mouse, opts = {}) {
     easeOut: o.easeOut
   }));
 
-  // Merge overlapping or near-adjacent segments (gap < mergeGap).
   raw.sort((a, b) => a.tStart - b.tStart);
   const merged = [];
   for (const seg of raw) {
     const prev = merged[merged.length - 1];
     if (prev && seg.tStart - prev.tEnd < o.mergeGap) {
-      // Extend previous segment, average the centers, keep max scale.
       prev.tEnd = Math.max(prev.tEnd, seg.tEnd);
       prev.center = {
         x: (prev.center.x + seg.center.x) / 2,
@@ -59,9 +76,55 @@ export function generateZoomSegments(mouse, opts = {}) {
 }
 
 /**
- * Returns the active zoom transform { scale, cx, cy } for time `t` (ms).
- * `cx`, `cy` are the focus point in screen pixels. Returns identity when
- * outside any segment.
+ * Build a manual zoom segment centered at `tMs`. `display` is used to default
+ * the focus point to the screen center when no cursor sample is available.
+ */
+export function createManualSegment({
+  tMs,
+  durationMs = DEFAULT_ZOOM.duration,
+  easeIn = DEFAULT_ZOOM.easeIn,
+  easeOut = DEFAULT_ZOOM.easeOut,
+  scale = DEFAULT_ZOOM.scale,
+  center,
+  display
+}) {
+  const c = center || {
+    x: (display?.width || 1920) / 2,
+    y: (display?.height || 1080) / 2
+  };
+  const half = durationMs / 2;
+  return {
+    id: newId(),
+    source: 'manual',
+    center: { x: c.x, y: c.y },
+    scale,
+    tStart: Math.max(0, tMs - half),
+    tEnd: tMs + half,
+    easeIn,
+    easeOut
+  };
+}
+
+/**
+ * Returns a new segments array with `patch` applied to the segment with `id`.
+ * Re-sorts by tStart so the renderer's `find()` always picks the right one.
+ */
+export function updateSegment(segments, id, patch) {
+  const next = segments.map((s) => (s.id === id ? { ...s, ...patch } : s));
+  return sortInPlace(next);
+}
+
+export function addSegment(segments, segment) {
+  return sortInPlace([...segments, segment]);
+}
+
+export function removeSegment(segments, id) {
+  return segments.filter((s) => s.id !== id);
+}
+
+/**
+ * Active zoom transform `{ scale, cx, cy, p }` for time `t` (ms). Returns
+ * identity when outside any segment.
  */
 export function sampleZoom(segments, t) {
   if (!segments || !segments.length) return { scale: 1, cx: null, cy: null };
@@ -70,7 +133,7 @@ export function sampleZoom(segments, t) {
 
   const inEnd = seg.tStart + seg.easeIn;
   const outStart = seg.tEnd - seg.easeOut;
-  let p; // 0..1 zoom amount
+  let p;
   if (t < inEnd) {
     p = SMOOTHSTEP((t - seg.tStart) / Math.max(1, seg.easeIn));
   } else if (t > outStart) {

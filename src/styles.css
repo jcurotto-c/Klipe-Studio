@@ -169,6 +169,12 @@ button.ghost { background: transparent; }
   height: 100%;
   min-height: 0;
 }
+.editor-main {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  min-height: 0;
+}
 .editor .preview {
   background: #000;
   border: 1px solid var(--border);
@@ -276,8 +282,43 @@ button.tool.active {
 .timeline .zoom-seg {
   position: absolute; top: 0; bottom: 0;
   background: linear-gradient(180deg, rgba(124,92,255,0.45), rgba(92,196,255,0.35));
-  border-left: 2px solid var(--accent);
-  border-right: 2px solid var(--accent-2);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: grab;
+  overflow: hidden;
+  transition: box-shadow 120ms, background 120ms;
+}
+.timeline .zoom-seg:hover {
+  background: linear-gradient(180deg, rgba(124,92,255,0.6), rgba(92,196,255,0.45));
+}
+.timeline .zoom-seg.selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(124,92,255,0.55);
+  z-index: 2;
+}
+.timeline .zoom-seg.manual {
+  border-color: var(--accent-2);
+}
+.timeline .zoom-seg-label {
+  position: absolute;
+  left: 8px; top: 50%; transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.timeline .zoom-seg-handle {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: rgba(255,255,255,0.0);
+}
+.timeline .zoom-seg-handle.left { left: 0; }
+.timeline .zoom-seg-handle.right { right: 0; }
+.timeline .zoom-seg-handle:hover {
+  background: rgba(255,255,255,0.35);
 }
 .timeline .marker {
   position: absolute; top: 0; bottom: 0;
@@ -331,4 +372,76 @@ select {
 
 .empty {
   color: var(--text-2); padding: 30px; text-align: center;
+}
+
+/* ZoomInspector */
+.zoom-inspector {
+  width: 300px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+.zi-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.zi-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.zi-sub {
+  font-size: 11px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-top: 2px;
+}
+.zi-close {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.zi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.zi-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.zi-row label {
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+.zi-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-0);
+}
+.zi-help {
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.zi-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.zi-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.zi-actions button {
+  width: 100%;
+  text-align: center;
 }

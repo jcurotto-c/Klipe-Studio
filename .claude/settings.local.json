@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(node -e \"import\\('./src/lib/zoom-engine.js'\\).then\\(m => { const segs = m.generateZoomSegments\\({ events: [{ type:'click', x:100, y:200, t:1000 }, { type:'click', x:500, y:300, t:5000 }] }\\); console.log\\('auto:', JSON.stringify\\(segs, null, 2\\)\\); const s2 = m.createManualSegment\\({ tMs: 3000, display: { width: 1920, height: 1080 } }\\); console.log\\('manual:', s2\\); const updated = m.updateSegment\\([s2], s2.id, { scale: 2.5 }\\); console.log\\('updated:', updated[0].scale\\); console.log\\('sample @ 3000ms:', m.sampleZoom\\([s2], 3000\\)\\); }\\)\")"
     ]
   }
 }

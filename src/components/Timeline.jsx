@@ -7,17 +7,23 @@ const fmt = (s) => {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
 };
 
+const MIN_SEG_MS = 200;
+
 export default function Timeline({
   duration,
   currentTime,
   onSeek,
   clicks,
   segments,
+  selectedId,
+  onSelectSegment,
+  onUpdateSegment,
   trim,
   onTrimChange
 }) {
   const trackRef = useRef(null);
-  const [drag, setDrag] = useState(null); // { kind: 'playhead'|'trimStart'|'trimEnd' }
+  // drag = { kind, ... } — kind ∈ playhead | trimStart | trimEnd | seg | segStart | segEnd
+  const [drag, setDrag] = useState(null);
 
   const xToTime = useCallback(
     (clientX) => {
@@ -28,13 +34,41 @@ export default function Timeline({
     [duration]
   );
 
+  const xDeltaToMs = useCallback((dx) => {
+    const r = trackRef.current.getBoundingClientRect();
+    return (dx / r.width) * duration * 1000;
+  }, [duration]);
+
   useEffect(() => {
     if (!drag) return;
     const move = (e) => {
       const t = xToTime(e.clientX);
-      if (drag.kind === 'playhead') onSeek(t);
-      else if (drag.kind === 'trimStart') onTrimChange({ start: Math.min(t, trim.end - 0.1), end: trim.end });
-      else if (drag.kind === 'trimEnd') onTrimChange({ start: trim.start, end: Math.max(t, trim.start + 0.1) });
+      if (drag.kind === 'playhead') {
+        onSeek(t);
+      } else if (drag.kind === 'trimStart') {
+        onTrimChange({ start: Math.min(t, trim.end - 0.1), end: trim.end });
+      } else if (drag.kind === 'trimEnd') {
+        onTrimChange({ start: trim.start, end: Math.max(t, trim.start + 0.1) });
+      } else if (drag.kind === 'seg') {
+        const dx = e.clientX - drag.startX;
+        const dMs = xDeltaToMs(dx);
+        const len = drag.origEnd - drag.origStart;
+        let ns = drag.origStart + dMs;
+        ns = Math.max(0, Math.min(duration * 1000 - len, ns));
+        onUpdateSegment(drag.id, { tStart: ns, tEnd: ns + len });
+      } else if (drag.kind === 'segStart') {
+        const dx = e.clientX - drag.startX;
+        const dMs = xDeltaToMs(dx);
+        let ns = drag.origStart + dMs;
+        ns = Math.max(0, Math.min(drag.origEnd - MIN_SEG_MS, ns));
+        onUpdateSegment(drag.id, { tStart: ns });
+      } else if (drag.kind === 'segEnd') {
+        const dx = e.clientX - drag.startX;
+        const dMs = xDeltaToMs(dx);
+        let ne = drag.origEnd + dMs;
+        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(duration * 1000, ne));
+        onUpdateSegment(drag.id, { tEnd: ne });
+      }
     };
     const up = () => setDrag(null);
     window.addEventListener('mousemove', move);
@@ -43,12 +77,38 @@ export default function Timeline({
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
     };
-  }, [drag, onSeek, onTrimChange, xToTime, trim]);
+  }, [drag, onSeek, onTrimChange, onUpdateSegment, xToTime, xDeltaToMs, trim, duration]);
 
   const onTrackMouseDown = (e) => {
     if (e.target.dataset.handle) return;
+    if (e.target.closest('.zoom-seg')) return;
+    onSelectSegment?.(null);
     onSeek(xToTime(e.clientX));
     setDrag({ kind: 'playhead' });
+  };
+
+  const onSegMouseDown = (e, seg) => {
+    e.stopPropagation();
+    onSelectSegment?.(seg.id);
+    setDrag({
+      kind: 'seg',
+      id: seg.id,
+      startX: e.clientX,
+      origStart: seg.tStart,
+      origEnd: seg.tEnd
+    });
+  };
+
+  const onSegEdgeMouseDown = (e, seg, edge) => {
+    e.stopPropagation();
+    onSelectSegment?.(seg.id);
+    setDrag({
+      kind: edge === 'start' ? 'segStart' : 'segEnd',
+      id: seg.id,
+      startX: e.clientX,
+      origStart: seg.tStart,
+      origEnd: seg.tEnd
+    });
   };
 
   const tickEvery = duration > 60 ? 10 : duration > 20 ? 5 : 1;
@@ -71,14 +131,35 @@ export default function Timeline({
       </div>
 
       <div className="track" ref={trackRef} onMouseDown={onTrackMouseDown}>
-        {segments.map((seg, i) => (
-          <div
-            key={i}
-            className="zoom-seg"
-            style={{ left: pct(seg.tStart / 1000), width: w(seg.tStart / 1000, seg.tEnd / 1000) }}
-            title={`Zoom ${seg.scale.toFixed(2)}x`}
-          />
-        ))}
+        {segments.map((seg) => {
+          const isSel = seg.id === selectedId;
+          return (
+            <div
+              key={seg.id}
+              className={`zoom-seg ${isSel ? 'selected' : ''} ${seg.source === 'manual' ? 'manual' : 'auto'}`}
+              style={{
+                left: pct(seg.tStart / 1000),
+                width: w(seg.tStart / 1000, seg.tEnd / 1000)
+              }}
+              title={`Zoom ${seg.scale.toFixed(2)}x · ${seg.source}`}
+              onMouseDown={(e) => onSegMouseDown(e, seg)}
+            >
+              <span className="zoom-seg-label">
+                {`${seg.scale.toFixed(1)}× ${seg.source === 'manual' ? 'Manual' : 'Auto'}`}
+              </span>
+              <div
+                className="zoom-seg-handle left"
+                data-handle="seg-start"
+                onMouseDown={(e) => onSegEdgeMouseDown(e, seg, 'start')}
+              />
+              <div
+                className="zoom-seg-handle right"
+                data-handle="seg-end"
+                onMouseDown={(e) => onSegEdgeMouseDown(e, seg, 'end')}
+              />
+            </div>
+          );
+        })}
 
         {clicks.map((c, i) => (
           <div key={i} className="marker" style={{ left: pct(c.t / 1000) }} title={`Click @ ${(c.t / 1000).toFixed(2)}s`} />
