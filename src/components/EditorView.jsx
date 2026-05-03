@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import VideoCanvas from './VideoCanvas.jsx';
 import Timeline from './Timeline.jsx';
-import ExportPanel from './ExportPanel.jsx';
+import ExportButton from './ExportButton.jsx';
+import ExportModal from './ExportModal.jsx';
 import ZoomInspector from './ZoomInspector.jsx';
 import SidebarPanel from './SidebarPanel.jsx';
 import {
@@ -27,7 +29,7 @@ function loadDefaults() {
   }
 }
 
-export default function EditorView({ recording, onNew }) {
+export default function EditorView({ recording, onNew, navExtraEl }) {
   const videoRef = useRef(null);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -41,6 +43,7 @@ export default function EditorView({ recording, onNew }) {
     recording.autoZoom === false ? [] : generateZoomSegments(recording.mouse)
   );
   const [selectedId, setSelectedId] = useState(null);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const exportCrop = isFullCrop(crop) ? null : crop;
 
@@ -249,18 +252,30 @@ export default function EditorView({ recording, onNew }) {
           <div className="empty">Loading clip…</div>
         )}
 
-        <ExportPanel
-          videoRef={videoRef}
-          duration={duration}
-          trim={trim}
-          segments={segments}
+      </div>
+
+      {navExtraEl && createPortal(
+        <ExportButton
+          onClick={() => setExportOpen(true)}
+          disabled={!duration}
+        />,
+        navExtraEl
+      )}
+
+      {exportOpen && (
+        <ExportModal
+          sourceBlob={recording.blob}
           mouse={recording.mouse}
+          segments={segments}
           display={recording.display}
           background={background}
-          sourceBlob={recording.blob}
+          trim={trim}
+          duration={duration}
           crop={exportCrop}
+          sourceLabel={recording.name || 'recording'}
+          onClose={() => setExportOpen(false)}
         />
-      </div>
+      )}
     </div>
   );
 }

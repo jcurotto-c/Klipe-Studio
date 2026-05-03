@@ -1,10 +1,16 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import RecorderView from './components/RecorderView.jsx';
 import EditorView from './components/EditorView.jsx';
 
 export default function App() {
   const [view, setView] = useState('recorder');
   const [recording, setRecording] = useState(null);
+  const navExtraRef = useRef(null);
+  const [navExtraEl, setNavExtraEl] = useState(null);
+  const setNavExtra = useCallback((el) => {
+    navExtraRef.current = el;
+    setNavExtraEl(el);
+  }, []);
 
   const handleRecordingDone = useCallback((rec) => {
     setRecording(rec);
@@ -38,6 +44,7 @@ export default function App() {
           >
             Editor
           </button>
+          <div className="nav-extra" ref={setNavExtra} />
         </nav>
       </header>
 
@@ -46,7 +53,11 @@ export default function App() {
           <RecorderView onRecordingDone={handleRecordingDone} />
         )}
         {view === 'editor' && recording && (
-          <EditorView recording={recording} onNew={handleNewRecording} />
+          <EditorView
+            recording={recording}
+            onNew={handleNewRecording}
+            navExtraEl={navExtraEl}
+          />
         )}
       </main>
     </div>

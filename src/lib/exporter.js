@@ -23,23 +23,39 @@ const RESOLUTIONS = {
   '4K':    { w: 3840, h: 2160 }
 };
 
+export const QUALITY_PRESETS = {
+  studio:  { label: 'Studio',     description: 'Highest quality, best for further editing. Compression is almost impossible to notice.', multiplier: 1.5 },
+  social:  { label: 'Social Media', description: 'Balanced quality, ideal for posting to social platforms.',                            multiplier: 1.0 },
+  web:     { label: 'Web',         description: 'Smaller files for embedding on websites and faster sharing.',                          multiplier: 0.65 },
+  webLow:  { label: 'Web (Low)',   description: 'Smallest file size for slow connections; visible compression.',                        multiplier: 0.35 }
+};
+
 export function getResolution(name) {
   return RESOLUTIONS[name] || RESOLUTIONS['1080p'];
 }
 
-function pickRecorderMime() {
-  // Note: we intentionally avoid `video/mp4` here. Chromium's MediaRecorder
-  // produces a fragmented MP4 (fMP4) with no leading `moov` atom, which most
-  // editors (Premiere, Resolve, Shotcut, Kdenlive…) refuse to import. WebM
-  // with VP9/Opus is well-formed and accepted everywhere modern.
-  const candidates = [
+function pickRecorderMime(format) {
+  // Note: WebM is the safe default — Chromium's MediaRecorder MP4 output is
+  // fragmented (fMP4) with no leading `moov` atom, which NLEs (Premiere,
+  // Resolve, Shotcut, Kdenlive…) refuse to import. For direct-playback use
+  // (sharing the file) fMP4 is fine, so we honor an MP4 request when the
+  // platform supports it.
+  const mp4Candidates = [
+    'video/mp4;codecs=avc1.640028,mp4a.40.2',
+    'video/mp4;codecs=avc1,mp4a',
+    'video/mp4'
+  ];
+  const webmCandidates = [
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
     'video/webm'
   ];
-  for (const m of candidates) {
+  const ordered = format === 'mp4'
+    ? [...mp4Candidates, ...webmCandidates]
+    : webmCandidates;
+  for (const m of ordered) {
     if (MediaRecorder.isTypeSupported(m)) return m;
   }
   return 'video/webm';
@@ -55,10 +71,18 @@ export async function exportVideo({
   trim,
   resolution = '1080p',
   fps = 60,
+  format = 'webm',
+  quality = 'social',
+  signal,
   onProgress,
   onLog
 }) {
   const { w, h } = getResolution(resolution);
+  const qMult = QUALITY_PRESETS[quality]?.multiplier ?? 1.0;
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw new DOMException('Export aborted', 'AbortError');
+  };
+  throwIfAborted();
 
   // Off-screen canvas + video
   const canvas = document.createElement('canvas');
@@ -104,12 +128,13 @@ export async function exportVideo({
     if (onLog) onLog(`Audio capture skipped: ${e.message}`);
   }
 
-  const mimeType = pickRecorderMime();
+  const mimeType = pickRecorderMime(format);
   if (onLog) onLog(`Recorder mime: ${mimeType}`);
 
+  const baseBitrate = resolution === '4K' ? 24_000_000 : resolution === '1080p' ? 12_000_000 : 6_000_000;
   const recorder = new MediaRecorder(canvasStream, {
     mimeType,
-    videoBitsPerSecond: resolution === '4K' ? 24_000_000 : resolution === '1080p' ? 12_000_000 : 6_000_000,
+    videoBitsPerSecond: Math.round(baseBitrate * qMult),
     audioBitsPerSecond: 192_000
   });
   const chunks = [];
@@ -163,35 +188,55 @@ export async function exportVideo({
     recorder.onstop = () => resolve();
   });
 
-  recorder.start(250);
-  requestAnimationFrame(tick);
-  await video.play();
+  let aborted = false;
+  const onAbort = () => {
+    aborted = true;
+    try { video.pause(); } catch (_) {}
+  };
+  if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
-  // Stop when we reach trim end (or natural end)
-  await new Promise((resolve) => {
-    const check = () => {
-      if (video.currentTime >= end - 0.02 || video.ended) {
-        video.pause();
-        resolve();
-      } else {
-        requestAnimationFrame(check);
-      }
-    };
-    requestAnimationFrame(check);
-  });
+  const cleanup = async () => {
+    stopRender = true;
+    try { if (recorder.state !== 'inactive') recorder.stop(); } catch (_) {}
+    try { await stopped; } catch (_) {}
+    canvasStream.getTracks().forEach((t) => t.stop());
+    if (audioCtx) {
+      try { await audioCtx.close(); } catch (_) {}
+    }
+    URL.revokeObjectURL(url);
+    if (signal) signal.removeEventListener('abort', onAbort);
+  };
 
-  // Flush a tiny tail to ensure the last frames make it in
-  await new Promise((r) => setTimeout(r, 120));
-  stopRender = true;
-  recorder.stop();
-  await stopped;
+  try {
+    recorder.start(250);
+    requestAnimationFrame(tick);
+    await video.play();
 
-  // Cleanup
-  canvasStream.getTracks().forEach((t) => t.stop());
-  if (audioCtx) {
-    try { await audioCtx.close(); } catch (_) {}
+    // Stop when we reach trim end (or natural end), or abort fires
+    await new Promise((resolve) => {
+      const check = () => {
+        if (aborted || video.currentTime >= end - 0.02 || video.ended) {
+          try { video.pause(); } catch (_) {}
+          resolve();
+        } else {
+          requestAnimationFrame(check);
+        }
+      };
+      requestAnimationFrame(check);
+    });
+
+    if (aborted) {
+      await cleanup();
+      throw new DOMException('Export aborted', 'AbortError');
+    }
+
+    // Flush a tiny tail to ensure the last frames make it in
+    await new Promise((r) => setTimeout(r, 120));
+    await cleanup();
+  } catch (err) {
+    await cleanup();
+    throw err;
   }
-  URL.revokeObjectURL(url);
 
   const blob = new Blob(chunks, { type: mimeType });
   const isMp4 = mimeType.startsWith('video/mp4');
