@@ -15,8 +15,10 @@ import {
   DEFAULT_ZOOM
 } from '../lib/zoom-engine.js';
 import { isFullCrop } from '../lib/layout.js';
+import { DEFAULT_CAMERA_OPTIONS } from './panels/CameraPanel.jsx';
 
 const DEFAULTS_KEY = 'klipe.zoomDefaults';
+const CAMERA_OPTIONS_KEY = 'klipe.cameraOptions';
 
 function loadDefaults() {
   try {
@@ -26,6 +28,17 @@ function loadDefaults() {
     return { ...DEFAULT_ZOOM, ...parsed };
   } catch {
     return DEFAULT_ZOOM;
+  }
+}
+
+function loadCameraOptions() {
+  try {
+    const raw = localStorage.getItem(CAMERA_OPTIONS_KEY);
+    if (!raw) return DEFAULT_CAMERA_OPTIONS;
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_CAMERA_OPTIONS, ...parsed };
+  } catch {
+    return DEFAULT_CAMERA_OPTIONS;
   }
 }
 
@@ -44,6 +57,9 @@ export default function EditorView({ recording, onNew, navExtraEl }) {
   );
   const [selectedId, setSelectedId] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [cameraOptions, setCameraOptions] = useState(loadCameraOptions);
+  const [cameraAvailable, setCameraAvailable] = useState(false);
+  const cameraVideoRef = useRef(null);
 
   const exportCrop = isFullCrop(crop) ? null : crop;
 
@@ -151,6 +167,49 @@ export default function EditorView({ recording, onNew, navExtraEl }) {
     });
   }, []);
 
+  const handleCameraOptionsChange = useCallback((next) => {
+    setCameraOptions(next);
+    try { localStorage.setItem(CAMERA_OPTIONS_KEY, JSON.stringify(next)); } catch {}
+  }, []);
+
+  // Live webcam stream feeds the camera overlay preview. The recording
+  // itself doesn't capture the camera — this is purely visual configuration.
+  useEffect(() => {
+    let cancelled = false;
+    let stream = null;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraAvailable(false);
+      return undefined;
+    }
+
+    navigator.mediaDevices
+      .getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false })
+      .then((s) => {
+        if (cancelled) {
+          s.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        stream = s;
+        const v = cameraVideoRef.current;
+        if (v) {
+          v.srcObject = s;
+          v.play().catch(() => {});
+        }
+        setCameraAvailable(true);
+      })
+      .catch(() => {
+        if (!cancelled) setCameraAvailable(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      const v = cameraVideoRef.current;
+      if (v) v.srcObject = null;
+    };
+  }, []);
+
   return (
     <div className="editor">
       <div className="editor-main">
@@ -174,6 +233,15 @@ export default function EditorView({ recording, onNew, navExtraEl }) {
             crop={exportCrop}
             cropMode={cropMode}
             onCropChange={setCrop}
+            cameraVideoRef={cameraVideoRef}
+            cameraOptions={cameraOptions}
+          />
+          <video
+            ref={cameraVideoRef}
+            style={{ display: 'none' }}
+            muted
+            playsInline
+            autoPlay
           />
         </div>
 
@@ -193,6 +261,9 @@ export default function EditorView({ recording, onNew, navExtraEl }) {
           <SidebarPanel
             background={background}
             onBackgroundChange={setBackground}
+            cameraOptions={cameraOptions}
+            onCameraOptionsChange={handleCameraOptionsChange}
+            cameraAvailable={cameraAvailable}
           />
         </div>
       </div>

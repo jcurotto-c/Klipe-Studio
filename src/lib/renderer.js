@@ -134,7 +134,9 @@ export function renderFrame(ctx, source, opts) {
     background = 'default',
     paddingScale = PREVIEW_PADDING_SCALE,
     showCursor = true,
-    crop = null
+    crop = null,
+    cameraSource = null,
+    cameraOptions = null
   } = opts;
 
   const cw = ctx.canvas.width;
@@ -159,7 +161,7 @@ export function renderFrame(ctx, source, opts) {
 
   const { baseX, baseY, baseW, baseH } = computeInsetRect(cw, ch, swEff, shEff, paddingScale);
 
-  const { scale, cx, cy } = sampleZoom(segments, tMs);
+  const { scale, cx, cy, p: zoomP } = sampleZoom(segments, tMs);
 
   // Map zoom focus into cropped-source coords; ignore if outside the crop.
   const fcx = cx == null ? null : cx - sx0;
@@ -201,7 +203,10 @@ export function renderFrame(ctx, source, opts) {
   ctx.drawImage(source, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH);
   ctx.restore();
 
-  if (!showCursor || !mouse) return;
+  if (!showCursor || !mouse) {
+    drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP || 0);
+    return;
+  }
 
   const cursor = getNearestCursor(mouse, tMs);
   if (cursor) {
@@ -244,4 +249,105 @@ export function renderFrame(ctx, source, opts) {
     ctx.stroke();
     ctx.restore();
   }
+
+  drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP || 0);
+}
+
+const CAMERA_PADDING_RATIO = 0.025;
+
+function cameraSlot(position, cw, ch, dim, pad) {
+  const left = pad;
+  const right = cw - dim - pad;
+  const cx = (cw - dim) / 2;
+  const top = pad;
+  const bottom = ch - dim - pad;
+  const cy = (ch - dim) / 2;
+  switch (position) {
+    case 'top-left':      return { x: left,  y: top };
+    case 'top-center':    return { x: cx,    y: top };
+    case 'top-right':     return { x: right, y: top };
+    case 'middle-left':   return { x: left,  y: cy };
+    case 'middle-right':  return { x: right, y: cy };
+    case 'bottom-left':   return { x: left,  y: bottom };
+    case 'bottom-center': return { x: cx,    y: bottom };
+    case 'bottom-right':
+    default:              return { x: right, y: bottom };
+  }
+}
+
+function drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP) {
+  if (!cameraOptions || cameraOptions.hide) return;
+
+  // Smooth-blend size with the zoom progress; sampleZoom's smoothstep `p`
+  // gives us free easing — when p=0 we use base size, p=1 we use zoom size.
+  const baseSize = Number(cameraOptions.size) || 20;
+  const zoomSize = Number(cameraOptions.sizeDuringZoom) || baseSize;
+  const blend = cameraOptions.zoomDifferent ? Math.max(0, Math.min(1, zoomP)) : 0;
+  const sizePct = baseSize + (zoomSize - baseSize) * blend;
+
+  const dim = Math.max(20, (sizePct / 100) * cw);
+  const pad = Math.max(8, cw * CAMERA_PADDING_RATIO);
+  const { x, y } = cameraSlot(cameraOptions.position, cw, ch, dim, pad);
+
+  const roundness = Math.max(0, Math.min(100, Number(cameraOptions.roundness) ?? 100));
+  const radius = (roundness / 100) * (dim / 2);
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 28;
+  ctx.shadowOffsetY = 10;
+  ctx.fillStyle = '#0b0d12';
+  ctx.beginPath();
+  ctx.roundRect(x, y, dim, dim, radius);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, dim, dim, radius);
+  ctx.clip();
+
+  const ready = cameraSource
+    && cameraSource.readyState >= 2
+    && cameraSource.videoWidth > 0
+    && cameraSource.videoHeight > 0;
+
+  if (ready) {
+    const sw = cameraSource.videoWidth;
+    const sh = cameraSource.videoHeight;
+    const scale = Math.max(dim / sw, dim / sh);
+    const dw = sw * scale;
+    const dh = sh * scale;
+    const dx = x + (dim - dw) / 2;
+    const dy = y + (dim - dh) / 2;
+
+    if (cameraOptions.mirror) {
+      const mid = x + dim / 2;
+      ctx.translate(mid, 0);
+      ctx.scale(-1, 1);
+      ctx.translate(-mid, 0);
+    }
+    ctx.drawImage(cameraSource, dx, dy, dw, dh);
+  } else {
+    const grad = ctx.createLinearGradient(x, y, x, y + dim);
+    grad.addColorStop(0, '#2a3142');
+    grad.addColorStop(1, '#11141b');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, dim, dim);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.font = `${Math.round(dim * 0.16)}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Camera', x + dim / 2, y + dim / 2);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x + 0.5, y + 0.5, dim - 1, dim - 1, Math.max(0, radius - 0.5));
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
 }

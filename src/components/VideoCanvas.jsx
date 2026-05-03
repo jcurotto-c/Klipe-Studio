@@ -18,15 +18,17 @@ export default function VideoCanvas({
   trim,
   crop = null,
   cropMode = false,
-  onCropChange
+  onCropChange,
+  cameraVideoRef = null,
+  cameraOptions = null
 }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const rafRef = useRef(0);
   // Renderer reads these via ref so the rAF loop doesn't need to restart on
   // every crop tweak (which would jitter the preview during a drag).
-  const propsRef = useRef({ segments, mouse, display, background, crop, cropMode });
-  propsRef.current = { segments, mouse, display, background, crop, cropMode };
+  const propsRef = useRef({ segments, mouse, display, background, crop, cropMode, cameraOptions });
+  propsRef.current = { segments, mouse, display, background, crop, cropMode, cameraOptions };
 
   // Match the backing buffer to the CSS box × devicePixelRatio. Otherwise the
   // canvas is rendered at a fixed low resolution and the browser bilinear-
@@ -75,13 +77,15 @@ export default function VideoCanvas({
         displayWidth: p.display?.width,
         displayHeight: p.display?.height,
         background: p.background,
-        crop: p.cropMode ? null : p.crop
+        crop: p.cropMode ? null : p.crop,
+        cameraSource: cameraVideoRef?.current || null,
+        cameraOptions: p.cameraOptions
       });
     };
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [videoRef]);
+  }, [videoRef, cameraVideoRef]);
 
   const sourceW = display?.width || 1920;
   const sourceH = display?.height || 1080;

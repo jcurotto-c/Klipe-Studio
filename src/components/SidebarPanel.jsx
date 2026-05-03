@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import BackgroundPanel from './panels/BackgroundPanel.jsx';
+import CameraPanel from './panels/CameraPanel.jsx';
 import PlaceholderPanel from './panels/PlaceholderPanel.jsx';
 
 const CATEGORIES = [
@@ -12,7 +13,13 @@ const CATEGORIES = [
   { id: 'connections', label: 'Connections', icon: LinkIcon }
 ];
 
-export default function SidebarPanel({ background, onBackgroundChange }) {
+export default function SidebarPanel({
+  background,
+  onBackgroundChange,
+  cameraOptions,
+  onCameraOptionsChange,
+  cameraAvailable
+}) {
   const [activeId, setActiveId] = useState('background');
 
   const togglePanel = (id) => setActiveId((prev) => (prev === id ? null : id));
@@ -24,7 +31,13 @@ export default function SidebarPanel({ background, onBackgroundChange }) {
       case 'cursor':
         return <PlaceholderPanel title="Cursor" description="Cursor size, smoothing and click effects." />;
       case 'camera':
-        return <PlaceholderPanel title="Camera" description="Webcam overlay and positioning." />;
+        return (
+          <CameraPanel
+            value={cameraOptions}
+            onChange={onCameraOptionsChange}
+            available={cameraAvailable}
+          />
+        );
       case 'captions':
         return <PlaceholderPanel title="Captions" description="Auto-generated subtitles and styling." />;
       case 'audio':
