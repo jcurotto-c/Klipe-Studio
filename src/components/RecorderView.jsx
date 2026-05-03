@@ -13,6 +13,7 @@ export default function RecorderView({ onRecordingDone }) {
   const [countdown, setCountdown] = useState(0);
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState(null);
+  const [hudOpen, setHudOpen] = useState(false);
   const recorderRef = useRef(null);
 
   const refresh = useCallback(async () => {
@@ -73,6 +74,58 @@ export default function RecorderView({ onRecordingDone }) {
     });
   }, [onRecordingDone]);
 
+  // Push recording state down to the HUD whenever it changes
+  useEffect(() => {
+    window.klipeHud?.pushState?.({ recording });
+  }, [recording]);
+
+  // Listen for events emitted from the floating HUD
+  useEffect(() => {
+    if (!window.klipeHud?.onEvent) return;
+    const offEvent = window.klipeHud.onEvent((evt) => {
+      if (!evt) return;
+      switch (evt.type) {
+        case 'start-recording':
+          if (typeof evt.systemAudio === 'boolean') {
+            // For now we map systemAudio → withMic UI toggle until system-audio
+            // capture is implemented in capture.js
+          }
+          if (typeof evt.micId === 'string' && evt.micId) setWithMic(true);
+          beginRecording();
+          break;
+        case 'stop-recording':
+          stopRecording();
+          break;
+        case 'mode-change':
+        case 'mic-change':
+        case 'camera-change':
+        case 'system-audio-change':
+          // Forward to console for now — capture pipeline integration TBD
+          // console.log('[hud]', evt);
+          break;
+        default:
+          break;
+      }
+    });
+    const offClosed = window.klipeHud.onClosed?.(() => setHudOpen(false));
+    return () => {
+      offEvent?.();
+      offClosed?.();
+    };
+  }, [beginRecording, stopRecording]);
+
+  const openHud = useCallback(async () => {
+    if (!window.klipeHud) return;
+    await window.klipeHud.open();
+    setHudOpen(true);
+  }, []);
+
+  const closeHud = useCallback(async () => {
+    if (!window.klipeHud) return;
+    await window.klipeHud.close();
+    setHudOpen(false);
+  }, []);
+
   return (
     <div className="recorder">
       <div>
@@ -110,6 +163,13 @@ export default function RecorderView({ onRecordingDone }) {
           Capture microphone
         </label>
         <button className="ghost" onClick={refresh}>Refresh sources</button>
+        <button
+          className={hudOpen ? 'tool active' : 'tool'}
+          onClick={hudOpen ? closeHud : openHud}
+          title="Floating control bar"
+        >
+          {hudOpen ? '◐ Hide floating bar' : '◐ Show floating bar'}
+        </button>
         <div className="actions" style={{ marginLeft: 'auto' }}>
           {!recording ? (
             <button

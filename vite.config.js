@@ -10,7 +10,13 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, 'dist'),
     emptyOutDir: true,
-    target: 'chrome120'
+    target: 'chrome120',
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'src/index.html'),
+        hud: path.resolve(__dirname, 'src/hud.html')
+      }
+    }
   },
   server: {
     port: 5173,

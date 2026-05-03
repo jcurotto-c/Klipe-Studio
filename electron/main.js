@@ -6,7 +6,16 @@ const { spawn } = require('node:child_process');
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow = null;
+let hudWindow = null;
 let mouseTracker = null;
+
+const HUD_WIDTH = 560;
+// Window is exactly bar-sized at rest. It grows on demand when a dropdown
+// menu opens, then shrinks back. Avoids any empty transparent region that
+// Windows occasionally fails to composite as transparent.
+const HUD_BAR_HEIGHT = 64;
+const HUD_HEIGHT = HUD_BAR_HEIGHT;
+const HUD_TOP_OFFSET = 18;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -34,7 +43,69 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
     stopMouseTracking();
+    if (hudWindow && !hudWindow.isDestroyed()) hudWindow.close();
   });
+}
+
+function createHudWindow() {
+  if (hudWindow && !hudWindow.isDestroyed()) {
+    hudWindow.show();
+    hudWindow.focus();
+    return hudWindow;
+  }
+
+  const display = screen.getPrimaryDisplay();
+  const { workArea } = display;
+  const x = Math.round(workArea.x + (workArea.width - HUD_WIDTH) / 2);
+  const y = workArea.y + HUD_TOP_OFFSET;
+
+  hudWindow = new BrowserWindow({
+    width: HUD_WIDTH,
+    height: HUD_HEIGHT,
+    x,
+    y,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: true,
+    alwaysOnTop: true,
+    show: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  // Float above fullscreen apps + don't show in capture
+  hudWindow.setAlwaysOnTop(true, 'screen-saver');
+  hudWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // Excludes the window from screen capture (Win: WDA_EXCLUDEFROMCAPTURE, macOS: NSWindowSharingNone)
+  try { hudWindow.setContentProtection(true); } catch (_) {}
+
+  if (isDev) {
+    hudWindow.loadURL('http://localhost:5173/hud.html');
+  } else {
+    hudWindow.loadFile(path.join(__dirname, '..', 'dist', 'hud.html'));
+  }
+
+  hudWindow.once('ready-to-show', () => hudWindow.show());
+
+  hudWindow.on('closed', () => {
+    hudWindow = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('hud:closed');
+    }
+  });
+
+  return hudWindow;
 }
 
 app.whenReady().then(() => {
@@ -195,3 +266,60 @@ function stopMouseTracking() {
 
 ipcMain.handle('start-mouse-tracking', () => startMouseTracking());
 ipcMain.handle('stop-mouse-tracking', () => stopMouseTracking());
+
+// ─── Floating HUD ────────────────────────────────────────────────────────────
+
+ipcMain.handle('hud:open', () => {
+  createHudWindow();
+  return { ok: true };
+});
+
+ipcMain.handle('hud:close', () => {
+  if (hudWindow && !hudWindow.isDestroyed()) hudWindow.close();
+  return { ok: true };
+});
+
+ipcMain.handle('hud:is-open', () => {
+  return !!(hudWindow && !hudWindow.isDestroyed());
+});
+
+// HUD → main: forward state changes / actions to the main app window
+ipcMain.on('hud:event', (_evt, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('hud:event', payload);
+  }
+});
+
+// Main app → HUD: push state (e.g. recording flag, available sources)
+ipcMain.on('hud:push-state', (_evt, payload) => {
+  if (hudWindow && !hudWindow.isDestroyed()) {
+    hudWindow.webContents.send('hud:state', payload);
+  }
+});
+
+// Renderer toggles ignore-mouse so the transparent area around the bar
+// doesn't intercept clicks meant for apps below the HUD.
+ipcMain.on('hud:set-ignore-mouse', (_evt, ignore) => {
+  if (hudWindow && !hudWindow.isDestroyed()) {
+    hudWindow.setIgnoreMouseEvents(!!ignore, { forward: true });
+  }
+});
+
+// Renderer requests a content size to fit the bar + any open dropdown.
+// Width is fixed; only height varies. The window stays anchored at the
+// top of the primary display.
+ipcMain.on('hud:set-size', (_evt, payload) => {
+  if (!hudWindow || hudWindow.isDestroyed()) return;
+  const w = Math.max(320, Math.round(payload?.width || HUD_WIDTH));
+  const h = Math.max(HUD_BAR_HEIGHT, Math.round(payload?.height || HUD_BAR_HEIGHT));
+  const [curX] = hudWindow.getPosition();
+  const display = screen.getPrimaryDisplay();
+  // Re-center horizontally if width changed; keep top y stable.
+  const newX = Math.round(display.workArea.x + (display.workArea.width - w) / 2);
+  hudWindow.setBounds({
+    x: newX,
+    y: display.workArea.y + HUD_TOP_OFFSET,
+    width: w,
+    height: h
+  }, false);
+});
