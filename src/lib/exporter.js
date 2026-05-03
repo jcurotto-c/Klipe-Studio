@@ -51,6 +51,7 @@ export async function exportVideo({
   segments,
   display,
   background,
+  crop = null,
   trim,
   resolution = '1080p',
   fps = 60,
@@ -126,7 +127,8 @@ export async function exportVideo({
       mouse,
       displayWidth: display?.width,
       displayHeight: display?.height,
-      background
+      background,
+      crop
     });
     if (onProgress) {
       const elapsed = Math.max(0, video.currentTime - start);
@@ -149,7 +151,8 @@ export async function exportVideo({
     mouse,
     displayWidth: display?.width,
     displayHeight: display?.height,
-    background
+    background,
+    crop
   });
 
   if (audioCtx && audioCtx.state === 'suspended') {

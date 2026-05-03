@@ -8,7 +8,8 @@ export default function ExportPanel({
   display,
   background,
   trim,
-  duration
+  duration,
+  crop
 }) {
   const [resolution, setResolution] = useState('1080p');
   const [fps, setFps] = useState(60);
@@ -32,6 +33,7 @@ export default function ExportPanel({
         segments,
         display,
         background,
+        crop,
         trim: { start: trim.start, end: trim.end },
         resolution,
         fps,
@@ -58,7 +60,7 @@ export default function ExportPanel({
     } finally {
       setBusy(false);
     }
-  }, [busy, sourceBlob, mouse, segments, display, background, trim, resolution, fps]);
+  }, [busy, sourceBlob, mouse, segments, display, background, crop, trim, resolution, fps]);
 
   return (
     <div className="export-panel" style={{ flexDirection: 'column', alignItems: 'stretch' }}>

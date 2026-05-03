@@ -176,7 +176,71 @@ button.ghost { background: transparent; }
   display: flex; align-items: center; justify-content: center;
   overflow: hidden; min-height: 0;
 }
-.editor canvas { max-width: 100%; max-height: 100%; display: block; }
+.editor canvas { width: 100%; height: 100%; display: block; }
+.canvas-wrap {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+/* Crop overlay */
+.crop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  touch-action: none;
+}
+.crop-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  cursor: move;
+  touch-action: none;
+}
+.crop-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.25) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.25) 1px, transparent 1px);
+  background-size: 33.333% 100%, 100% 33.333%;
+  background-position: 33.333% 0, 0 33.333%;
+  background-repeat: no-repeat;
+}
+.crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-top: -6px;
+  background: white;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  touch-action: none;
+}
+.crop-handle-n, .crop-handle-s { width: 28px; }
+.crop-handle-e, .crop-handle-w { height: 28px; }
+.crop-handle-n { margin-left: -14px; }
+.crop-handle-s { margin-left: -14px; }
+.crop-handle-e { margin-top: -14px; }
+.crop-handle-w { margin-top: -14px; }
+
+/* Toolbar tool buttons (Crop, Reset, etc.) */
+button.tool {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+button.tool.active {
+  border-color: var(--accent);
+  background: rgba(124, 92, 255, 0.18);
+  color: var(--text-0);
+}
 
 .controls {
   display: flex; align-items: center; gap: 12px;

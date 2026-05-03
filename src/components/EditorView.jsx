@@ -3,6 +3,7 @@ import VideoCanvas from './VideoCanvas.jsx';
 import Timeline from './Timeline.jsx';
 import ExportPanel from './ExportPanel.jsx';
 import { generateZoomSegments } from '../lib/zoom-engine.js';
+import { isFullCrop } from '../lib/layout.js';
 
 export default function EditorView({ recording, onNew }) {
   const videoRef = useRef(null);
@@ -11,6 +12,10 @@ export default function EditorView({ recording, onNew }) {
   const [playing, setPlaying] = useState(false);
   const [trim, setTrim] = useState({ start: 0, end: 0 });
   const [background, setBackground] = useState('default');
+  const [cropMode, setCropMode] = useState(false);
+  const [crop, setCrop] = useState(null);
+
+  const exportCrop = isFullCrop(crop) ? null : crop;
 
   const segments = useMemo(
     () => generateZoomSegments(recording.mouse),
@@ -100,6 +105,9 @@ export default function EditorView({ recording, onNew }) {
           width={1280}
           height={720}
           trim={trim}
+          crop={exportCrop}
+          cropMode={cropMode}
+          onCropChange={setCrop}
         />
       </div>
 
@@ -112,6 +120,22 @@ export default function EditorView({ recording, onNew }) {
           <span className="time">
             {fmt(currentTime)} / {fmt(duration)}
           </span>
+          <button
+            className={cropMode ? 'tool active' : 'tool'}
+            onClick={() => setCropMode((v) => !v)}
+            title="Toggle crop mode"
+          >
+            ▢ Crop
+          </button>
+          {(cropMode || !isFullCrop(crop)) && (
+            <button
+              className="tool"
+              onClick={() => setCrop(null)}
+              title="Reset crop to full frame"
+            >
+              ↺ Reset Crop
+            </button>
+          )}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
             <label style={{ color: 'var(--text-1)' }}>Background</label>
             <select value={background} onChange={(e) => setBackground(e.target.value)}>
@@ -147,6 +171,7 @@ export default function EditorView({ recording, onNew }) {
           display={recording.display}
           background={background}
           sourceBlob={recording.blob}
+          crop={exportCrop}
         />
       </div>
     </div>

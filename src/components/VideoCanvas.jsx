@@ -1,9 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import { renderFrame } from '../lib/renderer.js';
+import CropOverlay from './CropOverlay.jsx';
 
 /**
  * Plays the source <video> hidden, drives a canvas at ~30fps via rAF,
- * and renders each frame with zoom + cursor overlays.
+ * and renders each frame with zoom + cursor overlays. When crop mode is
+ * active, the full source is rendered and the overlay is shown for editing.
  */
 export default function VideoCanvas({
   videoRef,
@@ -13,16 +15,23 @@ export default function VideoCanvas({
   background = 'default',
   width = 1280,
   height = 720,
-  trim
+  trim,
+  crop = null,
+  cropMode = false,
+  onCropChange
 }) {
   const canvasRef = useRef(null);
   const rafRef = useRef(0);
+  // Renderer reads these via ref so the rAF loop doesn't need to restart on
+  // every crop tweak (which would jitter the preview during a drag).
+  const propsRef = useRef({ segments, mouse, display, background, crop, cropMode });
+  propsRef.current = { segments, mouse, display, background, crop, cropMode };
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     let last = performance.now();
-    const minDelta = 1000 / 30; // 30fps cap
+    const minDelta = 1000 / 30;
 
     const tick = (now) => {
       rafRef.current = requestAnimationFrame(tick);
@@ -30,30 +39,41 @@ export default function VideoCanvas({
       last = now;
       const video = videoRef.current;
       if (!video) return;
-      const tMs = Math.max(0, video.currentTime * 1000 - (trim?.start || 0) * 1000);
-      // We pass video.currentTime in ms relative to start of source; the
-      // renderer expects ms from recording start, which is the same since
-      // playback always starts at 0. We map zoom segments using raw t too.
+      const p = propsRef.current;
       renderFrame(ctx, video, {
         tMs: video.currentTime * 1000,
-        segments,
-        mouse,
-        displayWidth: display?.width,
-        displayHeight: display?.height,
-        background
+        segments: p.segments,
+        mouse: p.mouse,
+        displayWidth: p.display?.width,
+        displayHeight: p.display?.height,
+        background: p.background,
+        crop: p.cropMode ? null : p.crop
       });
     };
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [videoRef, segments, mouse, display, background, trim]);
+  }, [videoRef]);
+
+  const sourceW = display?.width || 1920;
+  const sourceH = display?.height || 1080;
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={width}
-      height={height}
-      style={{ borderRadius: 10 }}
-    />
+    <div
+      className="canvas-wrap"
+      style={{ aspectRatio: `${width} / ${height}` }}
+    >
+      <canvas ref={canvasRef} width={width} height={height} />
+      {cropMode && (
+        <CropOverlay
+          canvasWidth={width}
+          canvasHeight={height}
+          sourceWidth={sourceW}
+          sourceHeight={sourceH}
+          crop={crop}
+          onChange={onCropChange}
+        />
+      )}
+    </div>
   );
 }
