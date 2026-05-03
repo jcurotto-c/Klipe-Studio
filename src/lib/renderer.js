@@ -38,23 +38,90 @@ function activeRipples(mouse, t) {
   return out;
 }
 
-function drawBackground(ctx, w, h, palette) {
-  const grad = ctx.createLinearGradient(0, 0, w, h);
-  if (palette === 'sunset') {
-    grad.addColorStop(0, '#ff7e5f');
-    grad.addColorStop(1, '#feb47b');
-  } else if (palette === 'ocean') {
-    grad.addColorStop(0, '#2b5876');
-    grad.addColorStop(1, '#4e4376');
-  } else if (palette === 'mint') {
-    grad.addColorStop(0, '#0f9b0f');
-    grad.addColorStop(1, '#000000');
-  } else {
-    grad.addColorStop(0, '#1a1f2b');
-    grad.addColorStop(1, '#0b0d12');
-  }
+export const WALLPAPER_PRESETS = {
+  default: { from: '#1a1f2b', to: '#0b0d12' },
+  sunset:  { from: '#ff7e5f', to: '#feb47b' },
+  ocean:   { from: '#2b5876', to: '#4e4376' },
+  mint:    { from: '#0f9b0f', to: '#000000' },
+  violet:  { from: '#7c5cff', to: '#5cc4ff' },
+  ember:   { from: '#ff5c7a', to: '#ffb454' }
+};
+
+// Image cache so we don't re-decode the source on every frame.
+const imageCache = new Map();
+function getCachedImage(src) {
+  if (!src) return null;
+  let entry = imageCache.get(src);
+  if (entry) return entry;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  entry = { img, ready: false };
+  img.onload = () => { entry.ready = true; };
+  img.onerror = () => { entry.ready = false; };
+  img.src = src;
+  imageCache.set(src, entry);
+  return entry;
+}
+
+function normalizeBackground(bg) {
+  if (!bg) return { type: 'wallpaper', value: 'default', blur: 0 };
+  if (typeof bg === 'string') return { type: 'wallpaper', value: bg, blur: 0 };
+  return { blur: 0, ...bg };
+}
+
+function fillLinearGradient(ctx, w, h, from, to, angleDeg = 135) {
+  const a = ((angleDeg - 90) * Math.PI) / 180;
+  const cx = w / 2, cy = h / 2;
+  const r = Math.hypot(w, h) / 2;
+  const x0 = cx - Math.cos(a) * r;
+  const y0 = cy - Math.sin(a) * r;
+  const x1 = cx + Math.cos(a) * r;
+  const y1 = cy + Math.sin(a) * r;
+  const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+  grad.addColorStop(0, from);
+  grad.addColorStop(1, to);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, w, h);
+}
+
+function drawCoverImage(ctx, w, h, img) {
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  if (!iw || !ih) return;
+  const scale = Math.max(w / iw, h / ih);
+  const dw = iw * scale, dh = ih * scale;
+  ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+}
+
+function drawBackground(ctx, w, h, bg) {
+  const { type, blur = 0 } = bg;
+  const blurPx = Math.max(0, Number(blur) || 0);
+
+  if (blurPx > 0) {
+    ctx.save();
+    ctx.filter = `blur(${blurPx}px)`;
+  }
+
+  if (type === 'color') {
+    ctx.fillStyle = bg.value || '#0b0d12';
+    ctx.fillRect(0, 0, w, h);
+  } else if (type === 'gradient') {
+    const from = bg.from || '#1a1f2b';
+    const to = bg.to || '#0b0d12';
+    const angle = bg.angle == null ? 135 : bg.angle;
+    fillLinearGradient(ctx, w, h, from, to, angle);
+  } else if (type === 'image') {
+    // Solid fallback while the image decodes; never leave the canvas blank.
+    ctx.fillStyle = '#0b0d12';
+    ctx.fillRect(0, 0, w, h);
+    const entry = getCachedImage(bg.src);
+    if (entry && entry.ready) drawCoverImage(ctx, w, h, entry.img);
+  } else {
+    const preset = WALLPAPER_PRESETS[bg.value] || WALLPAPER_PRESETS.default;
+    fillLinearGradient(ctx, w, h, preset.from, preset.to, 135);
+  }
+
+  if (blurPx > 0) ctx.restore();
 }
 
 export function renderFrame(ctx, source, opts) {
@@ -78,7 +145,7 @@ export function renderFrame(ctx, source, opts) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  drawBackground(ctx, cw, ch, background);
+  drawBackground(ctx, cw, ch, normalizeBackground(background));
 
   const sw = source.videoWidth || source.displayWidth || displayWidth;
   const sh = source.videoHeight || source.displayHeight || displayHeight;

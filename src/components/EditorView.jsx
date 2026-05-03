@@ -3,6 +3,7 @@ import VideoCanvas from './VideoCanvas.jsx';
 import Timeline from './Timeline.jsx';
 import ExportPanel from './ExportPanel.jsx';
 import ZoomInspector from './ZoomInspector.jsx';
+import SidebarPanel from './SidebarPanel.jsx';
 import {
   generateZoomSegments,
   createManualSegment,
@@ -32,7 +33,7 @@ export default function EditorView({ recording, onNew }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [trim, setTrim] = useState({ start: 0, end: 0 });
-  const [background, setBackground] = useState('default');
+  const [background, setBackground] = useState({ type: 'wallpaper', value: 'default', blur: 0 });
   const [cropMode, setCropMode] = useState(false);
   const [crop, setCrop] = useState(null);
   const [zoomDefaults, setZoomDefaults] = useState(loadDefaults);
@@ -173,17 +174,24 @@ export default function EditorView({ recording, onNew }) {
           />
         </div>
 
-        {selected && (
-          <ZoomInspector
-            segment={selected}
-            display={recording.display}
-            onChange={(patch) => handleUpdateSegment(selected.id, patch)}
-            onRemove={() => handleRemoveSegment(selected.id)}
-            onApplyToAll={handleApplyToAll}
-            onSetDefault={handleSetDefault}
-            onClose={() => setSelectedId(null)}
+        <div className="editor-side">
+          {selected && (
+            <ZoomInspector
+              segment={selected}
+              display={recording.display}
+              onChange={(patch) => handleUpdateSegment(selected.id, patch)}
+              onRemove={() => handleRemoveSegment(selected.id)}
+              onApplyToAll={handleApplyToAll}
+              onSetDefault={handleSetDefault}
+              onClose={() => setSelectedId(null)}
+            />
+          )}
+
+          <SidebarPanel
+            background={background}
+            onBackgroundChange={setBackground}
           />
-        )}
+        </div>
       </div>
 
       <div style={{ display: 'grid', gap: 10 }}>
@@ -220,13 +228,6 @@ export default function EditorView({ recording, onNew }) {
             </button>
           )}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
-            <label style={{ color: 'var(--text-1)' }}>Background</label>
-            <select value={background} onChange={(e) => setBackground(e.target.value)}>
-              <option value="default">Dark</option>
-              <option value="sunset">Sunset</option>
-              <option value="ocean">Ocean</option>
-              <option value="mint">Mint</option>
-            </select>
             <button onClick={onNew}>+ New recording</button>
           </span>
         </div>
