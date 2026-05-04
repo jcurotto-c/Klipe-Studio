@@ -2,28 +2,35 @@
   "name": "klipe-studio",
   "version": "0.1.0",
   "description": "Screen recorder with automatic zoom (Screen Studio-like) for Windows.",
-  "main": "electron/main.js",
+  "main": "electron-dist/main.js",
   "author": "Klipe Studio",
   "license": "MIT",
   "private": true,
   "scripts": {
+    "typecheck": "tsc --build",
+    "build:electron": "tsc -p tsconfig.electron.json",
     "dev:vite": "vite",
-    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "dev:electron": "npm run build:electron && wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
     "dev": "concurrently -k -n VITE,ELECTRON -c blue,magenta \"npm:dev:vite\" \"npm:dev:electron\"",
     "build:vite": "vite build",
-    "build": "npm run build:vite && electron-builder --win --x64",
+    "build": "npm run typecheck && npm run build:vite && npm run build:electron && electron-builder --win --x64",
     "preview": "vite preview"
   },
   "dependencies": {
+    "framer-motion": "^12.38.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^31.3.0",
     "electron-builder": "^24.13.3",
+    "typescript": "^5.6.2",
     "vite": "^5.4.0",
     "wait-on": "^7.2.0"
   },
@@ -32,7 +39,7 @@
     "productName": "Klipe Studio",
     "files": [
       "dist/**/*",
-      "electron/**/*",
+      "electron-dist/**/*",
       "package.json"
     ],
     "directories": {
@@ -42,7 +49,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

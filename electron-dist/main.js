@@ -1,0 +1,297 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const electron_1 = require("electron");
+const node_path_1 = __importDefault(require("node:path"));
+const node_fs_1 = __importDefault(require("node:fs"));
+const node_child_process_1 = require("node:child_process");
+const isDev = process.env['NODE_ENV'] === 'development';
+let mainWindow = null;
+let hudWindow = null;
+let mouseTracker = null;
+const HUD_WIDTH = 560;
+const HUD_BAR_HEIGHT = 64;
+const HUD_HEIGHT = HUD_BAR_HEIGHT;
+const HUD_TOP_OFFSET = 18;
+function createWindow() {
+    mainWindow = new electron_1.BrowserWindow({
+        width: 1280,
+        height: 820,
+        minWidth: 960,
+        minHeight: 640,
+        backgroundColor: '#0b0d12',
+        title: 'Klipe Studio',
+        webPreferences: {
+            preload: node_path_1.default.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+        },
+    });
+    if (isDev) {
+        mainWindow.loadURL('http://localhost:5173');
+        mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+    else {
+        mainWindow.loadFile(node_path_1.default.join(__dirname, '..', 'dist', 'index.html'));
+    }
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+        stopMouseTracking();
+        if (hudWindow && !hudWindow.isDestroyed())
+            hudWindow.close();
+    });
+}
+function createHudWindow() {
+    if (hudWindow && !hudWindow.isDestroyed()) {
+        hudWindow.show();
+        hudWindow.focus();
+        return hudWindow;
+    }
+    const display = electron_1.screen.getPrimaryDisplay();
+    const { workArea } = display;
+    const x = Math.round(workArea.x + (workArea.width - HUD_WIDTH) / 2);
+    const y = workArea.y + HUD_TOP_OFFSET;
+    hudWindow = new electron_1.BrowserWindow({
+        width: HUD_WIDTH,
+        height: HUD_HEIGHT,
+        x,
+        y,
+        frame: false,
+        transparent: true,
+        resizable: false,
+        movable: true,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        hasShadow: true,
+        alwaysOnTop: true,
+        show: false,
+        backgroundColor: '#00000000',
+        webPreferences: {
+            preload: node_path_1.default.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+        },
+    });
+    hudWindow.setAlwaysOnTop(true, 'screen-saver');
+    hudWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    try {
+        hudWindow.setContentProtection(true);
+    }
+    catch { /* ignore */ }
+    if (isDev) {
+        hudWindow.loadURL('http://localhost:5173/hud.html');
+    }
+    else {
+        hudWindow.loadFile(node_path_1.default.join(__dirname, '..', 'dist', 'hud.html'));
+    }
+    hudWindow.once('ready-to-show', () => hudWindow?.show());
+    hudWindow.on('closed', () => {
+        hudWindow = null;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('hud:closed');
+        }
+    });
+    return hudWindow;
+}
+electron_1.app.whenReady().then(() => {
+    createWindow();
+    electron_1.app.on('activate', () => {
+        if (electron_1.BrowserWindow.getAllWindows().length === 0)
+            createWindow();
+    });
+});
+electron_1.app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin')
+        electron_1.app.quit();
+});
+electron_1.ipcMain.handle('get-screen-sources', async () => {
+    const sources = await electron_1.desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 320, height: 180 },
+    });
+    return sources.map((s) => ({
+        id: s.id,
+        name: s.name,
+        display_id: s.display_id,
+        thumbnail: s.thumbnail.toDataURL(),
+    }));
+});
+electron_1.ipcMain.handle('save-video-blob', async (_evt, { buffer, suggestedName, mimeType }) => {
+    const ext = mimeType && mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const defaultPath = node_path_1.default.join(electron_1.app.getPath('videos'), suggestedName || `klipe-${Date.now()}.${ext}`);
+    if (!mainWindow)
+        return { canceled: true };
+    const result = await electron_1.dialog.showSaveDialog(mainWindow, {
+        title: 'Save recording',
+        defaultPath,
+        filters: [
+            { name: 'Video', extensions: [ext] },
+            { name: 'All Files', extensions: ['*'] },
+        ],
+    });
+    if (result.canceled || !result.filePath)
+        return { canceled: true };
+    node_fs_1.default.writeFileSync(result.filePath, Buffer.from(buffer));
+    return { canceled: false, filePath: result.filePath };
+});
+electron_1.ipcMain.handle('get-primary-display-size', () => {
+    const d = electron_1.screen.getPrimaryDisplay();
+    return { width: d.size.width, height: d.size.height, scaleFactor: d.scaleFactor };
+});
+const POWERSHELL_TRACKER_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class W {
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+}
+"@
+$start = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+$lastL = $false; $lastR = $false; $lastM = $false
+$lastX = -9999; $lastY = -9999
+while ($true) {
+  $p = New-Object W+POINT
+  [void][W]::GetCursorPos([ref]$p)
+  $now = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+  $t = $now - $start
+  if ($p.X -ne $lastX -or $p.Y -ne $lastY) {
+    $lastX = $p.X; $lastY = $p.Y
+    Write-Host ("MOVE|{0}|{1}|{2}" -f $t, $p.X, $p.Y)
+  }
+  $l = ([W]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
+  $r = ([W]::GetAsyncKeyState(0x02) -band 0x8000) -ne 0
+  $m = ([W]::GetAsyncKeyState(0x04) -band 0x8000) -ne 0
+  if ($l -and -not $lastL) { Write-Host ("CLICK|{0}|{1}|{2}|left"   -f $t, $p.X, $p.Y) }
+  if ($r -and -not $lastR) { Write-Host ("CLICK|{0}|{1}|{2}|right"  -f $t, $p.X, $p.Y) }
+  if ($m -and -not $lastM) { Write-Host ("CLICK|{0}|{1}|{2}|middle" -f $t, $p.X, $p.Y) }
+  $lastL = $l; $lastR = $r; $lastM = $m
+  Start-Sleep -Milliseconds 12
+}
+`;
+function startMouseTracking() {
+    if (mouseTracker) {
+        return { ok: true, alreadyRunning: true, startTime: mouseTracker.startTime };
+    }
+    const startTime = Date.now();
+    if (process.platform !== 'win32') {
+        const handle = { startTime, fallbackInterval: null, proc: null };
+        handle.fallbackInterval = setInterval(() => {
+            if (!mainWindow)
+                return;
+            const p = electron_1.screen.getCursorScreenPoint();
+            mainWindow.webContents.send('mouse-event', {
+                type: 'move',
+                x: p.x,
+                y: p.y,
+                t: Date.now() - startTime,
+            });
+        }, 16);
+        mouseTracker = handle;
+        return { ok: true, startTime };
+    }
+    const proc = (0, node_child_process_1.spawn)('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', POWERSHELL_TRACKER_SCRIPT], { windowsHide: true });
+    let buffer = '';
+    proc.stdout.on('data', (chunk) => {
+        buffer += chunk.toString();
+        let idx;
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, idx).trim();
+            buffer = buffer.slice(idx + 1);
+            if (!line || !mainWindow)
+                continue;
+            const parts = line.split('|');
+            if (parts[0] === 'MOVE') {
+                mainWindow.webContents.send('mouse-event', {
+                    type: 'move',
+                    t: Number(parts[1]),
+                    x: Number(parts[2]),
+                    y: Number(parts[3]),
+                });
+            }
+            else if (parts[0] === 'CLICK') {
+                mainWindow.webContents.send('mouse-event', {
+                    type: 'click',
+                    t: Number(parts[1]),
+                    x: Number(parts[2]),
+                    y: Number(parts[3]),
+                    button: parts[4],
+                });
+            }
+        }
+    });
+    proc.stderr.on('data', (d) => console.error('[mouse-tracker]', d.toString()));
+    proc.on('exit', () => {
+        if (mouseTracker && mouseTracker.proc === proc)
+            mouseTracker = null;
+    });
+    mouseTracker = { startTime, proc };
+    return { ok: true, startTime };
+}
+function stopMouseTracking() {
+    if (!mouseTracker)
+        return { ok: true, notRunning: true, startTime: 0 };
+    if (mouseTracker.fallbackInterval)
+        clearInterval(mouseTracker.fallbackInterval);
+    if (mouseTracker.proc) {
+        try {
+            mouseTracker.proc.kill();
+        }
+        catch { /* ignore */ }
+    }
+    const startTime = mouseTracker.startTime;
+    mouseTracker = null;
+    return { ok: true, startTime };
+}
+electron_1.ipcMain.handle('start-mouse-tracking', () => startMouseTracking());
+electron_1.ipcMain.handle('stop-mouse-tracking', () => stopMouseTracking());
+electron_1.ipcMain.handle('hud:open', () => {
+    createHudWindow();
+    return { ok: true };
+});
+electron_1.ipcMain.handle('hud:close', () => {
+    if (hudWindow && !hudWindow.isDestroyed())
+        hudWindow.close();
+    return { ok: true };
+});
+electron_1.ipcMain.handle('hud:is-open', () => {
+    return !!(hudWindow && !hudWindow.isDestroyed());
+});
+electron_1.ipcMain.on('hud:event', (_evt, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('hud:event', payload);
+    }
+});
+electron_1.ipcMain.on('hud:push-state', (_evt, payload) => {
+    if (hudWindow && !hudWindow.isDestroyed()) {
+        hudWindow.webContents.send('hud:state', payload);
+    }
+});
+electron_1.ipcMain.on('hud:set-ignore-mouse', (_evt, ignore) => {
+    if (hudWindow && !hudWindow.isDestroyed()) {
+        hudWindow.setIgnoreMouseEvents(!!ignore, { forward: true });
+    }
+});
+electron_1.ipcMain.on('hud:set-size', (_evt, payload) => {
+    if (!hudWindow || hudWindow.isDestroyed())
+        return;
+    const w = Math.max(320, Math.round(payload?.width || HUD_WIDTH));
+    const h = Math.max(HUD_BAR_HEIGHT, Math.round(payload?.height || HUD_BAR_HEIGHT));
+    const display = electron_1.screen.getPrimaryDisplay();
+    const newX = Math.round(display.workArea.x + (display.workArea.width - w) / 2);
+    hudWindow.setBounds({
+        x: newX,
+        y: display.workArea.y + HUD_TOP_OFFSET,
+        width: w,
+        height: h,
+    }, false);
+});
+//# sourceMappingURL=main.js.map
