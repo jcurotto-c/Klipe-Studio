@@ -117,6 +117,23 @@ interface HistorySnapshot {
 
 const HISTORY_LIMIT = 100;
 
+interface AspectOption {
+  id: string;
+  label: string;
+  ratio: string;
+  /** w/h. null means follow the source recording. */
+  value: number | null;
+}
+
+const ASPECT_OPTIONS: ReadonlyArray<AspectOption> = [
+  { id: 'auto', label: 'Auto',     ratio: '',     value: null },
+  { id: '16:9', label: 'Wide',     ratio: '16:9', value: 16 / 9 },
+  { id: '9:16', label: 'Vertical', ratio: '9:16', value: 9 / 16 },
+  { id: '1:1',  label: 'Square',   ratio: '1:1',  value: 1 },
+  { id: '4:3',  label: 'Classic',  ratio: '4:3',  value: 4 / 3 },
+  { id: '3:4',  label: 'Tall',     ratio: '3:4',  value: 3 / 4 },
+];
+
 export default function EditorView({ recording, onNew, navExtraEl }: EditorViewProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [sourceDuration, setSourceDuration] = useState(0);
@@ -138,11 +155,36 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   const [cursorOptions, setCursorOptions] = useState<CursorOptions>(loadCursorOptions);
   const [frameOptions, setFrameOptions] = useState<FrameOptions>(loadFrameOptions);
   const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(loadAudioFxOptions);
-  const [aspectRatio, setAspectRatio] = useState<string>('16:9');
+  const [aspectRatioId, setAspectRatioId] = useState<string>('auto');
+  const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
+  const aspectMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const exportCrop: Crop | null = isFullCrop(crop) ? null : crop;
+
+  const aspectOption = useMemo<AspectOption>(
+    () => ASPECT_OPTIONS.find((o) => o.id === aspectRatioId) ?? ASPECT_OPTIONS[0]!,
+    [aspectRatioId],
+  );
+
+  useEffect(() => {
+    if (!aspectMenuOpen) return;
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as Node | null;
+      if (target && aspectMenuRef.current?.contains(target)) return;
+      setAspectMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setAspectMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [aspectMenuOpen]);
 
   const clicks = useMemo<KlipeMouseEvent[]>(
     () => recording.mouse.events.filter((e) => e.type === 'click'),
@@ -526,6 +568,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               cameraOptions={cameraOptions}
               cursorOptions={cursorOptions}
               frameOptions={frameOptions}
+              aspectRatio={aspectOption.value}
             />
             <video
               ref={cameraVideoRef}
@@ -582,19 +625,51 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               <TrashIcon />
             </button>
             <span className="controls-divider" aria-hidden="true" />
-            <div className="aspect-select">
-              <select
-                value={aspectRatio}
-                onChange={(e) => setAspectRatio(e.target.value)}
+            <div className="aspect-select" ref={aspectMenuRef}>
+              <button
+                type="button"
+                className="aspect-select-trigger"
+                onClick={() => setAspectMenuOpen((v) => !v)}
+                aria-haspopup="listbox"
+                aria-expanded={aspectMenuOpen}
                 aria-label="Aspect ratio"
               >
-                <option value="16:9">16:9</option>
-                <option value="9:16">9:16</option>
-                <option value="1:1">1:1</option>
-                <option value="4:3">4:3</option>
-                <option value="auto">Auto</option>
-              </select>
-              <ChevronDownIcon />
+                <AspectShapeIcon ratio={aspectOption.value} />
+                <span className="aspect-select-text">
+                  <span className="aspect-select-label">{aspectOption.label}</span>
+                  {aspectOption.ratio && (
+                    <span className="aspect-select-value">{aspectOption.ratio}</span>
+                  )}
+                </span>
+                <ChevronDownIcon />
+              </button>
+              {aspectMenuOpen && (
+                <div className="aspect-select-menu" role="listbox">
+                  {ASPECT_OPTIONS.map((opt) => {
+                    const selected = opt.id === aspectRatioId;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        className={`aspect-select-item ${selected ? 'is-selected' : ''}`}
+                        role="option"
+                        aria-selected={selected}
+                        onClick={() => {
+                          setAspectRatioId(opt.id);
+                          setAspectMenuOpen(false);
+                        }}
+                      >
+                        <AspectShapeIcon ratio={opt.value} />
+                        <span className="aspect-select-label">{opt.label}</span>
+                        {opt.ratio && (
+                          <span className="aspect-select-value">{opt.ratio}</span>
+                        )}
+                        {selected && <CheckIcon />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             <button
               className={`tool-btn ${cropMode ? 'active' : ''}`}
@@ -801,6 +876,42 @@ function ChevronDownIcon(): JSX.Element {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+function CheckIcon(): JSX.Element {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="5 12 10 17 19 7" />
+    </svg>
+  );
+}
+function AspectShapeIcon({ ratio }: { ratio: number | null }): JSX.Element {
+  // Bounding box 14x14; the rect is scaled to the requested ratio.
+  const box = 14;
+  const r = ratio && isFinite(ratio) && ratio > 0 ? ratio : 16 / 9;
+  let w: number;
+  let h: number;
+  if (r >= 1) {
+    w = box;
+    h = box / r;
+  } else {
+    h = box;
+    w = box * r;
+  }
+  const x = (box - w) / 2;
+  const y = (box - h) / 2;
+  return (
+    <svg
+      className="aspect-shape"
+      width="14"
+      height="14"
+      viewBox={`0 0 ${box} ${box}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    >
+      <rect x={x + 0.7} y={y + 0.7} width={Math.max(1, w - 1.4)} height={Math.max(1, h - 1.4)} rx="1.5" />
     </svg>
   );
 }

@@ -35,6 +35,8 @@ interface VideoCanvasProps {
   cameraOptions?: CameraOptions | null;
   cursorOptions?: CursorOptions | null;
   frameOptions?: FrameOptions | null;
+  /** Output aspect ratio (w/h). When null/undefined, falls back to source display ratio. */
+  aspectRatio?: number | null;
 }
 
 export default function VideoCanvas({
@@ -50,6 +52,7 @@ export default function VideoCanvas({
   cameraOptions = null,
   cursorOptions = null,
   frameOptions = null,
+  aspectRatio = null,
 }: VideoCanvasProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -83,7 +86,10 @@ export default function VideoCanvas({
     const apply = (): void => {
       const sourceW = display?.width || 1920;
       const sourceH = display?.height || 1080;
-      const ratio = sourceW / sourceH;
+      const ratio =
+        aspectRatio && isFinite(aspectRatio) && aspectRatio > 0
+          ? aspectRatio
+          : sourceW / sourceH;
       const parentRect = parent.getBoundingClientRect();
       const pw = parentRect.width;
       const ph = parentRect.height;
@@ -114,7 +120,7 @@ export default function VideoCanvas({
       ro.disconnect();
       window.removeEventListener('resize', apply);
     };
-  }, [display?.width, display?.height]);
+  }, [display?.width, display?.height, aspectRatio]);
 
   // Attach the PixiJS cursor overlay once, after the overlay canvas exists.
   useEffect(() => {
@@ -191,12 +197,16 @@ export default function VideoCanvas({
 
   const sourceW = display?.width || 1920;
   const sourceH = display?.height || 1080;
+  const wrapAspect =
+    aspectRatio && isFinite(aspectRatio) && aspectRatio > 0
+      ? `${aspectRatio}`
+      : `${sourceW} / ${sourceH}`;
 
   return (
     <div
       ref={wrapRef}
       className="canvas-wrap"
-      style={{ aspectRatio: `${sourceW} / ${sourceH}`, position: 'relative' }}
+      style={{ aspectRatio: wrapAspect, position: 'relative' }}
     >
       <canvas ref={canvasRef} width={sourceW} height={sourceH} />
       <canvas
