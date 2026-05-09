@@ -1,8 +1,7 @@
-import type { Display, ZoomDefaults, ZoomSegment } from '../types';
+import type { ZoomDefaults, ZoomSegment } from '../types';
 
 interface ZoomInspectorProps {
   segment: ZoomSegment;
-  display: Display | null | undefined;
   onChange: (patch: Partial<ZoomSegment>) => void;
   onRemove: () => void;
   onApplyToAll: (patch: Partial<ZoomSegment>) => void;
@@ -12,23 +11,15 @@ interface ZoomInspectorProps {
 
 export default function ZoomInspector({
   segment,
-  display,
   onChange,
   onRemove,
   onApplyToAll,
   onSetDefault,
   onClose,
 }: ZoomInspectorProps): JSX.Element {
-  const dw = display?.width || 1920;
-  const dh = display?.height || 1080;
-
   const durationMs = segment.tEnd - segment.tStart;
 
   const setScale = (v: string): void => onChange({ scale: Number(v) });
-  const setCenter = (axis: 'x' | 'y', v: string): void => {
-    const px = (Number(v) / 100) * (axis === 'x' ? dw : dh);
-    onChange({ center: { ...segment.center, [axis]: px } });
-  };
   const setDuration = (v: string): void => {
     const ms = Math.max(200, Number(v) * 1000);
     const mid = (segment.tStart + segment.tEnd) / 2;
@@ -36,9 +27,6 @@ export default function ZoomInspector({
   };
   const setEase = (key: 'easeIn' | 'easeOut', v: string): void =>
     onChange({ [key]: Math.max(0, Number(v)) });
-
-  const cx = Math.round((segment.center.x / dw) * 100);
-  const cy = Math.round((segment.center.y / dh) * 100);
 
   return (
     <aside className="zoom-inspector">
@@ -63,36 +51,6 @@ export default function ZoomInspector({
           step="0.05"
           value={segment.scale}
           onChange={(e) => setScale(e.target.value)}
-        />
-      </div>
-
-      <div className="zi-field">
-        <div className="zi-row">
-          <label>Focus X</label>
-          <span className="zi-value">{cx}%</span>
-        </div>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          step="0.5"
-          value={cx}
-          onChange={(e) => setCenter('x', e.target.value)}
-        />
-      </div>
-
-      <div className="zi-field">
-        <div className="zi-row">
-          <label>Focus Y</label>
-          <span className="zi-value">{cy}%</span>
-        </div>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          step="0.5"
-          value={cy}
-          onChange={(e) => setCenter('y', e.target.value)}
         />
       </div>
 

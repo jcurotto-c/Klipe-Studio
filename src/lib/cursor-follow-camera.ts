@@ -212,12 +212,9 @@ export function applyCursorFollow({
     state.springY.reset();
   }
 
-  // First frame in this zoom cycle — seat target and springs at the base
-  // focus so the camera enters the zoom centered on the click point and
-  // glides outward only if the cursor leaves the safe zone.
+  // First frame in this zoom cycle — seat springs at the base focus so the
+  // camera enters the zoom centered on the configured point.
   if (!state.initialized) {
-    state.targetX = baseFocusX;
-    state.targetY = baseFocusY;
     state.springX.snap(baseFocusX);
     state.springY.snap(baseFocusY);
     state.initialized = true;
@@ -243,27 +240,32 @@ export function applyCursorFollow({
   const safeHalfW = (visW / 2) * (1 - 2 * safeRatio);
   const safeHalfH = (visH / 2) * (1 - 2 * safeRatio);
 
-  // Update the target focus only if the cursor leaves the safe zone around
-  // the *previous target* (not the current spring value) — this keeps the
-  // safe-zone test stable while the spring is mid-glide.
-  let nextX = state.targetX;
-  let nextY = state.targetY;
-  if (cursorX > state.targetX + safeHalfW) {
+  // Anchor the camera at the user's configured focus and shift only when the
+  // cursor leaves the safe zone *around the anchor*. This keeps manual focus
+  // authoritative — dragging the inspector's Focus slider moves the camera —
+  // while still auto-panning to keep the cursor on screen during recording
+  // playback.
+  let nextX = baseFocusX;
+  let nextY = baseFocusY;
+  if (cursorX > baseFocusX + safeHalfW) {
     nextX = cursorX - safeHalfW;
-  } else if (cursorX < state.targetX - safeHalfW) {
+  } else if (cursorX < baseFocusX - safeHalfW) {
     nextX = cursorX + safeHalfW;
   }
-  if (cursorY > state.targetY + safeHalfH) {
+  if (cursorY > baseFocusY + safeHalfH) {
     nextY = cursorY - safeHalfH;
-  } else if (cursorY < state.targetY - safeHalfH) {
+  } else if (cursorY < baseFocusY - safeHalfH) {
     nextY = cursorY + safeHalfH;
   }
 
-  // Don't let the visible window extend past the source.
-  const halfVisW = visW / 2;
-  const halfVisH = visH / 2;
-  nextX = clamp(nextX, halfVisW, sourceWidth - halfVisW);
-  nextY = clamp(nextY, halfVisH, sourceHeight - halfVisH);
+  // Keep the focus point inside the source's coordinate space, but allow it
+  // to reach the edges. The renderer applies its own clamp on draw position
+  // (it knows about padding in contain mode and overflow in fill mode), so
+  // limiting focus to half-the-visible-window from each edge — as we did
+  // before — would silently veto the user's slider when they aim at the
+  // recording's borders.
+  nextX = clamp(nextX, 0, sourceWidth);
+  nextY = clamp(nextY, 0, sourceHeight);
 
   state.targetX = nextX;
   state.targetY = nextY;

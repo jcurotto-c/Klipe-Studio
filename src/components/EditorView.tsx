@@ -584,7 +584,6 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           <div className="editor-side-right">
             <ZoomInspector
               segment={selected}
-              display={recording.display}
               onChange={(patch) => handleUpdateSegment(selected.id, patch)}
               onRemove={() => handleRemoveSegment(selected.id)}
               onApplyToAll={handleApplyToAll}

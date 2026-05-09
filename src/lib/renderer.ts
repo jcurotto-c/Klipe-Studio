@@ -285,10 +285,31 @@ export function renderFrame(
   const swEff = crop ? crop.width * sw : sw;
   const shEff = crop ? crop.height * sh : sh;
 
-  const effectivePadding = paddingScale != null
-    ? paddingScale
-    : Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
-  const { baseX, baseY, baseW, baseH } = computeInsetRect(cw, ch, swEff, shEff, effectivePadding);
+  // When the canvas aspect doesn't match the source aspect, the user has
+  // explicitly asked for an output shape different from what was recorded
+  // (e.g. a 16:9 PC capture rendered into a 9:16 reels frame). Letterboxing
+  // would shrink the source into a tiny strip; instead, switch to cover-fit
+  // so the source fills the frame and the long axis is center-cropped.
+  const canvasAspect = cw / ch;
+  const sourceAspect = swEff / shEff;
+  const fillFrame = Math.abs(canvasAspect - sourceAspect) > 0.005;
+
+  let baseX: number;
+  let baseY: number;
+  let baseW: number;
+  let baseH: number;
+  if (fillFrame) {
+    const fit = Math.max(cw / swEff, ch / shEff);
+    baseW = swEff * fit;
+    baseH = shEff * fit;
+    baseX = (cw - baseW) / 2;
+    baseY = (ch - baseH) / 2;
+  } else {
+    const effectivePadding = paddingScale != null
+      ? paddingScale
+      : Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
+    ({ baseX, baseY, baseW, baseH } = computeInsetRect(cw, ch, swEff, shEff, effectivePadding));
+  }
 
   const { scale: baseScale, cx: baseCx, cy: baseCy, p: zoomP } = sampleZoom(segments, tMs);
 
@@ -345,7 +366,20 @@ export function renderFrame(
   const drawH = baseH * scale;
   let drawX: number;
   let drawY: number;
-  if (!focusInCrop || scale === 1) {
+  if (!focusInCrop) {
+    drawX = (cw - drawW) / 2;
+    drawY = (ch - drawH) / 2;
+  } else if (fillFrame) {
+    // Fill mode: place the source's focus point at the canvas center, then
+    // clamp so the source still covers the canvas. This makes Focus X/Y act
+    // as "which strip of the wider source is visible" even at scale=1, which
+    // is the natural control surface for recomposing into vertical reels.
+    drawX = cw / 2 - (fcx / swEff) * drawW;
+    drawY = ch / 2 - (fcy / shEff) * drawH;
+    drawX = Math.min(0, Math.max(cw - drawW, drawX));
+    drawY = Math.min(0, Math.max(ch - drawH, drawY));
+  } else if (scale === 1) {
+    // Contain mode at scale=1: source fits exactly, nothing to pan.
     drawX = (cw - drawW) / 2;
     drawY = (ch - drawH) / 2;
   } else {
@@ -358,9 +392,12 @@ export function renderFrame(
   }
 
   const radiusScale = (fOpts.radius / 24);
-  const radius = Math.min(drawW, drawH) * CORNER_RADIUS_RATIO * radiusScale;
+  // Fill-frame mode bleeds the source past the canvas edges, so rounded
+  // corners and shadow would render outside the visible area. Skip the
+  // chrome and let the canvas itself provide the edge.
+  const radius = fillFrame ? 0 : Math.min(drawW, drawH) * CORNER_RADIUS_RATIO * radiusScale;
 
-  if (fOpts.shadow > 0) {
+  if (fOpts.shadow > 0 && !fillFrame) {
     const shadowAlpha = Math.min(0.85, 0.18 + (fOpts.shadow / 100) * 0.7);
     const shadowBlur = 8 + (fOpts.shadow / 100) * 70;
     const shadowOffset = 4 + (fOpts.shadow / 100) * 28;
@@ -376,9 +413,11 @@ export function renderFrame(
   }
 
   ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(drawX, drawY, drawW, drawH, radius);
-  ctx.clip();
+  if (radius > 0) {
+    ctx.beginPath();
+    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+    ctx.clip();
+  }
   ctx.drawImage(source, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH);
   ctx.restore();
 
