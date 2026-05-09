@@ -263,6 +263,7 @@ button.ghost { background: transparent; }
   gap: 0;
   min-height: 0;
   min-width: 0;
+  padding: 12px;
 }
 .preview-toolbar {
   display: flex;
@@ -394,7 +395,7 @@ button.ghost { background: transparent; }
 .editor .preview {
   background: var(--bg-0);
   border: none;
-  border-radius: 0;
+  border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden; min-height: 0;
   flex: 1;

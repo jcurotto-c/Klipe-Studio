@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import VideoCanvas from './VideoCanvas';
 import Timeline from './Timeline';
@@ -26,7 +26,7 @@ import {
 } from '../lib/fragments';
 import { DEFAULT_CAMERA_OPTIONS } from './panels/CameraPanel';
 import { DEFAULT_CURSOR_OPTIONS } from '../lib/cursor-engine';
-import { DEFAULT_FRAME_OPTIONS } from '../lib/renderer';
+import { DEFAULT_FRAME_OPTIONS, WALLPAPER_PRESETS } from '../lib/renderer';
 import { DEFAULT_AUDIO_FX } from '../lib/sound-fx';
 import { useAudioFx } from '../lib/use-audio-fx';
 import type {
@@ -167,6 +167,24 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     () => ASPECT_OPTIONS.find((o) => o.id === aspectRatioId) ?? ASPECT_OPTIONS[0]!,
     [aspectRatioId],
   );
+
+  const previewSurroundStyle = useMemo<CSSProperties>(() => {
+    if (background.type === 'color') {
+      return { background: background.value || '#0b0d12' };
+    }
+    if (background.type === 'gradient') {
+      const angle = background.angle == null ? 135 : background.angle;
+      return { background: `linear-gradient(${angle}deg, ${background.from}, ${background.to})` };
+    }
+    if (background.type === 'image') {
+      // The canvas renders the image cover-fit to its own size; matching that
+      // exactly in CSS on the larger .preview rect would require runtime layout
+      // math, so we fall back to the dark surround here to avoid a visible seam.
+      return {};
+    }
+    const preset = WALLPAPER_PRESETS[background.value] ?? WALLPAPER_PRESETS['default']!;
+    return { background: `linear-gradient(135deg, ${preset.from}, ${preset.to})` };
+  }, [background]);
 
   useEffect(() => {
     if (!aspectMenuOpen) return;
@@ -545,7 +563,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
       <div className="editor-main">
 
         <div className="preview-wrap">
-          <div className="preview">
+          <div className="preview" style={previewSurroundStyle}>
             <video
               ref={videoRef}
               src={recording.url}
