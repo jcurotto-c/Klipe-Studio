@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('klipe', {
   startMouseTracking: () => ipcRenderer.invoke('start-mouse-tracking'),
   stopMouseTracking: () => ipcRenderer.invoke('stop-mouse-tracking'),
   getPrimaryDisplaySize: () => ipcRenderer.invoke('get-primary-display-size'),
+  focusWindowSource: (sourceId: string) => ipcRenderer.invoke('focus-window-source', sourceId),
   onMouseEvent: (cb: (payload: unknown) => void) => {
     const listener = (_evt: IpcRendererEvent, payload: unknown): void => cb(payload);
     ipcRenderer.on('mouse-event', listener);
@@ -24,6 +25,13 @@ contextBridge.exposeInMainWorld('klipeHud', {
   open: () => ipcRenderer.invoke('hud:open'),
   close: () => ipcRenderer.invoke('hud:close'),
   isOpen: () => ipcRenderer.invoke('hud:is-open'),
+  minimize: () => ipcRenderer.invoke('hud:minimize'),
+  show: () => ipcRenderer.invoke('hud:show'),
+  quitApp: () => ipcRenderer.invoke('app:quit'),
+  showMain: () => ipcRenderer.invoke('main:show'),
+  hideMain: () => ipcRenderer.invoke('main:hide'),
+  moveToDisplay: (displayId: string | number | null) =>
+    ipcRenderer.invoke('hud:move-to-display', displayId),
 
   emit: (payload: unknown) => ipcRenderer.send('hud:event', payload),
 

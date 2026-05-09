@@ -67,25 +67,43 @@ export default function VideoCanvas({
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
     if (!canvas || !wrap) return;
+    const parent = wrap.parentElement;
+    if (!parent) return;
 
     const apply = (): void => {
+      const sourceW = display?.width || 1920;
+      const sourceH = display?.height || 1080;
+      const ratio = sourceW / sourceH;
+      const parentRect = parent.getBoundingClientRect();
+      const pw = parentRect.width;
+      const ph = parentRect.height;
+      if (pw <= 0 || ph <= 0) return;
+
+      let w = pw;
+      let h = pw / ratio;
+      if (h > ph) {
+        h = ph;
+        w = ph * ratio;
+      }
+      wrap.style.width = `${w}px`;
+      wrap.style.height = `${h}px`;
+
       const dpr = window.devicePixelRatio || 1;
-      const rect = wrap.getBoundingClientRect();
-      const w = Math.max(1, Math.round(rect.width * dpr));
-      const h = Math.max(1, Math.round(rect.height * dpr));
-      if (canvas.width !== w) canvas.width = w;
-      if (canvas.height !== h) canvas.height = h;
+      const cw = Math.max(1, Math.round(w * dpr));
+      const ch = Math.max(1, Math.round(h * dpr));
+      if (canvas.width !== cw) canvas.width = cw;
+      if (canvas.height !== ch) canvas.height = ch;
     };
 
     apply();
     const ro = new ResizeObserver(apply);
-    ro.observe(wrap);
+    ro.observe(parent);
     window.addEventListener('resize', apply);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', apply);
     };
-  }, []);
+  }, [display?.width, display?.height]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

@@ -1,12 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  listScreenSources,
   buildScreenStream,
   createRecorder,
-  getPrimaryDisplaySize,
   type RecorderController,
 } from '../lib/capture';
-import type { Display, HudEvent, Recording, ScreenSource } from '../types';
+import type { Display, HudEvent, Recording } from '../types';
 
 const AUTO_ZOOM_KEY = 'klipe.autoZoom';
 
@@ -27,70 +25,55 @@ interface RecorderViewProps {
 interface ActiveRecorder {
   rec: RecorderController;
   display: Display;
+  autoZoom: boolean;
 }
 
 export default function RecorderView({ onRecordingDone }: RecorderViewProps): JSX.Element {
-  const [sources, setSources] = useState<ScreenSource[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [withMic, setWithMic] = useState(true);
-  const [autoZoom, setAutoZoom] = useState<boolean>(loadAutoZoom);
-  const [countdown, setCountdown] = useState(0);
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hudOpen, setHudOpen] = useState(false);
   const recorderRef = useRef<ActiveRecorder | null>(null);
+  const autoZoomRef = useRef<boolean>(loadAutoZoom());
 
-  const handleToggleAutoZoom = useCallback((next: boolean): void => {
-    setAutoZoom(next);
-    try { localStorage.setItem(AUTO_ZOOM_KEY, String(next)); } catch { /* ignore */ }
-  }, []);
-
-  const refresh = useCallback(async () => {
+  const beginRecording = useCallback(async (
+    sourceId: string,
+    withMic: boolean,
+    autoZoom: boolean,
+    display: Display,
+  ) => {
     setError(null);
     try {
-      const s = await listScreenSources();
-      setSources(s);
-      if (!selectedId && s.length) {
-        const screen0 = s.find((x) => x.id.startsWith('screen:')) || s[0]!;
-        setSelectedId(screen0.id);
-      }
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [selectedId]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const beginRecording = useCallback(async () => {
-    if (!selectedId) return;
-    setError(null);
-    try {
-      for (let i = 3; i >= 1; i--) {
-        setCountdown(i);
-        await new Promise((r) => setTimeout(r, 800));
-      }
-      setCountdown(0);
-
-      const display = await getPrimaryDisplaySize();
-      const capture = await buildScreenStream(selectedId, { withMic });
+      const capture = await buildScreenStream(sourceId, { withMic });
+      const track = capture.screen.getVideoTracks()[0];
+      const settings = track?.getSettings?.() ?? {};
+      const realW = typeof settings.width === 'number' && settings.width > 0
+        ? settings.width
+        : display.width;
+      const realH = typeof settings.height === 'number' && settings.height > 0
+        ? settings.height
+        : display.height;
+      const realDisplay: Display = {
+        width: realW,
+        height: realH,
+        scaleFactor: display.scaleFactor,
+      };
       const rec = createRecorder(capture);
-      recorderRef.current = { rec, display };
+      recorderRef.current = { rec, display: realDisplay, autoZoom };
       await rec.start();
       setRecording(true);
+      window.klipeHud?.pushState?.({ recording: true });
     } catch (e) {
       console.error(e);
       setError(String(e));
-      setCountdown(0);
+      window.klipeHud?.show?.();
     }
-  }, [selectedId, withMic]);
+  }, []);
 
   const stopRecording = useCallback(async () => {
     if (!recorderRef.current) return;
-    const { rec, display } = recorderRef.current;
+    const { rec, display, autoZoom } = recorderRef.current;
     const result = await rec.stop();
     setRecording(false);
+    window.klipeHud?.pushState?.({ recording: false });
     recorderRef.current = null;
     const url = URL.createObjectURL(result.blob);
     onRecordingDone({
@@ -101,11 +84,7 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
       display,
       autoZoom,
     });
-  }, [onRecordingDone, autoZoom]);
-
-  useEffect(() => {
-    window.klipeHud?.pushState?.({ recording });
-  }, [recording]);
+  }, [onRecordingDone]);
 
   useEffect(() => {
     if (!window.klipeHud?.onEvent) return;
@@ -113,45 +92,31 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
       if (!evt) return;
       switch (evt.type) {
         case 'start-recording':
-          if (evt.micId) setWithMic(true);
-          beginRecording();
+          autoZoomRef.current = evt.autoZoom;
+          beginRecording(evt.sourceId, !!evt.micId, evt.autoZoom, evt.display);
           break;
         case 'stop-recording':
           stopRecording();
           break;
-        case 'mode-change':
-        case 'mic-change':
-        case 'camera-change':
-        case 'system-audio-change':
+        case 'auto-zoom-change':
+          autoZoomRef.current = evt.enabled;
           break;
         default:
           break;
       }
     });
-    const offClosed = window.klipeHud.onClosed?.(() => setHudOpen(false));
     return () => {
       offEvent?.();
-      offClosed?.();
     };
   }, [beginRecording, stopRecording]);
 
-  const openHud = useCallback(async () => {
-    if (!window.klipeHud) return;
-    await window.klipeHud.open();
-    setHudOpen(true);
-  }, []);
-
-  const closeHud = useCallback(async () => {
-    if (!window.klipeHud) return;
-    await window.klipeHud.close();
-    setHudOpen(false);
-  }, []);
-
   return (
-    <div className="recorder">
+    <div className="recorder recorder-headless">
       <div>
-        <h2>Record your screen</h2>
-        <div className="sub">Pick a screen or window to capture, then hit Record.</div>
+        <h2>Klipe Studio is running in the floating toolbar.</h2>
+        <div className="sub">
+          Use the floating toolbar at the top of your screen to choose a source and record.
+        </div>
       </div>
 
       {error && (
@@ -160,68 +125,19 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
         </div>
       )}
 
-      <div className="sources">
-        {sources.map((s) => (
-          <div
-            key={s.id}
-            className={`source-card ${selectedId === s.id ? 'selected' : ''}`}
-            onClick={() => setSelectedId(s.id)}
-          >
-            <img src={s.thumbnail} alt={s.name} />
-            <div className="name">{s.name}</div>
-          </div>
-        ))}
-        {sources.length === 0 && <div className="empty">Loading sources…</div>}
-      </div>
-
       <div className="options">
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={withMic}
-            onChange={(e) => setWithMic(e.target.checked)}
-          />
-          Capture microphone
-        </label>
-        <label className="toggle" title="Analyze cursor activity after recording and create zoom segments automatically.">
-          <input
-            type="checkbox"
-            checked={autoZoom}
-            onChange={(e) => handleToggleAutoZoom(e.target.checked)}
-          />
-          Create zooms automatically
-        </label>
-        <button className="ghost" onClick={refresh}>Refresh sources</button>
         <button
-          className={hudOpen ? 'tool active' : 'tool'}
-          onClick={hudOpen ? closeHud : openHud}
-          title="Floating control bar"
+          className="ghost"
+          onClick={() => window.klipeHud?.show?.()}
         >
-          {hudOpen ? '◐ Hide floating bar' : '◐ Show floating bar'}
+          Show floating toolbar
         </button>
-        <div className="actions" style={{ marginLeft: 'auto' }}>
-          {!recording ? (
-            <button
-              className="primary"
-              disabled={!selectedId || countdown > 0}
-              onClick={beginRecording}
-            >
-              ● Record
-            </button>
-          ) : (
-            <button className="danger" onClick={stopRecording}>■ Stop</button>
-          )}
-        </div>
+        {recording && (
+          <button className="danger" onClick={stopRecording} style={{ marginLeft: 'auto' }}>
+            ■ Stop
+          </button>
+        )}
       </div>
-
-      {countdown > 0 && <div className="countdown">{countdown}</div>}
-      {recording && (
-        <div className="recording-bar">
-          <span className="dot" />
-          <span>Recording — clicks &amp; cursor are being captured</span>
-          <button className="danger" onClick={stopRecording}>■ Stop</button>
-        </div>
-      )}
     </div>
   );
 }

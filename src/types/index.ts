@@ -167,11 +167,19 @@ export interface CursorSampleHidden {
 
 export type CursorSample = CursorSampleVisible | CursorSampleHidden;
 
+export type ScreenSourceKind = 'screen' | 'window';
+
 export interface ScreenSource {
   id: string;
   name: string;
   display_id: string;
   thumbnail: string;
+  kind: ScreenSourceKind;
+  width: number;
+  height: number;
+  scaleFactor: number;
+  displayId: string | null;
+  primary: boolean;
 }
 
 export interface SaveVideoBlobResult {
@@ -197,9 +205,18 @@ export interface HudState {
 }
 
 export type HudEvent =
-  | { type: 'start-recording'; mode: string; micId: string; camId: string | null; systemAudio: boolean }
+  | {
+      type: 'start-recording';
+      sourceId: string;
+      micId: string;
+      camId: string | null;
+      systemAudio: boolean;
+      autoZoom: boolean;
+      display: Display;
+    }
   | { type: 'stop-recording' }
-  | { type: 'mode-change'; mode: string }
+  | { type: 'source-change'; sourceId: string }
   | { type: 'mic-change'; deviceId: string }
   | { type: 'camera-change'; deviceId: string }
-  | { type: 'system-audio-change'; enabled: boolean };
+  | { type: 'system-audio-change'; enabled: boolean }
+  | { type: 'auto-zoom-change'; enabled: boolean };

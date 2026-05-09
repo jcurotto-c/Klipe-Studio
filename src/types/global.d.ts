@@ -26,6 +26,7 @@ declare global {
     startMouseTracking: () => Promise<MouseTrackingStartResult>;
     stopMouseTracking: () => Promise<MouseTrackingStopResult>;
     getPrimaryDisplaySize: () => Promise<Display>;
+    focusWindowSource: (sourceId: string) => Promise<{ ok: boolean }>;
     onMouseEvent: (cb: (evt: KlipeMouseEvent) => void) => () => void;
   }
 
@@ -33,6 +34,12 @@ declare global {
     open: () => Promise<{ ok: boolean }>;
     close: () => Promise<{ ok: boolean }>;
     isOpen: () => Promise<boolean>;
+    minimize: () => Promise<{ ok: boolean }>;
+    show: () => Promise<{ ok: boolean }>;
+    quitApp: () => Promise<void>;
+    showMain: () => Promise<{ ok: boolean }>;
+    hideMain: () => Promise<{ ok: boolean }>;
+    moveToDisplay: (displayId: string | number | null) => Promise<{ ok: boolean }>;
     emit: (payload: HudEvent) => void;
     setIgnoreMouse: (ignore: boolean) => void;
     setSize: (width: number, height: number) => void;

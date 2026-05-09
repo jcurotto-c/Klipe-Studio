@@ -16,8 +16,8 @@ interface MouseTrackerHandle {
 
 let mouseTracker: MouseTrackerHandle | null = null;
 
-const HUD_WIDTH = 560;
-const HUD_BAR_HEIGHT = 64;
+const HUD_WIDTH = 680;
+const HUD_BAR_HEIGHT = 88;
 const HUD_HEIGHT = HUD_BAR_HEIGHT;
 const HUD_TOP_OFFSET = 18;
 
@@ -29,6 +29,7 @@ function createWindow(): void {
     minHeight: 640,
     backgroundColor: '#0b0d12',
     title: 'Klipe Studio',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -39,10 +40,15 @@ function createWindow(): void {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  mainWindow.on('close', (e) => {
+    if (hudWindow && !hudWindow.isDestroyed() && mainWindow && !mainWindow.isVisible()) {
+      e.preventDefault();
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -58,7 +64,8 @@ function createHudWindow(): BrowserWindow {
     return hudWindow;
   }
 
-  const display = screen.getPrimaryDisplay();
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor) || screen.getPrimaryDisplay();
   const { workArea } = display;
   const x = Math.round(workArea.x + (workArea.width - HUD_WIDTH) / 2);
   const y = workArea.y + HUD_TOP_OFFSET;
@@ -112,26 +119,82 @@ function createHudWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   createWindow();
+  createHudWindow();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+      createHudWindow();
+    }
   });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  app.quit();
 });
 
 ipcMain.handle('get-screen-sources', async () => {
   const sources = await desktopCapturer.getSources({
-    types: ['screen', 'window'],
+    types: ['window', 'screen'],
     thumbnailSize: { width: 320, height: 180 },
+    fetchWindowIcons: true,
   });
-  return sources.map((s) => ({
-    id: s.id,
-    name: s.name,
-    display_id: s.display_id,
-    thumbnail: s.thumbnail.toDataURL(),
-  }));
+  const displays = screen.getAllDisplays();
+  const primaryId = screen.getPrimaryDisplay().id;
+  const ownIds = new Set(
+    BrowserWindow.getAllWindows()
+      .map((w) => {
+        try { return w.getMediaSourceId(); } catch { return ''; }
+      })
+      .filter(Boolean),
+  );
+  console.log(
+    `[desktopCapturer] sources=${sources.length}`,
+    sources.map((s) => `${s.id}::${s.name}`),
+  );
+
+  let screenIndex = 0;
+  return sources
+    .filter((s) => !ownIds.has(s.id))
+    .map((s) => {
+      const isScreen = s.id.startsWith('screen:');
+      let width = 0;
+      let height = 0;
+      let scaleFactor = 1;
+      let displayId: string | null = null;
+      let primary = false;
+      let name = s.name;
+
+      if (isScreen) {
+        let matched = displays.find((d) => String(d.id) === String(s.display_id));
+        if (!matched) matched = displays[screenIndex] || displays[0];
+        const idx = matched ? displays.indexOf(matched) : screenIndex;
+        screenIndex += 1;
+        if (matched) {
+          width = Math.round(matched.size.width);
+          height = Math.round(matched.size.height);
+          scaleFactor = matched.scaleFactor;
+          displayId = String(matched.id);
+          primary = matched.id === primaryId;
+          name = `Display ${idx + 1}${primary ? ' (Primary)' : ''}`;
+        }
+      } else {
+        const tsize = s.thumbnail.getSize();
+        width = tsize.width;
+        height = tsize.height;
+      }
+      return {
+        id: s.id,
+        name,
+        display_id: s.display_id,
+        thumbnail: s.thumbnail.isEmpty() ? '' : s.thumbnail.toDataURL(),
+        kind: isScreen ? ('screen' as const) : ('window' as const),
+        width,
+        height,
+        scaleFactor,
+        displayId,
+        primary,
+      };
+    });
 });
 
 interface SaveVideoBlobArgs {
@@ -289,6 +352,48 @@ function stopMouseTracking(): MouseTrackingResult {
 ipcMain.handle('start-mouse-tracking', () => startMouseTracking());
 ipcMain.handle('stop-mouse-tracking', () => stopMouseTracking());
 
+const FOCUS_WINDOW_SCRIPT = (hwnd: string): string => `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class FW {
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+}
+"@
+$h = [IntPtr]::new([Int64]${hwnd})
+if ([FW]::IsIconic($h)) { [void][FW]::ShowWindow($h, 9) }
+[FW]::SwitchToThisWindow($h, $true)
+[void][FW]::BringWindowToTop($h)
+[void][FW]::SetForegroundWindow($h)
+`;
+
+ipcMain.handle('focus-window-source', async (_evt: IpcMainInvokeEvent, sourceId: unknown) => {
+  if (process.platform !== 'win32') return { ok: false as const };
+  if (typeof sourceId !== 'string') return { ok: false as const };
+  const parts = sourceId.split(':');
+  if (parts[0] !== 'window' || !parts[1] || !/^\d+$/.test(parts[1])) {
+    return { ok: false as const };
+  }
+  const hwnd = parts[1];
+  return new Promise<{ ok: boolean }>((resolve) => {
+    const proc = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', FOCUS_WINDOW_SCRIPT(hwnd)],
+      { windowsHide: true },
+    );
+    proc.on('exit', () => resolve({ ok: true }));
+    proc.on('error', (err) => {
+      console.error('[focus-window-source]', err);
+      resolve({ ok: false });
+    });
+  });
+});
+
 ipcMain.handle('hud:open', () => {
   createHudWindow();
   return { ok: true };
@@ -326,11 +431,51 @@ interface HudSizePayload {
   height?: number;
 }
 
+ipcMain.handle('hud:minimize', () => {
+  if (hudWindow && !hudWindow.isDestroyed()) hudWindow.hide();
+  return { ok: true };
+});
+
+ipcMain.handle('hud:show', () => {
+  if (hudWindow && !hudWindow.isDestroyed()) {
+    hudWindow.show();
+    hudWindow.focus();
+  } else {
+    createHudWindow();
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('app:quit', () => {
+  app.exit(0);
+});
+
+ipcMain.handle('main:show', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    if (isDev) {
+      try { mainWindow.webContents.openDevTools({ mode: 'detach' }); } catch { /* ignore */ }
+    }
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('main:hide', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+  return { ok: true };
+});
+
 ipcMain.on('hud:set-size', (_evt, payload: HudSizePayload | undefined) => {
   if (!hudWindow || hudWindow.isDestroyed()) return;
-  const w = Math.max(320, Math.round(payload?.width || HUD_WIDTH));
+  const w = Math.max(420, Math.round(payload?.width || HUD_WIDTH));
   const h = Math.max(HUD_BAR_HEIGHT, Math.round(payload?.height || HUD_BAR_HEIGHT));
-  const display = screen.getPrimaryDisplay();
+  const current = hudWindow.getBounds();
+  const center = {
+    x: Math.round(current.x + current.width / 2),
+    y: Math.round(current.y + current.height / 2),
+  };
+  const display = screen.getDisplayNearestPoint(center) || screen.getPrimaryDisplay();
   const newX = Math.round(display.workArea.x + (display.workArea.width - w) / 2);
   hudWindow.setBounds({
     x: newX,
@@ -338,4 +483,16 @@ ipcMain.on('hud:set-size', (_evt, payload: HudSizePayload | undefined) => {
     width: w,
     height: h,
   }, false);
+});
+
+ipcMain.handle('hud:move-to-display', (_evt, displayId: string | number | null | undefined) => {
+  if (!hudWindow || hudWindow.isDestroyed()) return { ok: false as const };
+  if (displayId == null || displayId === '') return { ok: false as const };
+  const target = screen.getAllDisplays().find((d) => String(d.id) === String(displayId));
+  if (!target) return { ok: false as const };
+  const bounds = hudWindow.getBounds();
+  const x = Math.round(target.workArea.x + (target.workArea.width - bounds.width) / 2);
+  const y = target.workArea.y + HUD_TOP_OFFSET;
+  hudWindow.setBounds({ x, y, width: bounds.width, height: bounds.height }, false);
+  return { ok: true as const };
 });

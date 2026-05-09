@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import RecorderView from './components/RecorderView';
 import EditorView from './components/EditorView';
 import type { Recording } from './types';
@@ -18,13 +18,23 @@ export default function App(): JSX.Element {
   const handleRecordingDone = useCallback((rec: Recording) => {
     setRecording(rec);
     setView('editor');
+    window.klipeHud?.showMain?.();
   }, []);
 
   const handleNewRecording = useCallback(() => {
     if (recording?.url) URL.revokeObjectURL(recording.url);
     setRecording(null);
     setView('recorder');
+    window.klipeHud?.hideMain?.();
   }, [recording]);
+
+  useEffect(() => {
+    if (view === 'editor') {
+      window.klipeHud?.minimize?.();
+    } else {
+      window.klipeHud?.show?.();
+    }
+  }, [view]);
 
   return (
     <div className="app">
