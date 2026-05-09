@@ -70,6 +70,23 @@ export const WALLPAPER_PRESETS: Record<string, WallpaperPreset> = {
   ember:   { from: '#ff5c7a', to: '#ffb454' },
 };
 
+export interface ImagePreset {
+  src: string;
+  label?: string;
+  thumbnail?: string;
+}
+
+/**
+ * Image presets are auto-discovered from `public/ffmpeg/wallpapers/`.
+ * Drop a JPG/PNG/WEBP/GIF/AVIF into that folder — Vite picks it up via the
+ * `virtual:wallpapers` plugin (see vite.config.ts) and it appears in the panel.
+ */
+import wallpaperManifest, { type WallpaperManifestEntry } from 'virtual:wallpapers';
+
+export const IMAGE_PRESETS: Record<string, ImagePreset> = Object.fromEntries(
+  wallpaperManifest.map((w: WallpaperManifestEntry) => [w.key, { src: w.src, label: w.label }]),
+);
+
 interface ImageCacheEntry {
   img: HTMLImageElement;
   ready: boolean;

@@ -1,8 +1,42 @@
-import { useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react';
-import { WALLPAPER_PRESETS, DEFAULT_FRAME_OPTIONS } from '../../lib/renderer';
+import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react';
+import { WALLPAPER_PRESETS, IMAGE_PRESETS, DEFAULT_FRAME_OPTIONS } from '../../lib/renderer';
 import type { Background, Crop, FrameOptions } from '../../types';
 
 type BgTab = 'image' | 'video' | 'color' | 'gradient';
+
+const CUSTOM_IMAGES_STORAGE_KEY = 'klipe.customImagePresets.v1';
+
+interface CustomImagePreset {
+  id: string;
+  src: string;
+  label: string;
+}
+
+function loadCustomImages(): CustomImagePreset[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_IMAGES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (x): x is CustomImagePreset =>
+        !!x && typeof x === 'object'
+        && typeof (x as CustomImagePreset).id === 'string'
+        && typeof (x as CustomImagePreset).src === 'string'
+        && typeof (x as CustomImagePreset).label === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomImages(list: CustomImagePreset[]): void {
+  try {
+    localStorage.setItem(CUSTOM_IMAGES_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    /* storage may be unavailable; ignore */
+  }
+}
 
 const TABS: ReadonlyArray<{ id: BgTab; label: string; disabled?: boolean }> = [
   { id: 'image',    label: 'Image' },
@@ -12,12 +46,12 @@ const TABS: ReadonlyArray<{ id: BgTab; label: string; disabled?: boolean }> = [
 ];
 
 function tabFromValue(bg: Background | null | undefined): BgTab {
-  if (!bg) return 'image';
-  if (bg.type === 'wallpaper') return 'image';
+  if (!bg) return 'color';
+  if (bg.type === 'wallpaper') return 'color';
   if (bg.type === 'gradient') return 'gradient';
   if (bg.type === 'color') return 'color';
   if (bg.type === 'image') return 'image';
-  return 'image';
+  return 'color';
 }
 
 interface BackgroundPanelProps {
@@ -38,7 +72,24 @@ export default function BackgroundPanel({
   onCropChange,
 }: BackgroundPanelProps): JSX.Element {
   const [tab, setTab] = useState<BgTab>(() => tabFromValue(value));
+  const [customImages, setCustomImages] = useState<CustomImagePreset[]>(() => loadCustomImages());
   const blur = (value && 'blur' in value && value.blur) || 0;
+
+  useEffect(() => {
+    saveCustomImages(customImages);
+  }, [customImages]);
+
+  const addCustomImage = (src: string): CustomImagePreset => {
+    const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const label = `Custom ${customImages.length + 1}`;
+    const next: CustomImagePreset = { id, src, label };
+    setCustomImages((prev) => [...prev, next]);
+    return next;
+  };
+
+  const removeCustomImage = (id: string): void => {
+    setCustomImages((prev) => prev.filter((c) => c.id !== id));
+  };
 
   const update = (patch: Partial<Background>): void => {
     const merged = { ...(value ?? {}), ...patch } as Background;
@@ -49,8 +100,10 @@ export default function BackgroundPanel({
     if (id === 'video') return;
     setTab(id);
     if (id === 'image') {
-      if (value && (value.type === 'wallpaper' || value.type === 'image')) return;
-      onChange({ type: 'wallpaper', value: 'default', blur });
+      if (value && value.type === 'image') return;
+      const firstKey = Object.keys(IMAGE_PRESETS)[0];
+      const src = firstKey ? IMAGE_PRESETS[firstKey]!.src : null;
+      onChange({ type: 'image', src, blur });
     }
     if (id === 'gradient') {
       const from = value && value.type === 'gradient' ? value.from : '#7c5cff';
@@ -59,8 +112,8 @@ export default function BackgroundPanel({
       onChange({ type: 'gradient', from, to, angle, blur });
     }
     if (id === 'color') {
-      const v = value && value.type === 'color' ? value.value : '#7c5cff';
-      onChange({ type: 'color', value: v, blur });
+      if (value && (value.type === 'color' || value.type === 'wallpaper')) return;
+      onChange({ type: 'wallpaper', value: 'default', blur });
     }
   };
 
@@ -70,7 +123,7 @@ export default function BackgroundPanel({
 
   const resetBackground = (): void => {
     onChange({ type: 'wallpaper', value: 'default', blur: 0 });
-    setTab('image');
+    setTab('color');
   };
 
   const resetFrame = (): void => {
@@ -129,7 +182,15 @@ export default function BackgroundPanel({
           ))}
         </div>
 
-        {tab === 'image' && <WallpaperImageTab value={value} update={update} />}
+        {tab === 'image' && (
+          <WallpaperImageTab
+            value={value}
+            update={update}
+            customImages={customImages}
+            onAddCustomImage={addCustomImage}
+            onRemoveCustomImage={removeCustomImage}
+          />
+        )}
         {tab === 'gradient' && <GradientTab value={value} update={update} />}
         {tab === 'color' && <ColorTab value={value} update={update} />}
       </SectionCard>
@@ -310,18 +371,38 @@ interface SubTabProps {
   update: (patch: Partial<Background>) => void;
 }
 
-function WallpaperImageTab({ value, update }: SubTabProps): JSX.Element {
+interface WallpaperImageTabProps extends SubTabProps {
+  customImages: CustomImagePreset[];
+  onAddCustomImage: (src: string) => CustomImagePreset;
+  onRemoveCustomImage: (id: string) => void;
+}
+
+function WallpaperImageTab({
+  value,
+  update,
+  customImages,
+  onAddCustomImage,
+  onRemoveCustomImage,
+}: WallpaperImageTabProps): JSX.Element {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
-  const customSrc = value && value.type === 'image' ? value.src : null;
-  const activeWallpaper = value && value.type === 'wallpaper' ? value.value : null;
+  const currentSrc = value && value.type === 'image' ? value.src : null;
+  const presetEntries = Object.entries(IMAGE_PRESETS);
+  const matchedPresetKey = currentSrc
+    ? presetEntries.find(([, p]) => p.src === currentSrc)?.[0] ?? null
+    : null;
+  const matchedCustomId = currentSrc
+    ? customImages.find((c) => c.src === currentSrc)?.id ?? null
+    : null;
 
   const readFile = (file: File | null | undefined): void => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result;
-      if (typeof result === 'string') update({ type: 'image', src: result });
+      if (typeof result !== 'string') return;
+      const added = onAddCustomImage(result);
+      update({ type: 'image', src: added.src });
     };
     reader.readAsDataURL(file);
   };
@@ -343,19 +424,27 @@ function WallpaperImageTab({ value, update }: SubTabProps): JSX.Element {
     if (file) readFile(file);
   };
 
+  const handleRemoveCustom = (e: React.MouseEvent, custom: CustomImagePreset): void => {
+    e.stopPropagation();
+    onRemoveCustomImage(custom.id);
+    if (currentSrc === custom.src) {
+      const fallback = presetEntries[0]?.[1].src ?? null;
+      update({ type: 'image', src: fallback });
+    }
+  };
+
   return (
     <div className="wallpaper-block">
       <button
-        className={`upload-btn ${dragging ? 'dragging' : ''} ${customSrc ? 'has-image' : ''}`}
+        className={`upload-btn ${dragging ? 'dragging' : ''}`}
         onClick={onPick}
         onPaste={onPaste}
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        style={customSrc ? { backgroundImage: `url(${customSrc})` } : undefined}
       >
         <UploadIcon />
-        <span>{customSrc ? 'Custom Image' : 'Upload Custom'}</span>
+        <span>Upload Custom</span>
         <input
           ref={inputRef}
           type="file"
@@ -366,14 +455,42 @@ function WallpaperImageTab({ value, update }: SubTabProps): JSX.Element {
       </button>
 
       <div className="wallpaper-grid-pro">
-        {Object.entries(WALLPAPER_PRESETS).map(([key, p]) => (
+        {presetEntries.map(([key, p]) => (
           <button
             key={key}
-            className={`wallpaper-swatch-pro ${activeWallpaper === key ? 'active' : ''}`}
-            style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
-            onClick={() => update({ type: 'wallpaper', value: key })}
-            title={key}
+            className={`wallpaper-swatch-pro image-swatch ${matchedPresetKey === key ? 'active' : ''}`}
+            style={{
+              backgroundImage: `url(${p.thumbnail || p.src})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }}
+            onClick={() => update({ type: 'image', src: p.src })}
+            title={p.label || key}
           />
+        ))}
+        {customImages.map((c) => (
+          <div
+            key={c.id}
+            className={`wallpaper-swatch-pro image-swatch custom-swatch ${matchedCustomId === c.id ? 'active' : ''}`}
+            style={{
+              backgroundImage: `url(${c.src})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }}
+            onClick={() => update({ type: 'image', src: c.src })}
+            title={c.label}
+            role="button"
+          >
+            <button
+              type="button"
+              className="custom-swatch-remove"
+              title="Remove"
+              aria-label={`Remove ${c.label}`}
+              onClick={(e) => handleRemoveCustom(e, c)}
+            >
+              ×
+            </button>
+          </div>
         ))}
       </div>
     </div>
@@ -424,10 +541,30 @@ function GradientTab({ value, update }: SubTabProps): JSX.Element {
 }
 
 function ColorTab({ value, update }: SubTabProps): JSX.Element {
+  const isWallpaper = !!value && value.type === 'wallpaper';
+  const activeWallpaper = isWallpaper ? value.value : null;
   const color = value && value.type === 'color' ? value.value : '#7c5cff';
+
+  let previewBg = color;
+  if (isWallpaper) {
+    const preset = WALLPAPER_PRESETS[value.value] ?? WALLPAPER_PRESETS['default']!;
+    previewBg = `linear-gradient(135deg, ${preset.from}, ${preset.to})`;
+  }
+
   return (
     <div className="grad-block">
-      <div className="gradient-preview-pro" style={{ background: color }} />
+      <div className="wallpaper-grid-pro">
+        {Object.entries(WALLPAPER_PRESETS).map(([key, p]) => (
+          <button
+            key={key}
+            className={`wallpaper-swatch-pro ${activeWallpaper === key ? 'active' : ''}`}
+            style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
+            onClick={() => update({ type: 'wallpaper', value: key })}
+            title={key}
+          />
+        ))}
+      </div>
+      <div className="gradient-preview-pro" style={{ background: previewBg }} />
       <div className="grad-row">
         <input
           type="color"
