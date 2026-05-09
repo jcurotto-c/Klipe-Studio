@@ -1,9 +1,11 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, dialog, screen, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, Menu, desktopCapturer, ipcMain, dialog, screen, session, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 const isDev = process.env['NODE_ENV'] === 'development';
+
+Menu.setApplicationMenu(null);
 
 let mainWindow: BrowserWindow | null = null;
 let hudWindow: BrowserWindow | null = null;
@@ -554,9 +556,6 @@ ipcMain.handle('main:show', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show();
     mainWindow.focus();
-    if (isDev) {
-      try { mainWindow.webContents.openDevTools({ mode: 'detach' }); } catch { /* ignore */ }
-    }
   }
   return { ok: true };
 });

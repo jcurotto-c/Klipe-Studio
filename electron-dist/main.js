@@ -8,6 +8,7 @@ const node_path_1 = __importDefault(require("node:path"));
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_child_process_1 = require("node:child_process");
 const isDev = process.env['NODE_ENV'] === 'development';
+electron_1.Menu.setApplicationMenu(null);
 let mainWindow = null;
 let hudWindow = null;
 let mouseTracker = null;
@@ -502,12 +503,6 @@ electron_1.ipcMain.handle('main:show', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.show();
         mainWindow.focus();
-        if (isDev) {
-            try {
-                mainWindow.webContents.openDevTools({ mode: 'detach' });
-            }
-            catch { /* ignore */ }
-        }
     }
     return { ok: true };
 });
