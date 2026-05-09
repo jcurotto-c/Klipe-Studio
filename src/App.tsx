@@ -41,8 +41,14 @@ export default function App(): JSX.Element {
       <header className="titlebar">
         <div className="brand">
           <div className="logo" />
-          <span>Klipe Studio</span>
+          <span>klipestudio</span>
         </div>
+        {recording?.name && (
+          <div className="titlebar-center">
+            <span className="recording-title">{recording.name}</span>
+            <span className="recording-ext">.klipestudio</span>
+          </div>
+        )}
         <nav className="nav">
           <button
             className={view === 'recorder' ? 'active' : ''}

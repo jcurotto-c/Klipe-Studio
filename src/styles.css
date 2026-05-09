@@ -69,6 +69,7 @@ button.ghost { background: transparent; }
 }
 
 .titlebar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -80,6 +81,25 @@ button.ghost { background: transparent; }
 .titlebar .brand {
   display: flex; align-items: center; gap: 10px;
   font-weight: 700; letter-spacing: 0.4px;
+}
+.titlebar .titlebar-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.titlebar .titlebar-center .recording-title {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  letter-spacing: 0.2px;
+}
+.titlebar .titlebar-center .recording-ext {
+  font-weight: 400;
+  font-size: 0.85em;
+  color: #6e6e76;
+  letter-spacing: 0.2px;
 }
 .titlebar .brand .logo {
   width: 22px; height: 22px; border-radius: 6px;
@@ -755,8 +775,7 @@ select {
 .zoom-inspector {
   width: 300px;
   background: var(--bg-1);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border-left: 1px solid var(--border);
   padding: 16px;
   display: flex;
   flex-direction: column;

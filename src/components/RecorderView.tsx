@@ -18,6 +18,13 @@ function loadAutoZoom(): boolean {
   }
 }
 
+function generateRecordingName(date: Date = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  const datePart = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const timePart = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return `Klipe ${datePart} ${timePart}`;
+}
+
 interface RecorderViewProps {
   onRecordingDone: (rec: Recording) => void;
 }
@@ -83,6 +90,7 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
       mouse: result.mouse,
       display,
       autoZoom,
+      name: generateRecordingName(),
     });
   }, [onRecordingDone]);
 
