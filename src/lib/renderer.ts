@@ -20,10 +20,14 @@ import type {
   CursorOptions,
   CursorSample,
   CursorState,
+  CursorType,
   FrameOptions,
   MouseTrack,
   ZoomSegment,
 } from '../types';
+import boneSvgUrl from '../assets/cartoon-bone.svg';
+import handSvgUrl from '../assets/pointinghand.svg';
+import type { CursorShape } from './cursor-sprites';
 
 export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
   shadow: 50,
@@ -32,29 +36,9 @@ export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
   removeBackground: false,
 };
 
-const RIPPLE_DURATION = 600;
 const CURSOR_BASE_RADIUS = 10;
 const CURSOR_REFERENCE_WIDTH = 1920;
 const CORNER_RADIUS_RATIO = 0.025;
-
-interface Ripple {
-  x: number;
-  y: number;
-  p: number;
-}
-
-function activeRipples(mouse: MouseTrack | null | undefined, t: number): Ripple[] {
-  if (!mouse) return [];
-  const out: Ripple[] = [];
-  for (const e of mouse.events) {
-    if (e.type !== 'click') continue;
-    const dt = t - e.t;
-    if (dt >= 0 && dt < RIPPLE_DURATION) {
-      out.push({ x: e.x, y: e.y, p: dt / RIPPLE_DURATION });
-    }
-  }
-  return out;
-}
 
 export interface WallpaperPreset {
   from: string;
@@ -223,6 +207,82 @@ export interface CursorPlacement {
   rotation: number;
   motionAngle: number;
   motionStrength: number;
+  /**
+   * Effective cursor shape for this frame: the user-selected style, unless
+   * the OS cursor type (text → svg-bone, pointer → svg-hand) overrides it.
+   */
+  shape: CursorShape;
+  /**
+   * Visible cursor height in canvas pixels for this frame. Both render
+   * paths (2D canvas + Pixi overlay) honor this exactly so all shapes —
+   * arrow, bone, hand, etc. — end up at the same on-screen size for the
+   * same `r`. The value is `r * 2` for normal styles and `r * 2 * 0.85`
+   * for `arrow-mini`, with the cursor type override (bone/hand) inheriting
+   * the user-style scale so type changes don't resize the cursor.
+   */
+  contentTargetHeight: number;
+}
+
+// Pre-warm the bone/hand image elements so the first text/pointer frame on
+// the 2D canvas (used by the exporter) draws immediately rather than missing.
+interface CursorSvgImage {
+  img: HTMLImageElement;
+  ready: boolean;
+}
+const cursorSvgCache = new Map<'bone' | 'hand', CursorSvgImage>();
+
+function loadCursorSvg(key: 'bone' | 'hand'): CursorSvgImage {
+  const existing = cursorSvgCache.get(key);
+  if (existing) return existing;
+  const img = new Image();
+  const entry: CursorSvgImage = { img, ready: false };
+  img.onload = () => { entry.ready = true; };
+  img.onerror = () => { entry.ready = false; };
+  img.src = key === 'bone' ? boneSvgUrl : handSvgUrl;
+  cursorSvgCache.set(key, entry);
+  return entry;
+}
+// Eager preload — typical case is the user opens the editor, then plays
+// the recording; both SVGs decode well before any text/pointer event fires.
+loadCursorSvg('bone');
+loadCursorSvg('hand');
+
+/**
+ * Walk back through the mouse-event timeline from `tMs` and return the most
+ * recent `cursorType` event. Returns `'arrow'` when nothing has been
+ * reported yet — keeps the rest of the pipeline branch-free.
+ */
+function findLatestCursorType(mouse: MouseTrack | null | undefined, tMs: number): CursorType {
+  if (!mouse || !mouse.events) return 'arrow';
+  const events = mouse.events;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.t > tMs) continue;
+    if (e.type === 'cursorType') return e.cursorType;
+  }
+  return 'arrow';
+}
+
+/**
+ * Resolve `(style, cursorType)` to a single CursorShape.
+ *   - `text`    → `svg-bone` (typing in a field)
+ *   - `pointer` → `svg-hand` (hovering a clickable)
+ *   - otherwise → user-selected style as-is
+ */
+function resolveCursorShape(style: CursorOptions['style'], type: CursorType): CursorShape {
+  if (type === 'text') return 'svg-bone';
+  if (type === 'pointer') return 'svg-hand';
+  return style;
+}
+
+/**
+ * Per-style visual scale. Arrow/outline/dot/figma render at the full
+ * baseline height; arrow-mini intentionally shrinks. The bone/hand SVG
+ * overrides inherit whichever scale the user-selected style uses, so the
+ * cursor does not change size when typing or hovering buttons.
+ */
+function styleHeightFactor(style: CursorOptions['style']): number {
+  return style === 'arrow-mini' ? 0.85 : 1.0;
 }
 
 type RenderableSource = CanvasImageSource & {
@@ -260,8 +320,19 @@ export function renderFrame(
   } = opts;
   if (cursorOutput) {
     cursorOutput.visible = false;
+    // Default the shape so the overlay never reads `undefined` between frames
+    // where the cursor is hidden. Real value below when the cursor is visible.
+    cursorOutput.shape = 'arrow';
+    cursorOutput.contentTargetHeight = 0;
   }
   const cOpts: CursorOptions = { ...DEFAULT_CURSOR_OPTIONS, ...(cursorOptions ?? {}) };
+  const effectiveCursorType = findLatestCursorType(mouse, opts.tMs);
+  const effectiveCursorShape = resolveCursorShape(cOpts.style, effectiveCursorType);
+  // The user-selected style controls the cursor's visual size — arrow-mini
+  // is intentionally smaller. The OS-cursor-type overrides (svg-bone, svg-hand)
+  // inherit this factor so the cursor doesn't grow/shrink as the OS cursor
+  // type changes during recording.
+  const styleScale = styleHeightFactor(cOpts.style);
   const fOpts: FrameOptions = { ...DEFAULT_FRAME_OPTIONS, ...(frame ?? {}) };
 
   const cw = ctx.canvas.width;
@@ -437,6 +508,7 @@ export function renderFrame(
       const baseR = CURSOR_BASE_RADIUS * (refDim / CURSOR_REFERENCE_WIDTH);
       const r = baseR * cOpts.size * (cursor.scaleMul || 1);
 
+      const contentTargetHeight = r * 2 * styleScale;
       if (cursorOutput) {
         cursorOutput.visible = true;
         cursorOutput.px = px;
@@ -445,30 +517,13 @@ export function renderFrame(
         cursorOutput.rotation = cursor.rotation || 0;
         cursorOutput.motionAngle = cursor.motionAngle;
         cursorOutput.motionStrength = cursor.motionStrength;
-      }
-
-      // Click ripples render here regardless — they're a separate effect from
-      // the cursor sprite and look fine on the 2D canvas.
-      const ripples = activeRipples(mouse, tMs);
-      for (const rp of ripples) {
-        const rlx = rp.x - sx0;
-        const rly = rp.y - sy0;
-        if (rlx < 0 || rlx > swEff || rly < 0 || rly > shEff) continue;
-        const rpx = drawX + (rlx / swEff) * drawW;
-        const rpy = drawY + (rly / shEff) * drawH;
-        const rippleR = r * 0.8 + rp.p * r * 4.5;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(rpx, rpy, rippleR, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(124, 92, 255, ${1 - rp.p})`;
-        ctx.lineWidth = Math.max(1.5, r * 0.18);
-        ctx.stroke();
-        ctx.restore();
+        cursorOutput.shape = effectiveCursorShape;
+        cursorOutput.contentTargetHeight = contentTargetHeight;
       }
 
       if (!skipCursorDraw) {
-        drawCursor(ctx, px, py, r, cursor.rotation || 0, {
-          style: cOpts.style,
+        drawCursor(ctx, px, py, contentTargetHeight, cursor.rotation || 0, {
+          shape: effectiveCursorShape,
           motionAngle: cursor.motionAngle,
           motionStrength: cursor.motionStrength,
         });
@@ -526,35 +581,35 @@ function staticCursorSample(
 }
 
 interface DrawCursorOptions {
-  style: CursorStyleish;
+  shape: CursorShape;
   motionAngle?: number;
   motionStrength?: number;
 }
-
-type CursorStyleish = CursorOptions['style'];
 
 function drawCursor(
   ctx: CanvasRenderingContext2D,
   px: number,
   py: number,
-  r: number,
+  targetH: number,
   rotation: number,
   opts: DrawCursorOptions,
 ): void {
-  const { style, motionAngle = 0, motionStrength = 0 } = opts;
+  const { shape, motionAngle = 0, motionStrength = 0 } = opts;
 
   const drawSprite = (alpha = 1): void => {
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(rotation);
     ctx.globalAlpha *= alpha;
-    drawCursorShape(ctx, r, style);
+    drawCursorShape(ctx, targetH, shape);
     ctx.restore();
   };
 
   if (motionStrength > 0.05) {
     const ghosts = 4;
-    const smear = r * 1.6 * Math.min(1.5, motionStrength);
+    // Smear scales with the cursor's visible height so motion blur reads
+    // proportionally regardless of which shape is active.
+    const smear = targetH * 0.8 * Math.min(1.5, motionStrength);
     const ax = Math.cos(motionAngle);
     const ay = Math.sin(motionAngle);
     ctx.save();
@@ -575,32 +630,73 @@ function drawCursor(
 
 function drawCursorShape(
   ctx: CanvasRenderingContext2D,
-  r: number,
-  style: CursorStyleish,
+  targetH: number,
+  shape: CursorShape,
 ): void {
+  // Shadow params are tied to the cursor's rendered height so all shapes
+  // get a proportional drop shadow.
   ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur = Math.max(2, r * 0.5);
-  ctx.shadowOffsetY = Math.max(1, r * 0.15);
+  ctx.shadowBlur = Math.max(2, targetH * 0.25);
+  ctx.shadowOffsetY = Math.max(1, targetH * 0.075);
 
-  switch (style) {
-    case 'arrow':         drawArrow(ctx, r, true); return;
-    case 'arrow-outline': drawArrow(ctx, r, false); return;
-    case 'arrow-mini':    drawArrow(ctx, r * 0.85, true); return;
-    case 'figma':         drawFigmaArrow(ctx, r); return;
+  switch (shape) {
+    case 'arrow':         drawArrow(ctx, targetH, true); return;
+    case 'arrow-outline': drawArrow(ctx, targetH, false); return;
+    // arrow-mini's smaller size is already baked into the targetH passed
+    // by the renderer (styleHeightFactor() == 0.85 for arrow-mini).
+    case 'arrow-mini':    drawArrow(ctx, targetH, true); return;
+    case 'figma':         drawFigmaArrow(ctx, targetH); return;
+    case 'svg-bone':      drawCursorSvg(ctx, targetH, 'bone'); return;
+    case 'svg-hand':      drawCursorSvg(ctx, targetH, 'hand'); return;
     case 'dot':
-    default:              drawDot(ctx, r); return;
+    default:              drawDot(ctx, targetH); return;
   }
 }
 
-function drawDot(ctx: CanvasRenderingContext2D, r: number): void {
+// Draws bone (text I-beam) or hand (pointer) SVG centred on the hotspot.
+// Falls back silently if the image isn't decoded yet — the next frame will
+// pick it up. Caller has already translated the canvas to (px, py), so we
+// draw relative to (0, 0) using width/height matching the cursor radius.
+const SVG_VIEWBOX: Record<'bone' | 'hand', { width: number; height: number; hotspotX: number; hotspotY: number }> = {
+  // hotspot ratios match cursor-sprites.ts so the editor preview and the
+  // exported video land on the same anchor pixel.
+  bone: { width: 618,        height: 1350, hotspotX: 309 / 618,        hotspotY: 675 / 1350 },
+  hand: { width: 767.314286, height: 746,  hotspotX: 322 / 767.314286, hotspotY: 37 / 746 },
+};
+
+function drawCursorSvg(ctx: CanvasRenderingContext2D, targetH: number, key: 'bone' | 'hand'): void {
+  const entry = loadCursorSvg(key);
+  if (!entry.ready) {
+    // Not decoded yet — fall back to the dot so we never render nothing.
+    drawDot(ctx, targetH);
+    return;
+  }
+  const meta = SVG_VIEWBOX[key];
+  // Width follows the SVG's natural aspect; height matches the unified
+  // targetH so bone/hand are the same on-screen height as the user's
+  // selected style.
+  const aspect = meta.width / meta.height;
+  const targetW = targetH * aspect;
+  // Translate so the hotspot lands at the current canvas origin.
+  const ox = -meta.hotspotX * targetW;
+  const oy = -meta.hotspotY * targetH;
+  ctx.drawImage(entry.img, ox, oy, targetW, targetH);
+}
+
+function drawDot(ctx: CanvasRenderingContext2D, targetH: number): void {
+  // Diameter == targetH so the dot has the same on-screen height as every
+  // other cursor shape.
+  const radius = targetH / 2;
   ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
   ctx.fillStyle = '#ffffff';
   ctx.fill();
 }
 
-function drawArrow(ctx: CanvasRenderingContext2D, r: number, filled: boolean): void {
-  const k = r / 6;
+function drawArrow(ctx: CanvasRenderingContext2D, targetH: number, filled: boolean): void {
+  // Path extends 21k vertically from the tip, so k = targetH / 21 makes the
+  // visible content height exactly targetH.
+  const k = targetH / 21;
   ctx.translate(-1 * k, -1.5 * k);
   ctx.beginPath();
   ctx.moveTo(0, 0);
@@ -626,8 +722,10 @@ function drawArrow(ctx: CanvasRenderingContext2D, r: number, filled: boolean): v
   }
 }
 
-function drawFigmaArrow(ctx: CanvasRenderingContext2D, r: number): void {
-  const k = r / 5;
+function drawFigmaArrow(ctx: CanvasRenderingContext2D, targetH: number): void {
+  // Path extends 16k vertically from the tip, so k = targetH / 16 makes the
+  // visible content height exactly targetH.
+  const k = targetH / 16;
   ctx.translate(-1 * k, -1 * k);
   ctx.beginPath();
   ctx.moveTo(0, 0);

@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, desktopCapturer, ipcMain, dialog, screen, ses
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { hideCursor, showCursor, isCursorHidden } from './cursorHider';
 
 const isDev = process.env['NODE_ENV'] === 'development';
 
@@ -9,6 +10,9 @@ Menu.setApplicationMenu(null);
 
 let mainWindow: BrowserWindow | null = null;
 let hudWindow: BrowserWindow | null = null;
+let cursorPreviewWindow: BrowserWindow | null = null;
+let cursorPreviewOrigin: { x: number; y: number } = { x: 0, y: 0 };
+let cursorPreviewInterval: NodeJS.Timeout | null = null;
 
 interface MouseTrackerHandle {
   startTime: number;
@@ -119,6 +123,124 @@ function createHudWindow(): BrowserWindow {
   return hudWindow;
 }
 
+// Compute the union bounding rect of every connected display, in DIP. The
+// cursor-preview overlay spans this rect so the rendered cursor follows the
+// mouse across monitors.
+function computeVirtualScreenBounds(): { x: number; y: number; width: number; height: number } {
+  const all = screen.getAllDisplays();
+  if (all.length === 0) {
+    const p = screen.getPrimaryDisplay();
+    return { x: 0, y: 0, width: p.size.width, height: p.size.height };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const d of all) {
+    const b = d.bounds;
+    if (b.x < minX) minX = b.x;
+    if (b.y < minY) minY = b.y;
+    if (b.x + b.width > maxX) maxX = b.x + b.width;
+    if (b.y + b.height > maxY) maxY = b.y + b.height;
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function createCursorPreviewWindow(): BrowserWindow | null {
+  if (cursorPreviewWindow && !cursorPreviewWindow.isDestroyed()) return cursorPreviewWindow;
+
+  const bounds = computeVirtualScreenBounds();
+  cursorPreviewOrigin = { x: bounds.x, y: bounds.y };
+
+  const win = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    focusable: false,
+    show: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // Click-through: the user interacts with whatever is BEHIND the overlay.
+  win.setIgnoreMouseEvents(true, { forward: false });
+  // Critical: exclude this window from capture so the live preview cursor
+  // does NOT end up in the recorded video. Same trick as the HUD.
+  try { win.setContentProtection(true); } catch { /* ignore */ }
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173/cursor-preview.html');
+  } else {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'cursor-preview.html'));
+  }
+
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.showInactive();
+  });
+
+  win.on('closed', () => {
+    if (cursorPreviewWindow === win) cursorPreviewWindow = null;
+  });
+
+  cursorPreviewWindow = win;
+  return win;
+}
+
+function startCursorPreview(): void {
+  const win = createCursorPreviewWindow();
+  if (!win) return;
+  if (cursorPreviewInterval) clearInterval(cursorPreviewInterval);
+  // Poll the OS cursor at ~60Hz and push to the overlay. screen.getCursorScreenPoint()
+  // returns DIP coordinates relative to the global virtual screen — exactly what
+  // the overlay renderer expects (it subtracts cursorPreviewOrigin to map into
+  // window-local CSS pixels).
+  cursorPreviewInterval = setInterval(() => {
+    if (!cursorPreviewWindow || cursorPreviewWindow.isDestroyed()) return;
+    const p = screen.getCursorScreenPoint();
+    cursorPreviewWindow.webContents.send('cursor-preview:pos', {
+      x: p.x,
+      y: p.y,
+      originX: cursorPreviewOrigin.x,
+      originY: cursorPreviewOrigin.y,
+    });
+  }, 16);
+}
+
+function stopCursorPreview(): void {
+  if (cursorPreviewInterval) {
+    clearInterval(cursorPreviewInterval);
+    cursorPreviewInterval = null;
+  }
+  if (cursorPreviewWindow && !cursorPreviewWindow.isDestroyed()) {
+    cursorPreviewWindow.close();
+  }
+  cursorPreviewWindow = null;
+}
+
+function sendCursorPreviewType(cursorType: string): void {
+  if (!cursorPreviewWindow || cursorPreviewWindow.isDestroyed()) return;
+  cursorPreviewWindow.webContents.send('cursor-preview:type', { cursorType });
+}
+
 // Renderer sets this via `prepare-display-media` right before calling
 // getDisplayMedia(). The handler below resolves it to a real desktopCapturer
 // source so we can ask for cursor: 'never' without showing Chromium's picker.
@@ -169,6 +291,27 @@ ipcMain.handle('prepare-display-media', (_evt: IpcMainInvokeEvent, sourceId: unk
 
 app.on('window-all-closed', () => {
   app.quit();
+});
+
+// Belt-and-braces cursor restore: SetSystemCursor changes are persistent until
+// the next reboot, so if Klipe ever exits with the cursor blanked the user is
+// stranded. Hook every plausible exit path.
+function ensureCursorRestored(): void {
+  try {
+    stopCursorPreview();
+    if (isCursorHidden()) showCursor();
+  } catch {
+    /* never throw from a teardown handler */
+  }
+}
+app.on('before-quit', ensureCursorRestored);
+app.on('will-quit', ensureCursorRestored);
+process.on('exit', ensureCursorRestored);
+process.on('SIGINT', () => { ensureCursorRestored(); process.exit(0); });
+process.on('SIGTERM', () => { ensureCursorRestored(); process.exit(0); });
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaught:', err);
+  ensureCursorRestored();
 });
 
 ipcMain.handle('get-screen-sources', async () => {
@@ -385,6 +528,20 @@ function startMouseTracking(): MouseTrackingResult {
     return { ok: true, startTime };
   }
 
+  // Hide the OS cursor BEFORE the tracker spawns. Electron's
+  // setDisplayMediaRequestHandler ignores `cursor: 'never'` from getDisplayMedia
+  // when a desktopCapturer source is provided, so the only reliable way to keep
+  // the system cursor out of captured frames is to actually blank it via
+  // SetSystemCursor. Hiding before the tracker starts means LoadCursor inside
+  // the tracker resolves to the new blank handles, preserving cursor-type
+  // discrimination (arrow/pointer/text) for apps that re-load cursors at runtime.
+  hideCursor();
+
+  // Show the live preview overlay so the user can still see where they're
+  // pointing. It's content-protected, so it does NOT appear in the captured
+  // stream — only the rendered video gets the custom cursor in post.
+  startCursorPreview();
+
   const proc = spawn(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', POWERSHELL_TRACKER_SCRIPT],
@@ -398,8 +555,16 @@ function startMouseTracking(): MouseTrackingResult {
     while ((idx = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, idx).trim();
       buffer = buffer.slice(idx + 1);
-      if (!line || !mainWindow) continue;
+      if (!line) continue;
       const parts = line.split('|');
+      if (parts[0] === 'CTYPE') {
+        // Forward cursor-type changes to the live preview overlay so it can
+        // swap between bone (text), hand (pointer), and the user's chosen
+        // style. Click events are no longer fanned out — the ripple effect
+        // they drove has been removed.
+        sendCursorPreviewType(parts[2] || 'arrow');
+      }
+      if (!mainWindow) continue;
       if (parts[0] === 'MOVE') {
         mainWindow.webContents.send('mouse-event', {
           type: 'move',
@@ -441,13 +606,25 @@ function startMouseTracking(): MouseTrackingResult {
 }
 
 function stopMouseTracking(): MouseTrackingResult {
-  if (!mouseTracker) return { ok: true, notRunning: true, startTime: 0 };
+  if (!mouseTracker) {
+    // Defensive: if the cursor was somehow left hidden without a live tracker,
+    // restore it so we never strand the user with an invisible cursor.
+    if (isCursorHidden()) showCursor();
+    stopCursorPreview();
+    return { ok: true, notRunning: true, startTime: 0 };
+  }
   if (mouseTracker.fallbackInterval) clearInterval(mouseTracker.fallbackInterval);
   if (mouseTracker.proc) {
     try { mouseTracker.proc.kill(); } catch { /* ignore */ }
   }
   const startTime = mouseTracker.startTime;
   mouseTracker = null;
+  // Tear down the preview overlay first so it stops polling for cursor
+  // positions before we restore the visible OS cursor underneath.
+  stopCursorPreview();
+  // Restore the system cursor AFTER the tracker is gone so its final
+  // GetCursorInfo reads still see consistent (blanked) handles.
+  showCursor();
   return { ok: true, startTime };
 }
 

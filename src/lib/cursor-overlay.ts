@@ -2,41 +2,34 @@ import { Application, Container, Sprite } from 'pixi.js';
 import { MotionBlurFilter } from 'pixi-filters/motion-blur';
 import {
   getCursorSprite,
-  loadSvgPointerSprite,
+  loadCursorSprite,
+  preloadSvgShapes,
   type CursorShape,
   type CursorSprite,
 } from './cursor-sprites';
 import type { CursorPlacement } from './renderer';
 
 export interface PixiCursorOverlayOptions {
-  shape: CursorShape;
   motionBlurEnabled: boolean;
-  /** Use the SVG pointer at src/assets/pointer-cursor.svg instead of the
-   *  procedural shape. Loads asynchronously; until ready, falls back to
-   *  the procedural sprite for `shape`. */
-  useSvgPointer: boolean;
 }
 
 const DEFAULT_OPTIONS: PixiCursorOverlayOptions = {
-  shape: 'arrow',
   motionBlurEnabled: true,
-  useSvgPointer: true,
 };
 
 /**
  * Lightweight PixiJS overlay that paints a single cursor sprite over the
  * existing 2D canvas. Position, scale, and motion data are computed by the
- * existing renderer (`CursorPlacement`) and handed in each frame.
+ * existing renderer (`CursorPlacement`) and handed in each frame; the shape
+ * is whatever `placement.shape` resolves to (style + cursor-type override).
  */
 export class PixiCursorOverlay {
   private app: Application | null = null;
   private container: Container | null = null;
   private sprite: Sprite | null = null;
   private spriteMeta: CursorSprite | null = null;
-  /** Tracks whether the active sprite is the SVG (vs a procedural fallback). */
-  private spriteSource: 'svg' | 'procedural' = 'procedural';
   private currentShape: CursorShape | null = null;
-  private svgSprite: CursorSprite | null = null;
+  private pendingShape: CursorShape | null = null;
   private motionBlur: MotionBlurFilter | null = null;
   private options: PixiCursorOverlayOptions;
   private ready = false;
@@ -64,15 +57,9 @@ export class PixiCursorOverlay {
     app.stage.addChild(this.container);
     this.ready = true;
 
-    if (this.options.useSvgPointer) {
-      loadSvgPointerSprite()
-        .then((meta) => {
-          this.svgSprite = meta;
-          // Force re-creation on next render so the SVG swaps in.
-          this.currentShape = null;
-        })
-        .catch((err) => console.warn('[cursor-overlay] svg pointer load failed:', err));
-    }
+    // Kick off SVG rasterization in the background so the first text/pointer
+    // hover doesn't see a one-frame procedural fallback.
+    void preloadSvgShapes();
   }
 
   resize(width: number, height: number): void {
@@ -95,14 +82,17 @@ export class PixiCursorOverlay {
       return;
     }
     this.container.visible = true;
-    this.ensureSprite();
+    this.ensureSprite(placement.shape);
     if (!this.sprite || !this.spriteMeta) return;
 
-    // Scale uniformly so the sprite preserves its native aspect ratio. The
-    // placement.r value (radius) drives the cursor's height; width follows
-    // from the texture's natural aspect.
-    const targetH = placement.r * 2;
-    const scale = targetH / this.spriteMeta.height;
+    // Scale so the visible cursor content matches `contentTargetHeight`,
+    // not the full texture. This is the parity fix: procedural arrows have
+    // ~13% empty margin at the bottom, but SVG bone/hand fill their texture
+    // 100% — using texture height as the reference made them look different
+    // sizes. With contentHeight per sprite, every shape ends up at exactly
+    // the same on-screen height for the same `contentTargetHeight`.
+    const targetH = placement.contentTargetHeight;
+    const scale = targetH / this.spriteMeta.contentHeight;
     this.sprite.scale.set(scale);
     this.sprite.position.set(placement.px, placement.py);
     this.sprite.rotation = placement.rotation;
@@ -124,29 +114,34 @@ export class PixiCursorOverlay {
     }
   }
 
-  private ensureSprite(): void {
-    // Prefer the SVG once it's loaded; fall back to the procedural shape
-    // until then. We re-create the sprite when the source switches OR when
-    // the procedural shape changes.
-    const wantSvg = this.options.useSvgPointer && this.svgSprite !== null;
-    const wantSource: 'svg' | 'procedural' = wantSvg ? 'svg' : 'procedural';
-    const sourceMatches = this.spriteSource === wantSource;
-    const shapeMatches = wantSource === 'svg' || this.currentShape === this.options.shape;
-    if (this.sprite && sourceMatches && shapeMatches) return;
+  private ensureSprite(shape: CursorShape): void {
+    if (this.sprite && this.currentShape === shape) return;
 
+    // For SVG shapes that haven't loaded yet, keep showing whatever sprite
+    // we already have and trigger a load — the next frame after the load
+    // completes will pick up the new texture via this same method.
+    if ((shape === 'svg-bone' || shape === 'svg-hand') && this.pendingShape !== shape) {
+      this.pendingShape = shape;
+      void loadCursorSprite(shape).then(() => {
+        // No-op: the next render call's `getCursorSprite(shape)` will now
+        // return the cached SVG.
+        if (this.pendingShape === shape) this.pendingShape = null;
+      }).catch((err) => {
+        console.warn('[cursor-overlay] failed to load shape', shape, err);
+      });
+    }
+
+    const meta = getCursorSprite(shape);
     if (this.sprite && this.container) {
       this.container.removeChild(this.sprite);
       this.sprite.destroy();
     }
-
-    const meta = wantSvg ? this.svgSprite! : getCursorSprite(this.options.shape);
     const sprite = new Sprite(meta.texture);
     sprite.anchor.set(meta.hotspotX, meta.hotspotY);
     this.container?.addChild(sprite);
     this.sprite = sprite;
     this.spriteMeta = meta;
-    this.spriteSource = wantSource;
-    this.currentShape = this.options.shape;
+    this.currentShape = shape;
   }
 
   destroy(): void {

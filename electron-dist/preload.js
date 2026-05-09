@@ -15,6 +15,18 @@ electron_1.contextBridge.exposeInMainWorld('klipe', {
         return () => electron_1.ipcRenderer.removeListener('mouse-event', listener);
     },
 });
+electron_1.contextBridge.exposeInMainWorld('klipeCursorPreview', {
+    onPos: (cb) => {
+        const listener = (_evt, payload) => cb(payload);
+        electron_1.ipcRenderer.on('cursor-preview:pos', listener);
+        return () => electron_1.ipcRenderer.removeListener('cursor-preview:pos', listener);
+    },
+    onType: (cb) => {
+        const listener = (_evt, payload) => cb(payload);
+        electron_1.ipcRenderer.on('cursor-preview:type', listener);
+        return () => electron_1.ipcRenderer.removeListener('cursor-preview:type', listener);
+    },
+});
 electron_1.contextBridge.exposeInMainWorld('klipeHud', {
     open: () => electron_1.ipcRenderer.invoke('hud:open'),
     close: () => electron_1.ipcRenderer.invoke('hud:close'),

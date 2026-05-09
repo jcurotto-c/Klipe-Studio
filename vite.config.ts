@@ -69,6 +69,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, 'src/index.html'),
         hud: path.resolve(__dirname, 'src/hud.html'),
+        cursorPreview: path.resolve(__dirname, 'src/cursor-preview.html'),
       },
     },
   },

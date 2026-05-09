@@ -4,64 +4,110 @@ exports.hideCursor = hideCursor;
 exports.showCursor = showCursor;
 exports.isCursorHidden = isCursorHidden;
 const node_child_process_1 = require("node:child_process");
-function buildPowerShellCommand(show) {
-    const desiredFlag = show ? 1 : 0;
-    const showLiteral = show ? '$true' : '$false';
-    return [
-        '$signature = @"',
-        'using System;',
-        'using System.Runtime.InteropServices;',
-        'public struct POINT { public int X; public int Y; }',
-        'public struct CURSORINFO { public int cbSize; public int flags; public IntPtr hCursor; public POINT ptScreenPos; }',
-        'public static class CursorNative {',
-        '  [DllImport("user32.dll")] public static extern int ShowCursor(bool show);',
-        '  [DllImport("user32.dll")] public static extern bool GetCursorInfo(ref CURSORINFO info);',
-        '}',
-        '"@;',
-        'Add-Type -TypeDefinition $signature -Language CSharp -ErrorAction SilentlyContinue | Out-Null;',
-        '$info = New-Object CURSORINFO;',
-        '$info.cbSize = [Runtime.InteropServices.Marshal]::SizeOf([type]CURSORINFO);',
-        'for ($i = 0; $i -lt 32; $i++) {',
-        '  if ([CursorNative]::GetCursorInfo([ref]$info) -and (($info.flags -band 1) -eq ' +
-            desiredFlag +
-            ')) { exit 0 }',
-        '  [CursorNative]::ShowCursor(' + showLiteral + ') | Out-Null;',
-        '}',
-        'exit 0',
-    ].join(' ');
+// Standard Win32 OCR_* cursor IDs we replace while recording. Covers the
+// cursors most apps load via LoadCursor/IDC_*.
+const SYSTEM_CURSOR_IDS = [
+    32512, // OCR_NORMAL       (IDC_ARROW)
+    32513, // OCR_IBEAM        (IDC_IBEAM / text)
+    32514, // OCR_WAIT         (IDC_WAIT)
+    32515, // OCR_CROSS        (IDC_CROSS)
+    32516, // OCR_UP           (IDC_UPARROW)
+    32642, // OCR_SIZENWSE     (IDC_SIZENWSE)
+    32643, // OCR_SIZENESW     (IDC_SIZENESW)
+    32644, // OCR_SIZEWE       (IDC_SIZEWE)
+    32645, // OCR_SIZENS       (IDC_SIZENS)
+    32646, // OCR_SIZEALL      (IDC_SIZEALL)
+    32648, // OCR_NO           (IDC_NO)
+    32649, // OCR_HAND         (IDC_HAND / pointer)
+    32650, // OCR_APPSTARTING  (IDC_APPSTARTING)
+    32651, // OCR_HELP         (IDC_HELP)
+];
+const HIDE_SCRIPT = `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class CH {
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern IntPtr CreateCursor(IntPtr hInst, int xHotSpot, int yHotSpot,
+    int nWidth, int nHeight, byte[] pvANDPlane, byte[] pvXORPlane);
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern bool SetSystemCursor(IntPtr hcur, uint id);
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern bool DestroyCursor(IntPtr hCursor);
 }
+"@
+
+# 32x32 fully-transparent cursor:
+#   AND mask = all 1s   (transparent → screen pixel passes through)
+#   XOR mask = all 0s   (no inversion)
+# Per-row stride is 32 bits = 4 bytes; 32 rows = 128 bytes.
+$andMask = New-Object byte[] 128
+for ($i = 0; $i -lt 128; $i++) { $andMask[$i] = 0xFF }
+$xorMask = New-Object byte[] 128
+
+$ids = @(${SYSTEM_CURSOR_IDS.join(', ')})
+
+# Create a UNIQUE blank cursor per ID. SetSystemCursor takes ownership and
+# destroys the supplied hcur, so we cannot reuse a single handle for all IDs.
+# Distinct destination IDs end up backed by distinct kernel cursor objects,
+# which preserves cursor-type discrimination for the mouse tracker (started
+# AFTER hideCursor()) when it reads GetCursorInfo.hCursor.
+foreach ($id in $ids) {
+  $blank = [CH]::CreateCursor([IntPtr]::Zero, 0, 0, 32, 32, $andMask, $xorMask)
+  if ($blank -ne [IntPtr]::Zero) {
+    [void][CH]::SetSystemCursor($blank, $id)
+  }
+}
+exit 0
+`;
+const SHOW_SCRIPT = `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class CR {
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern bool SystemParametersInfo(uint uiAction, uint uiParam,
+    IntPtr pvParam, uint fWinIni);
+}
+"@
+# SPI_SETCURSORS = 0x57, SPIF_SENDCHANGE = 0x02 → reload all default cursors
+# from the registry and broadcast WM_SETTINGCHANGE.
+[void][CR]::SystemParametersInfo(0x57, 0, [IntPtr]::Zero, 0x02)
+exit 0
+`;
 function runPowerShell(command) {
-    const result = (0, node_child_process_1.spawnSync)('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', command], { timeout: 8000, windowsHide: true });
-    return !result.error && result.status === 0;
+    try {
+        const result = (0, node_child_process_1.spawnSync)('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', command], { timeout: 8000, windowsHide: true });
+        return !result.error && result.status === 0;
+    }
+    catch (err) {
+        console.error('[cursorHider] powershell failed:', err);
+        return false;
+    }
 }
 let cursorHidden = false;
 function hideCursor() {
-    if (process.platform !== 'win32' || cursorHidden)
+    if (process.platform !== 'win32')
         return false;
-    try {
-        const ok = runPowerShell(buildPowerShellCommand(false));
-        if (ok)
-            cursorHidden = true;
-        return ok;
-    }
-    catch (err) {
-        console.error('[cursorHider] hide failed:', err);
-        return false;
-    }
+    if (cursorHidden)
+        return true;
+    const ok = runPowerShell(HIDE_SCRIPT);
+    if (ok)
+        cursorHidden = true;
+    return ok;
 }
 function showCursor() {
-    if (process.platform !== 'win32' || !cursorHidden)
+    if (process.platform !== 'win32')
         return false;
-    try {
-        const ok = runPowerShell(buildPowerShellCommand(true));
-        if (ok)
-            cursorHidden = false;
-        return ok;
-    }
-    catch (err) {
-        console.error('[cursorHider] show failed:', err);
-        return false;
-    }
+    if (!cursorHidden)
+        return true;
+    const ok = runPowerShell(SHOW_SCRIPT);
+    // Restore the in-memory flag even if the script returned non-zero, so we
+    // don't get stuck unable to retry. The next hideCursor() can reapply.
+    cursorHidden = false;
+    return ok;
 }
 function isCursorHidden() {
     return cursorHidden;

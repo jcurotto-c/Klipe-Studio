@@ -1,46 +1,98 @@
 import { Texture } from 'pixi.js';
 import pointerSvgUrl from '../assets/pointer-cursor.svg';
+import boneSvgUrl from '../assets/cartoon-bone.svg';
+import handSvgUrl from '../assets/pointinghand.svg';
 
-export type CursorShape = 'arrow' | 'dot' | 'ring';
+/**
+ * Cursor shapes recognised by the render pipeline.
+ *
+ *   - 'arrow' / 'arrow-outline' / 'arrow-mini' / 'dot' / 'figma'
+ *       User-selectable styles from the Cursor panel. These are painted
+ *       procedurally to canvas so the editor preview and the exported video
+ *       use byte-identical paths (renderer.ts:drawCursorShape uses the same
+ *       coordinates).
+ *
+ *   - 'svg-bone' / 'svg-hand'
+ *       OS-cursor-type overrides. When the captured `cursorType` is `text`
+ *       (typing in a field) we swap to the bone SVG; when it is `pointer`
+ *       (hovering a clickable) we swap to the hand SVG. These trump the
+ *       user-selected style for the duration of the type.
+ */
+export type CursorShape =
+  | 'arrow'
+  | 'arrow-outline'
+  | 'arrow-mini'
+  | 'dot'
+  | 'figma'
+  | 'svg-bone'
+  | 'svg-hand';
 
 export interface CursorSprite {
   texture: Texture;
   width: number;
   height: number;
+  /**
+   * Visible content height (in texture pixels). The Pixi overlay scales by
+   * `contentTargetHeight / contentHeight` so every cursor shape — procedural
+   * or SVG — renders at exactly the same on-screen height for the same
+   * `contentTargetHeight`. This is the cure for shape-A-and-shape-B looking
+   * different sizes when fed the same `r`.
+   */
+  contentHeight: number;
+  /** Hotspot expressed as a fraction of width / height (0..1). */
   hotspotX: number;
   hotspotY: number;
 }
 
-const SPRITE_RESOLUTION = 256;
-const SVG_VIEWBOX = { width: 618, height: 958 };
-// Tip of the cursor inside the SVG's viewBox coordinates.
-const SVG_HOTSPOT = { x: 53, y: 37 };
+const PROCEDURAL_RESOLUTION = 256;
 
-function dataUrlToTexture(dataUrl: string): Texture {
-  const img = new Image();
-  img.src = dataUrl;
-  return Texture.from(img);
-}
+// SVG hotspots are tuned for the source viewBox of each asset. Adjust the
+// constants below if the artwork is replaced.
+//
+//   pointer:  618 × 958, tip at (53, 37)
+//   bone:     618 × 1350, vertical I-beam → centred hotspot
+//   hand:     767 × 746, hand pointing up → fingertip near top, slightly
+//             left of horizontal centre
+const SVG_META: Record<'pointer' | 'bone' | 'hand', {
+  url: string;
+  viewBox: { width: number; height: number };
+  hotspot: { x: number; y: number };
+}> = {
+  pointer: {
+    url: pointerSvgUrl,
+    viewBox: { width: 618, height: 958 },
+    hotspot: { x: 53, y: 37 },
+  },
+  bone: {
+    url: boneSvgUrl,
+    viewBox: { width: 618, height: 1350 },
+    hotspot: { x: 309, y: 675 },
+  },
+  hand: {
+    url: handSvgUrl,
+    viewBox: { width: 767.314286, height: 746 },
+    hotspot: { x: 322, y: 37 },
+  },
+};
 
-let svgPointerPromise: Promise<CursorSprite> | null = null;
+const proceduralCache = new Map<CursorShape, CursorSprite>();
+const svgCache = new Map<'pointer' | 'bone' | 'hand', CursorSprite>();
+const svgPromises = new Map<'pointer' | 'bone' | 'hand', Promise<CursorSprite>>();
 
-/**
- * Load the SVG pointer at src/assets/pointer-cursor.svg, rasterize it to
- * a canvas at SPRITE_RESOLUTION height (preserving aspect), and wrap it as
- * a PixiJS Texture. Cached after first call.
- */
-export function loadSvgPointerSprite(): Promise<CursorSprite> {
-  if (svgPointerPromise) return svgPointerPromise;
-  svgPointerPromise = (async () => {
+function rasterizeSvg(key: 'pointer' | 'bone' | 'hand'): Promise<CursorSprite> {
+  const cached = svgPromises.get(key);
+  if (cached) return cached;
+  const meta = SVG_META[key];
+  const promise = (async (): Promise<CursorSprite> => {
     const img = new Image();
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve();
-      img.onerror = () => reject(new Error(`Failed to load ${pointerSvgUrl}`));
-      img.src = pointerSvgUrl;
+      img.onerror = () => reject(new Error(`Failed to load ${meta.url}`));
+      img.src = meta.url;
     });
 
-    const aspect = SVG_VIEWBOX.width / SVG_VIEWBOX.height;
-    const h = SPRITE_RESOLUTION;
+    const aspect = meta.viewBox.width / meta.viewBox.height;
+    const h = PROCEDURAL_RESOLUTION;
     const w = Math.max(1, Math.round(h * aspect));
     const canvas = document.createElement('canvas');
     canvas.width = w;
@@ -49,84 +101,99 @@ export function loadSvgPointerSprite(): Promise<CursorSprite> {
     if (!ctx) throw new Error('2d context unavailable');
     ctx.drawImage(img, 0, 0, w, h);
 
-    return {
+    const sprite: CursorSprite = {
       texture: Texture.from(canvas),
       width: w,
       height: h,
-      hotspotX: SVG_HOTSPOT.x / SVG_VIEWBOX.width,
-      hotspotY: SVG_HOTSPOT.y / SVG_VIEWBOX.height,
+      // SVGs are rasterized to fill the canvas, so visible content equals
+      // the texture height.
+      contentHeight: h,
+      hotspotX: meta.hotspot.x / meta.viewBox.width,
+      hotspotY: meta.hotspot.y / meta.viewBox.height,
     };
+    svgCache.set(key, sprite);
+    return sprite;
   })();
-  return svgPointerPromise;
+  svgPromises.set(key, promise);
+  return promise;
 }
 
-function arrowPath(ctx: CanvasRenderingContext2D, size: number): void {
-  // Arrow geometry centered with the tip at the upper-left third of the
-  // canvas (matches the hotspot below). Coordinates are tuned for a balanced
-  // shape rather than copied from any system cursor.
-  const tipX = size * 0.225;
-  const tipY = size * 0.075;
-  const w = size * 0.46;
-  const h = size * 0.7;
+/**
+ * Backwards-compatible export — older code paths request the SVG pointer
+ * directly. Internally this is the same as `loadCursorSprite('svg-pointer')`
+ * but kept under the original name to avoid cascading rename churn.
+ */
+export function loadSvgPointerSprite(): Promise<CursorSprite> {
+  return rasterizeSvg('pointer');
+}
+
+/**
+ * Async sprite loader. Procedural shapes resolve synchronously (the promise
+ * is already settled by the time the caller awaits it); SVG shapes take one
+ * trip through the image decoder on first request.
+ */
+export function loadCursorSprite(shape: CursorShape): Promise<CursorSprite> {
+  if (shape === 'svg-bone') return rasterizeSvg('bone');
+  if (shape === 'svg-hand') return rasterizeSvg('hand');
+  return Promise.resolve(getCursorSprite(shape));
+}
+
+/**
+ * Synchronous cache lookup for shapes that are already loaded. Returns null
+ * for SVG shapes that haven't finished rasterizing yet — the caller should
+ * fall back to a procedural shape until then.
+ */
+export function getCursorSpriteCached(shape: CursorShape): CursorSprite | null {
+  if (shape === 'svg-bone') return svgCache.get('bone') ?? null;
+  if (shape === 'svg-hand') return svgCache.get('hand') ?? null;
+  return getCursorSprite(shape);
+}
+
+// Shared painters — these mirror the geometry in renderer.ts:drawCursorShape
+// so the procedural sprite (Pixi path) and the canvas blit (export path) draw
+// the same shape pixel-for-pixel. The painter signature centres the cursor
+// at canvas (hotspotX*size, hotspotY*size); each painter is responsible for
+// drawing relative to that point.
+
+function paintProceduralArrow(ctx: CanvasRenderingContext2D, size: number, filled: boolean): void {
+  // Coordinates mirror renderer.ts:drawArrow. We pick `k` so the full path
+  // (extents go to 15k × 21k from the tip plus a 1.5k vertical inset) fits
+  // INSIDE the texture with a small margin — k = size / 24 keeps the tail
+  // clear of the bottom edge for both filled and outline variants.
+  const k = size / 24;
+  ctx.save();
+  // Drop shadow so the cursor reads on bright UIs, matching what the canvas
+  // path does via shadowColor in drawCursorShape.
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = Math.max(2, k * 1.5);
+  ctx.shadowOffsetY = Math.max(1, k * 0.5);
+  ctx.translate(k, 1.5 * k); // align tip to (k, 1.5k) inside the texture
   ctx.beginPath();
-  ctx.moveTo(tipX, tipY);                                    // tip
-  ctx.lineTo(tipX, tipY + h);                                // left edge
-  ctx.lineTo(tipX + w * 0.32, tipY + h * 0.78);              // notch into tail
-  ctx.lineTo(tipX + w * 0.50, tipY + h);                     // tail bottom-left
-  ctx.lineTo(tipX + w * 0.66, tipY + h * 0.94);              // tail bottom-right
-  ctx.lineTo(tipX + w * 0.46, tipY + h * 0.72);              // notch up
-  ctx.lineTo(tipX + w * 0.94, tipY + h * 0.72);              // back to right edge
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, 19 * k);
+  ctx.lineTo(5 * k, 15 * k);
+  ctx.lineTo(8 * k, 21 * k);
+  ctx.lineTo(11 * k, 20 * k);
+  ctx.lineTo(8 * k, 14 * k);
+  ctx.lineTo(15 * k, 14 * k);
   ctx.closePath();
-}
-
-function paintArrow(ctx: CanvasRenderingContext2D, size: number): void {
-  ctx.save();
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-
-  // Soft ambient drop shadow — gives weight without a hard edge.
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = size * 0.10;
-  ctx.shadowOffsetY = size * 0.020;
-  arrowPath(ctx, size);
-  ctx.fillStyle = '#000000';
-  ctx.fill();
-  ctx.restore();
-
-  // Dark outline behind the white fill — keeps the cursor legible on any
-  // background. Slightly thicker than the visible stroke so anti-aliasing
-  // doesn't eat into the white.
-  arrowPath(ctx, size);
-  ctx.lineWidth = size * 0.06;
-  ctx.strokeStyle = 'rgba(20, 22, 32, 0.95)';
-  ctx.stroke();
-
-  // White fill with a subtle vertical gradient — top is bright, bottom
-  // gently cooler, gives the arrow a touch of dimensionality.
-  const fill = ctx.createLinearGradient(0, 0, 0, size);
-  fill.addColorStop(0, '#ffffff');
-  fill.addColorStop(0.6, '#f7f8fb');
-  fill.addColorStop(1, '#e7eaf0');
-  arrowPath(ctx, size);
-  ctx.fillStyle = fill;
-  ctx.fill();
-
-  // Specular highlight along the upper-left edge — clipped to the arrow.
-  ctx.save();
-  arrowPath(ctx, size);
-  ctx.clip();
-  const hl = ctx.createLinearGradient(size * 0.2, 0, size * 0.5, size * 0.6);
-  hl.addColorStop(0, 'rgba(255,255,255,0.85)');
-  hl.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = hl;
-  ctx.fillRect(0, 0, size, size);
-  ctx.restore();
-
+  if (filled) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(1, k * 0.6);
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.stroke();
+  } else {
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(1.4, k * 0.9);
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
-function paintDot(ctx: CanvasRenderingContext2D, size: number): void {
+function paintProceduralDot(ctx: CanvasRenderingContext2D, size: number): void {
   const cx = size / 2;
   const cy = size / 2;
   const r = size * 0.22;
@@ -144,58 +211,116 @@ function paintDot(ctx: CanvasRenderingContext2D, size: number): void {
   ctx.restore();
 }
 
-function paintRing(ctx: CanvasRenderingContext2D, size: number): void {
-  const cx = size / 2;
-  const cy = size / 2;
-  const ringR = size * 0.34;
+function paintProceduralFigma(ctx: CanvasRenderingContext2D, size: number): void {
+  // Mirrors renderer.ts:drawFigmaArrow. Path extends to 16k × 16k from the
+  // hotspot at (k, k), so the full sprite needs k = size / 18 (margin for
+  // the stroke + shadow).
+  const k = size / 18;
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = size * 0.06;
-  ctx.lineWidth = size * 0.06;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = Math.max(2, k * 1.5);
+  ctx.shadowOffsetY = Math.max(1, k * 0.5);
+  ctx.translate(k, k); // hotspot offset inside texture
   ctx.beginPath();
-  ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.shadowColor = 'transparent';
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-  ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.06, 0, Math.PI * 2);
+  ctx.moveTo(0, 0);
+  ctx.lineTo(16 * k, 8 * k);
+  ctx.lineTo(9 * k, 10 * k);
+  ctx.lineTo(6 * k, 16 * k);
+  ctx.closePath();
+  ctx.fillStyle = '#ffffff';
   ctx.fill();
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(1, k * 0.45);
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.stroke();
   ctx.restore();
 }
 
-const PAINTERS: Record<CursorShape, (ctx: CanvasRenderingContext2D, size: number) => void> = {
-  arrow: paintArrow,
-  dot: paintDot,
-  ring: paintRing,
+const PROCEDURAL_PAINTERS: Record<
+  Exclude<CursorShape, 'svg-bone' | 'svg-hand'>,
+  (ctx: CanvasRenderingContext2D, size: number) => void
+> = {
+  'arrow':         (ctx, size) => paintProceduralArrow(ctx, size, true),
+  'arrow-outline': (ctx, size) => paintProceduralArrow(ctx, size, false),
+  'arrow-mini':    (ctx, size) => paintProceduralArrow(ctx, size * 0.85, true),
+  'dot':           (ctx, size) => paintProceduralDot(ctx, size),
+  'figma':         (ctx, size) => paintProceduralFigma(ctx, size),
 };
 
-const HOTSPOTS: Record<CursorShape, { x: number; y: number }> = {
-  arrow: { x: 0.225, y: 0.075 },
-  dot: { x: 0.5, y: 0.5 },
-  ring: { x: 0.5, y: 0.5 },
+// Per-shape texture metadata. `contentHeight` is the visible cursor height
+// inside the (PROCEDURAL_RESOLUTION × PROCEDURAL_RESOLUTION) texture, used
+// to scale the sprite to a consistent on-screen size. `hotspotX/Y` are
+// texture-relative fractions where the cursor tip lands. Arrow-mini uses
+// the painter's internal 0.85 down-scale, so its hotspot AND content height
+// shrink correspondingly — earlier code reused the full-arrow constants
+// here, which left the click point ~2 px off-tip.
+const PROCEDURAL_META: Record<
+  Exclude<CursorShape, 'svg-bone' | 'svg-hand'>,
+  { hotspotX: number; hotspotY: number; contentHeight: number }
+> = {
+  'arrow':         { hotspotX: 1 / 24,        hotspotY: 1.5 / 24,        contentHeight: PROCEDURAL_RESOLUTION * 21 / 24 },
+  'arrow-outline': { hotspotX: 1 / 24,        hotspotY: 1.5 / 24,        contentHeight: PROCEDURAL_RESOLUTION * 21 / 24 },
+  'arrow-mini':    { hotspotX: 0.85 / 24,     hotspotY: 1.5 * 0.85 / 24, contentHeight: PROCEDURAL_RESOLUTION * 21 * 0.85 / 24 },
+  'dot':           { hotspotX: 0.5,           hotspotY: 0.5,             contentHeight: PROCEDURAL_RESOLUTION * 0.44 },
+  'figma':         { hotspotX: 1 / 18,        hotspotY: 1 / 18,          contentHeight: PROCEDURAL_RESOLUTION * 16 / 18 },
 };
-
-const cache = new Map<CursorShape, CursorSprite>();
 
 export function getCursorSprite(shape: CursorShape): CursorSprite {
-  const cached = cache.get(shape);
+  if (shape === 'svg-bone' || shape === 'svg-hand') {
+    // Synchronous accessor returns the cached SVG if rasterization already
+    // finished, otherwise falls back to the procedural arrow so the caller
+    // never gets a missing texture.
+    const key = shape === 'svg-bone' ? 'bone' : 'hand';
+    const cached = svgCache.get(key);
+    if (cached) return cached;
+    // Kick off the load so the next call has it cached.
+    void rasterizeSvg(key);
+    return getCursorSprite('arrow');
+  }
+
+  const cached = proceduralCache.get(shape);
   if (cached) return cached;
 
   const canvas = document.createElement('canvas');
-  canvas.width = SPRITE_RESOLUTION;
-  canvas.height = SPRITE_RESOLUTION;
+  canvas.width = PROCEDURAL_RESOLUTION;
+  canvas.height = PROCEDURAL_RESOLUTION;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('2d context unavailable');
-  PAINTERS[shape](ctx, SPRITE_RESOLUTION);
+  PROCEDURAL_PAINTERS[shape](ctx, PROCEDURAL_RESOLUTION);
 
+  const meta = PROCEDURAL_META[shape];
+  // Build the texture directly from the canvas — synchronous, no waiting
+  // for an Image element to decode a data URL. This was the bug that left
+  // procedural shapes invisible: `Texture.from(<img src=dataUrl>)` did not
+  // re-bind once the image decoded.
   const sprite: CursorSprite = {
-    texture: dataUrlToTexture(canvas.toDataURL('image/png')),
-    width: SPRITE_RESOLUTION,
-    height: SPRITE_RESOLUTION,
-    hotspotX: HOTSPOTS[shape].x,
-    hotspotY: HOTSPOTS[shape].y,
+    texture: Texture.from(canvas),
+    width: PROCEDURAL_RESOLUTION,
+    height: PROCEDURAL_RESOLUTION,
+    contentHeight: meta.contentHeight,
+    hotspotX: meta.hotspotX,
+    hotspotY: meta.hotspotY,
   };
-  cache.set(shape, sprite);
+  proceduralCache.set(shape, sprite);
   return sprite;
+}
+
+/** Returns true once the SVG for the given shape has rasterized at least once. */
+export function isSvgShapeLoaded(shape: CursorShape): boolean {
+  if (shape === 'svg-bone') return svgCache.has('bone');
+  if (shape === 'svg-hand') return svgCache.has('hand');
+  return true;
+}
+
+/**
+ * Eagerly preload every SVG shape so the first time the cursor type changes
+ * to text/pointer we don't show a one-frame flash of the procedural arrow.
+ * Safe to call multiple times — subsequent calls return the cached promise.
+ */
+export function preloadSvgShapes(): Promise<void> {
+  return Promise.all([rasterizeSvg('bone'), rasterizeSvg('hand'), rasterizeSvg('pointer')])
+    .then(() => undefined)
+    .catch((err) => {
+      console.warn('[cursor-sprites] preload failed:', err);
+    });
 }

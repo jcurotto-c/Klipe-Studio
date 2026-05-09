@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Klipe Cursor Preview</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        pointer-events: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      #cursor {
+        position: fixed;
+        top: 0;
+        left: 0;
+        will-change: transform;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 80ms ease-out;
+      }
+      #cursor.ready { opacity: 1; }
+      #cursor img {
+        display: block;
+        width: 28px;
+        height: auto;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
+      }
+    </style>
+  </head>
+  <body>
+    <div id="cursor"></div>
+    <script type="module" src="./cursor-preview.tsx"></script>
+  </body>
+</html>

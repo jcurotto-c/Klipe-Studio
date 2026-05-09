@@ -22,6 +22,19 @@ contextBridge.exposeInMainWorld('klipe', {
   },
 });
 
+contextBridge.exposeInMainWorld('klipeCursorPreview', {
+  onPos: (cb: (payload: unknown) => void) => {
+    const listener = (_evt: IpcRendererEvent, payload: unknown): void => cb(payload);
+    ipcRenderer.on('cursor-preview:pos', listener);
+    return () => ipcRenderer.removeListener('cursor-preview:pos', listener);
+  },
+  onType: (cb: (payload: unknown) => void) => {
+    const listener = (_evt: IpcRendererEvent, payload: unknown): void => cb(payload);
+    ipcRenderer.on('cursor-preview:type', listener);
+    return () => ipcRenderer.removeListener('cursor-preview:type', listener);
+  },
+});
+
 contextBridge.exposeInMainWorld('klipeHud', {
   open: () => ipcRenderer.invoke('hud:open'),
   close: () => ipcRenderer.invoke('hud:close'),

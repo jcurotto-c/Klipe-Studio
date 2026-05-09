@@ -63,6 +63,7 @@ export default function VideoCanvas({
   const overlayRef = useRef<PixiCursorOverlay | null>(null);
   const cursorOutputRef = useRef<CursorPlacement>({
     visible: false, px: 0, py: 0, r: 0, rotation: 0, motionAngle: 0, motionStrength: 0,
+    shape: 'arrow', contentTargetHeight: 0,
   });
   const propsRef = useRef({
     segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions,
@@ -128,7 +129,7 @@ export default function VideoCanvas({
     const baseCanvas = canvasRef.current;
     if (!overlayCanvas || !baseCanvas) return;
     let cancelled = false;
-    const overlay = new PixiCursorOverlay({ shape: 'arrow', motionBlurEnabled: true });
+    const overlay = new PixiCursorOverlay({ motionBlurEnabled: true });
     overlay
       .attach(overlayCanvas, baseCanvas.width, baseCanvas.height)
       .then(() => {
