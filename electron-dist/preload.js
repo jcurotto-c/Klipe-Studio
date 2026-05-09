@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
 electron_1.contextBridge.exposeInMainWorld('klipe', {
     getScreenSources: () => electron_1.ipcRenderer.invoke('get-screen-sources'),
+    prepareDisplayMedia: (sourceId) => electron_1.ipcRenderer.invoke('prepare-display-media', sourceId),
     saveVideoBlob: ({ buffer, suggestedName, mimeType }) => electron_1.ipcRenderer.invoke('save-video-blob', { buffer, suggestedName, mimeType }),
     startMouseTracking: () => electron_1.ipcRenderer.invoke('start-mouse-tracking'),
     stopMouseTracking: () => electron_1.ipcRenderer.invoke('stop-mouse-tracking'),

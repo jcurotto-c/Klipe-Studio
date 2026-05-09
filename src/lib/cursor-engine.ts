@@ -169,9 +169,74 @@ function getNearestSample(events: readonly KlipeMouseEvent[], t: number): Positi
   }
   for (let i = lo; i >= 0; i--) {
     const e = events[i]!;
-    if (e.type !== 'key') return e;
+    if (e.type === 'move' || e.type === 'click') return e;
   }
   return null;
+}
+
+function findPositionalIndex(
+  events: readonly KlipeMouseEvent[],
+  startIndex: number,
+  direction: 1 | -1,
+): number {
+  for (let i = startIndex; i >= 0 && i < events.length; i += direction) {
+    const e = events[i]!;
+    if (e.type === 'move' || e.type === 'click') return i;
+  }
+  return -1;
+}
+
+/**
+ * Catmull-Rom spline through 4 control points. p1 and p2 bracket the
+ * sample at parameter `s` ∈ [0, 1]. p0 and p3 give the spline its tangent
+ * at the endpoints — without them you get linear-looking joints between
+ * samples that the spring then has to fight.
+ */
+function catmullRom(p0: number, p1: number, p2: number, p3: number, s: number): number {
+  const s2 = s * s;
+  const s3 = s2 * s;
+  return 0.5 * (
+    (2 * p1) +
+    (-p0 + p2) * s +
+    (2 * p0 - 5 * p1 + 4 * p2 - p3) * s2 +
+    (-p0 + 3 * p1 - 3 * p2 + p3) * s3
+  );
+}
+
+/**
+ * Smooth interpolated cursor target at time `t` using the surrounding
+ * telemetry samples. Falls back to linear at the ends and to the latest
+ * sample when there's only one. This is what the spring chases.
+ */
+function interpolateTarget(
+  events: readonly KlipeMouseEvent[],
+  t: number,
+): { x: number; y: number } | null {
+  let lo = 0;
+  let hi = events.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (events[mid]!.t <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  const i1 = findPositionalIndex(events, lo, -1);
+  if (i1 < 0) return null;
+  const i2 = findPositionalIndex(events, i1 + 1, 1);
+  const e1 = events[i1] as PositionalEvent;
+  if (i2 < 0 || t <= e1.t) return { x: e1.x, y: e1.y };
+  const e2 = events[i2] as PositionalEvent;
+  if (t >= e2.t) return { x: e2.x, y: e2.y };
+  const span = e2.t - e1.t;
+  if (span <= 0) return { x: e1.x, y: e1.y };
+  const s = (t - e1.t) / span;
+  const i0 = findPositionalIndex(events, i1 - 1, -1);
+  const i3 = findPositionalIndex(events, i2 + 1, 1);
+  const e0 = i0 >= 0 ? (events[i0] as PositionalEvent) : e1;
+  const e3 = i3 >= 0 ? (events[i3] as PositionalEvent) : e2;
+  return {
+    x: catmullRom(e0.x, e1.x, e2.x, e3.x, s),
+    y: catmullRom(e0.y, e1.y, e2.y, e3.y, s),
+  };
 }
 
 function lastClickBefore(
@@ -212,8 +277,12 @@ export function sampleCursor(
 
   const sample = getNearestSample(mouse.events, tMs);
   if (!sample) return { visible: false };
-  const targetX = sample.x;
-  const targetY = sample.y;
+  // Catmull-Rom interpolation gives a smooth target curve between samples,
+  // so the spring isn't fighting a step function. The discrete `sample` is
+  // still kept for click + cursor-type lookups elsewhere.
+  const interp = interpolateTarget(mouse.events, tMs) ?? { x: sample.x, y: sample.y };
+  const targetX = interp.x;
+  const targetY = interp.y;
 
   const dtMs = state.lastTms == null ? 16.7 : Math.max(0.5, tMs - state.lastTms);
   state.lastTms = tMs;

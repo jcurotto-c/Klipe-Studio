@@ -34,10 +34,33 @@ interface DesktopMediaStreamConstraints {
   video: DesktopMediaTrackConstraints;
 }
 
-export async function buildScreenStream(
-  sourceId: string,
-  { withMic = false }: { withMic?: boolean } = {},
-): Promise<ScreenCapture> {
+// `cursor` is part of the Screen Capture spec but missing from lib.dom.
+interface DisplayMediaVideoConstraints extends MediaTrackConstraints {
+  cursor?: 'always' | 'motion' | 'never';
+}
+
+async function captureWithDisplayMedia(sourceId: string): Promise<MediaStream> {
+  const k = bridge();
+  if (typeof k.prepareDisplayMedia !== 'function') {
+    throw new Error('prepareDisplayMedia bridge missing — preload likely outdated');
+  }
+  await k.prepareDisplayMedia(sourceId);
+  const videoConstraints: DisplayMediaVideoConstraints = {
+    cursor: 'never',
+    frameRate: { ideal: 60, min: 30 },
+  };
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    audio: false,
+    video: videoConstraints as MediaTrackConstraints,
+  });
+  if (stream.getVideoTracks().length === 0) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw new Error('getDisplayMedia returned no video tracks');
+  }
+  return stream;
+}
+
+async function captureWithLegacyGetUserMedia(sourceId: string): Promise<MediaStream> {
   const constraints: DesktopMediaStreamConstraints = {
     audio: false,
     video: {
@@ -49,9 +72,26 @@ export async function buildScreenStream(
       },
     },
   };
-  const screenStream = await navigator.mediaDevices.getUserMedia(
+  return navigator.mediaDevices.getUserMedia(
     constraints as unknown as MediaStreamConstraints,
   );
+}
+
+export async function buildScreenStream(
+  sourceId: string,
+  { withMic = false }: { withMic?: boolean } = {},
+): Promise<ScreenCapture> {
+  // Prefer getDisplayMedia + cursor: 'never' so the OS cursor is excluded
+  // from captured frames. If anything in that path fails, fall back to the
+  // legacy getUserMedia path so recording always works.
+  let screenStream: MediaStream;
+  try {
+    screenStream = await captureWithDisplayMedia(sourceId);
+    console.info('[capture] using getDisplayMedia (cursor excluded)');
+  } catch (err) {
+    console.warn('[capture] getDisplayMedia failed, falling back to legacy capture:', err);
+    screenStream = await captureWithLegacyGetUserMedia(sourceId);
+  }
 
   if (!withMic) {
     return { combined: screenStream, screen: screenStream, mic: null };

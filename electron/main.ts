@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, dialog, screen, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, dialog, screen, session, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -117,7 +117,38 @@ function createHudWindow(): BrowserWindow {
   return hudWindow;
 }
 
+// Renderer sets this via `prepare-display-media` right before calling
+// getDisplayMedia(). The handler below resolves it to a real desktopCapturer
+// source so we can ask for cursor: 'never' without showing Chromium's picker.
+let pendingDisplayMediaSourceId: string | null = null;
+
 app.whenReady().then(() => {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const targetId = pendingDisplayMediaSourceId;
+    pendingDisplayMediaSourceId = null;
+    if (!targetId) {
+      console.warn('[displayMediaRequestHandler] no pending source — rejecting');
+      callback({});
+      return;
+    }
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 0, height: 0 },
+      });
+      const source = sources.find((s) => s.id === targetId);
+      if (source) {
+        callback({ video: source });
+      } else {
+        console.warn('[displayMediaRequestHandler] source not found:', targetId);
+        callback({});
+      }
+    } catch (err) {
+      console.error('[displayMediaRequestHandler]', err);
+      callback({});
+    }
+  });
+
   createWindow();
   createHudWindow();
   app.on('activate', () => {
@@ -126,6 +157,12 @@ app.whenReady().then(() => {
       createHudWindow();
     }
   });
+});
+
+ipcMain.handle('prepare-display-media', (_evt: IpcMainInvokeEvent, sourceId: unknown) => {
+  if (typeof sourceId !== 'string' || !sourceId) return { ok: false as const };
+  pendingDisplayMediaSourceId = sourceId;
+  return { ok: true as const };
 });
 
 app.on('window-all-closed', () => {
@@ -239,12 +276,28 @@ using System.Runtime.InteropServices;
 public class W {
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
+    [DllImport("user32.dll")] public static extern bool GetCursorInfo(ref CURSORINFO ci);
+    [DllImport("user32.dll")] public static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] public struct CURSORINFO {
+        public int cbSize; public int flags; public IntPtr hCursor; public POINT ptScreenPos;
+    }
 }
 "@
 $start = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
 $lastL = $false; $lastR = $false; $lastM = $false
 $lastX = -9999; $lastY = -9999
+
+# Cache standard cursor handles → friendly names. Anything unmatched is reported as 'arrow'.
+$cursorMap = @{}
+$cursorMap[[long][W]::LoadCursor([IntPtr]::Zero, 32512).ToInt64()] = 'arrow'
+$cursorMap[[long][W]::LoadCursor([IntPtr]::Zero, 32513).ToInt64()] = 'text'
+$cursorMap[[long][W]::LoadCursor([IntPtr]::Zero, 32515).ToInt64()] = 'crosshair'
+$cursorMap[[long][W]::LoadCursor([IntPtr]::Zero, 32644).ToInt64()] = 'resize-ew'
+$cursorMap[[long][W]::LoadCursor([IntPtr]::Zero, 32645).ToInt64()] = 'resize-ns'
+$cursorMap[[long][W]::LoadCursor([IntPtr]::Zero, 32648).ToInt64()] = 'not-allowed'
+$cursorMap[[long][W]::LoadCursor([IntPtr]::Zero, 32649).ToInt64()] = 'pointer'
+$lastCursorType = ''
 
 # Virtual-key codes we emit as 'KEY' events (typing-relevant keys).
 # 0x08 BACKSPACE, 0x09 TAB, 0x0D ENTER, 0x20 SPACE,
@@ -268,6 +321,17 @@ while ($true) {
   if ($p.X -ne $lastX -or $p.Y -ne $lastY) {
     $lastX = $p.X; $lastY = $p.Y
     Write-Host ("MOVE|{0}|{1}|{2}" -f $t, $p.X, $p.Y)
+  }
+
+  $ci = New-Object W+CURSORINFO
+  $ci.cbSize = [Runtime.InteropServices.Marshal]::SizeOf([type]'W+CURSORINFO')
+  if ([W]::GetCursorInfo([ref]$ci)) {
+    $key = [long]$ci.hCursor.ToInt64()
+    $type = if ($cursorMap.ContainsKey($key)) { $cursorMap[$key] } else { 'arrow' }
+    if ($type -ne $lastCursorType) {
+      $lastCursorType = $type
+      Write-Host ("CTYPE|{0}|{1}" -f $t, $type)
+    }
   }
   $l = ([W]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0
   $r = ([W]::GetAsyncKeyState(0x02) -band 0x8000) -ne 0
@@ -354,6 +418,12 @@ function startMouseTracking(): MouseTrackingResult {
           type: 'key',
           t: Number(parts[1]),
           code: Number(parts[2]),
+        });
+      } else if (parts[0] === 'CTYPE') {
+        mainWindow.webContents.send('mouse-event', {
+          type: 'cursorType',
+          t: Number(parts[1]),
+          cursorType: parts[2],
         });
       }
     }

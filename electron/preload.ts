@@ -8,6 +8,7 @@ interface SaveVideoBlobArgs {
 
 contextBridge.exposeInMainWorld('klipe', {
   getScreenSources: () => ipcRenderer.invoke('get-screen-sources'),
+  prepareDisplayMedia: (sourceId: string) => ipcRenderer.invoke('prepare-display-media', sourceId),
   saveVideoBlob: ({ buffer, suggestedName, mimeType }: SaveVideoBlobArgs) =>
     ipcRenderer.invoke('save-video-blob', { buffer, suggestedName, mimeType }),
   startMouseTracking: () => ipcRenderer.invoke('start-mouse-tracking'),

@@ -1,6 +1,8 @@
 import { springProgress } from './spring';
 import type {
   Display,
+  KlipeMouseEvent,
+  MouseClickEvent,
   MouseTrack,
   Vec2,
   ZoomDefaults,
@@ -18,12 +20,19 @@ export const DEFAULT_ZOOM: ZoomDefaults = {
 };
 
 interface AutoZoomOptions extends ZoomDefaults {
+  /** Two clicks within this gap belong to the same cluster (one zoom region). */
   mergeGap: number;
+  /** Padding added before the first click of a cluster. */
+  padBefore: number;
+  /** Padding added after the last click of a cluster. */
+  padAfter: number;
 }
 
 const AUTO_OPTS: AutoZoomOptions = {
   ...DEFAULT_ZOOM,
-  mergeGap: 1500,
+  mergeGap: 2500,
+  padBefore: 500,
+  padAfter: 500,
 };
 
 let _idCounter = 0;
@@ -34,43 +43,100 @@ function sortInPlace(segs: ZoomSegment[]): ZoomSegment[] {
   return segs;
 }
 
+/**
+ * Heuristic strength score for an individual click.
+ *  - Right/middle clicks rate higher: they're rare and almost always intentional.
+ *  - Double-clicks (two left clicks ≤350ms apart, ≤30px apart) score even higher
+ *    because they signal a strong "look here" intent.
+ * Strength is used to choose a cluster's focus point.
+ */
+function scoreClicks(events: readonly KlipeMouseEvent[]): Map<MouseClickEvent, number> {
+  const scores = new Map<MouseClickEvent, number>();
+  const clicks = events.filter((e): e is MouseClickEvent => e.type === 'click');
+  for (let i = 0; i < clicks.length; i += 1) {
+    const c = clicks[i]!;
+    let s = c.button === 'left' ? 1 : 1.5;
+    const next = clicks[i + 1];
+    if (
+      next &&
+      c.button === 'left' &&
+      next.button === 'left' &&
+      next.t - c.t <= 350 &&
+      Math.hypot(next.x - c.x, next.y - c.y) <= 30
+    ) {
+      s = 2;
+    }
+    scores.set(c, s);
+  }
+  return scores;
+}
+
+interface ClickCluster {
+  clicks: MouseClickEvent[];
+  firstT: number;
+  lastT: number;
+  /** Click with the highest strength — its position becomes the cluster focus. */
+  dominant: MouseClickEvent;
+}
+
+function clusterClicks(
+  clicks: readonly MouseClickEvent[],
+  scores: Map<MouseClickEvent, number>,
+  mergeGap: number,
+): ClickCluster[] {
+  if (clicks.length === 0) return [];
+  const sorted = [...clicks].sort((a, b) => a.t - b.t);
+  const clusters: ClickCluster[] = [];
+  let current: ClickCluster = {
+    clicks: [sorted[0]!],
+    firstT: sorted[0]!.t,
+    lastT: sorted[0]!.t,
+    dominant: sorted[0]!,
+  };
+  for (let i = 1; i < sorted.length; i += 1) {
+    const c = sorted[i]!;
+    if (c.t - current.lastT <= mergeGap) {
+      current.clicks.push(c);
+      current.lastT = c.t;
+      if ((scores.get(c) ?? 1) > (scores.get(current.dominant) ?? 1)) {
+        current.dominant = c;
+      }
+    } else {
+      clusters.push(current);
+      current = { clicks: [c], firstT: c.t, lastT: c.t, dominant: c };
+    }
+  }
+  clusters.push(current);
+  return clusters;
+}
+
 export function generateZoomSegments(
   mouse: MouseTrack | null | undefined,
   opts: Partial<AutoZoomOptions> = {},
 ): ZoomSegment[] {
   const o: AutoZoomOptions = { ...AUTO_OPTS, ...opts };
   if (!mouse || !mouse.events) return [];
-  const clicks = mouse.events.filter((e) => e.type === 'click');
+  const clicks = mouse.events.filter((e): e is MouseClickEvent => e.type === 'click');
   if (!clicks.length) return [];
 
-  const raw: ZoomSegment[] = clicks.map((c) => ({
+  const scores = scoreClicks(mouse.events);
+  const clusters = clusterClicks(clicks, scores, o.mergeGap);
+
+  // Sustain time at full zoom is whatever is left of `duration` after we've
+  // accounted for ease-in + ease-out. Keeps single-click zooms feeling the same
+  // length as before, while multi-click clusters naturally dwell longer.
+  const sustain = Math.max(0, o.duration - o.easeIn - o.easeOut);
+
+  return clusters.map((cluster) => ({
     id: newId(),
     source: 'auto',
-    center: { x: c.x, y: c.y },
+    center: { x: cluster.dominant.x, y: cluster.dominant.y },
     scale: o.scale,
-    tStart: Math.max(0, c.t - o.easeIn),
-    tEnd: c.t + o.duration,
+    tStart: Math.max(0, cluster.firstT - o.padBefore),
+    tEnd: cluster.lastT + o.padAfter + sustain + o.easeOut,
     easeIn: o.easeIn,
     easeOut: o.easeOut,
   }));
-
-  raw.sort((a, b) => a.tStart - b.tStart);
-  const merged: ZoomSegment[] = [];
-  for (const seg of raw) {
-    const prev = merged[merged.length - 1];
-    if (prev && seg.tStart - prev.tEnd < o.mergeGap) {
-      prev.tEnd = Math.max(prev.tEnd, seg.tEnd);
-      prev.center = {
-        x: (prev.center.x + seg.center.x) / 2,
-        y: (prev.center.y + seg.center.y) / 2,
-      };
-      prev.scale = Math.max(prev.scale, seg.scale);
-      prev.easeOut = seg.easeOut;
-    } else {
-      merged.push({ ...seg });
-    }
-  }
-  return merged;
 }
 
 export interface CreateManualSegmentArgs {

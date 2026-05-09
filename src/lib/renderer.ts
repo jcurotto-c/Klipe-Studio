@@ -6,6 +6,12 @@
 import { sampleZoom } from './zoom-engine';
 import { computeInsetRect } from './layout';
 import { sampleCursor, DEFAULT_CURSOR_OPTIONS } from './cursor-engine';
+import {
+  applyCursorFollow,
+  DEFAULT_CURSOR_FOLLOW,
+  type CursorFollowConfig,
+  type CursorFollowState,
+} from './cursor-follow-camera';
 import type {
   Background,
   CameraOptions,
@@ -180,6 +186,26 @@ export interface RenderFrameOptions {
   cursorState?: CursorState | null;
   cursorOptions?: Partial<CursorOptions> | null;
   frame?: Partial<FrameOptions> | null;
+  /** When true, renderer skips drawing the cursor — caller draws it (e.g., via PixiJS). */
+  skipCursorDraw?: boolean;
+  /** Mutated by renderer with the cursor's per-frame placement when provided. */
+  cursorOutput?: CursorPlacement;
+  /** Stateful cursor-follow camera (call createCursorFollowState() once per timeline). */
+  cursorFollowState?: CursorFollowState | null;
+  /** Master switch for cursor-follow (defaults to off). */
+  cursorFollowEnabled?: boolean;
+  /** Cursor-follow tuning. */
+  cursorFollowConfig?: Partial<CursorFollowConfig>;
+}
+
+export interface CursorPlacement {
+  visible: boolean;
+  px: number;
+  py: number;
+  r: number;
+  rotation: number;
+  motionAngle: number;
+  motionStrength: number;
 }
 
 type RenderableSource = CanvasImageSource & {
@@ -209,7 +235,15 @@ export function renderFrame(
     cursorState = null,
     cursorOptions = null,
     frame = null,
+    skipCursorDraw = false,
+    cursorOutput,
+    cursorFollowState = null,
+    cursorFollowEnabled = false,
+    cursorFollowConfig,
   } = opts;
+  if (cursorOutput) {
+    cursorOutput.visible = false;
+  }
   const cOpts: CursorOptions = { ...DEFAULT_CURSOR_OPTIONS, ...(cursorOptions ?? {}) };
   const fOpts: FrameOptions = { ...DEFAULT_FRAME_OPTIONS, ...(frame ?? {}) };
 
@@ -239,7 +273,51 @@ export function renderFrame(
     : Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
   const { baseX, baseY, baseW, baseH } = computeInsetRect(cw, ch, swEff, shEff, effectivePadding);
 
-  const { scale, cx, cy, p: zoomP } = sampleZoom(segments, tMs);
+  const { scale: baseScale, cx: baseCx, cy: baseCy, p: zoomP } = sampleZoom(segments, tMs);
+
+  // Sample the cursor early so cursor-follow can override the zoom focus
+  // before we compute the draw rect. We reuse the same sample for drawing
+  // later — calling sampleCursor twice would advance its spring twice.
+  const cursorEnabled = !!(showCursor && cOpts.show && mouse);
+  const cursor: CursorSample = cursorEnabled
+    ? cursorState
+      ? sampleCursor(cursorState, mouse!, tMs, cOpts)
+      : staticCursorSample(mouse!, tMs, cOpts)
+    : { visible: false };
+
+  let cx = baseCx;
+  let cy = baseCy;
+  let scale = baseScale;
+  if (
+    cursorFollowEnabled &&
+    cursorFollowState &&
+    cursor.visible &&
+    baseCx != null &&
+    baseCy != null
+  ) {
+    const followCfg = { ...DEFAULT_CURSOR_FOLLOW, ...(cursorFollowConfig ?? {}) };
+    const follow = applyCursorFollow({
+      state: cursorFollowState,
+      baseFocusX: baseCx,
+      baseFocusY: baseCy,
+      cursorX: cursor.x,
+      cursorY: cursor.y,
+      scale: baseScale,
+      zoomP,
+      sourceWidth: sw,
+      sourceHeight: sh,
+      tMs,
+      config: followCfg,
+    });
+    cx = follow.cx;
+    cy = follow.cy;
+    // Adaptive zoom: scale eases off as cursor speed increases. Multiplier
+    // only kicks in while we're meaningfully zoomed (zoomP > 0); blends back
+    // to 1 during the easing tail so the framing snaps back to its full zoom.
+    const adaptiveBlend = Math.max(0, Math.min(1, (zoomP - 0.2) / 0.6));
+    const factor = 1 - (1 - follow.scaleFactor) * adaptiveBlend;
+    scale = 1 + (baseScale - 1) * factor;
+  }
 
   const fcx = cx == null ? null : cx - sx0;
   const fcy = cy == null ? null : cy - sy0;
@@ -287,14 +365,10 @@ export function renderFrame(
   ctx.drawImage(source, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH);
   ctx.restore();
 
-  if (!showCursor || !cOpts.show || !mouse) {
+  if (!cursorEnabled) {
     drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP || 0);
     return;
   }
-
-  const cursor: CursorSample = cursorState
-    ? sampleCursor(cursorState, mouse, tMs, cOpts)
-    : staticCursorSample(mouse, tMs, cOpts);
 
   if (cursor.visible) {
     const lx = cursor.x - sx0;
@@ -307,6 +381,18 @@ export function renderFrame(
       const baseR = CURSOR_BASE_RADIUS * (refDim / CURSOR_REFERENCE_WIDTH);
       const r = baseR * cOpts.size * (cursor.scaleMul || 1);
 
+      if (cursorOutput) {
+        cursorOutput.visible = true;
+        cursorOutput.px = px;
+        cursorOutput.py = py;
+        cursorOutput.r = r;
+        cursorOutput.rotation = cursor.rotation || 0;
+        cursorOutput.motionAngle = cursor.motionAngle;
+        cursorOutput.motionStrength = cursor.motionStrength;
+      }
+
+      // Click ripples render here regardless — they're a separate effect from
+      // the cursor sprite and look fine on the 2D canvas.
       const ripples = activeRipples(mouse, tMs);
       for (const rp of ripples) {
         const rlx = rp.x - sx0;
@@ -324,11 +410,13 @@ export function renderFrame(
         ctx.restore();
       }
 
-      drawCursor(ctx, px, py, r, cursor.rotation || 0, {
-        style: cOpts.style,
-        motionAngle: cursor.motionAngle,
-        motionStrength: cursor.motionStrength,
-      });
+      if (!skipCursorDraw) {
+        drawCursor(ctx, px, py, r, cursor.rotation || 0, {
+          style: cOpts.style,
+          motionAngle: cursor.motionAngle,
+          motionStrength: cursor.motionStrength,
+        });
+      }
     }
   }
 
@@ -352,7 +440,7 @@ function staticCursorSample(
   let s: { x: number; y: number } | null = null;
   for (let i = lo; i >= 0; i--) {
     const e = evs[i]!;
-    if (e.type !== 'key') {
+    if (e.type === 'move' || e.type === 'click') {
       s = e;
       break;
     }

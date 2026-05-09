@@ -4,8 +4,10 @@ import {
   useRef,
   type RefObject,
 } from 'react';
-import { renderFrame } from '../lib/renderer';
+import { renderFrame, type CursorPlacement } from '../lib/renderer';
 import { createCursorState, resetCursorState } from '../lib/cursor-engine';
+import { createCursorFollowState, resetCursorFollowState } from '../lib/cursor-follow-camera';
+import { PixiCursorOverlay } from '../lib/cursor-overlay';
 import CropOverlay from './CropOverlay';
 import type {
   Background,
@@ -51,8 +53,14 @@ export default function VideoCanvas({
 }: VideoCanvasProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number>(0);
   const cursorStateRef = useRef(createCursorState());
+  const followStateRef = useRef(createCursorFollowState());
+  const overlayRef = useRef<PixiCursorOverlay | null>(null);
+  const cursorOutputRef = useRef<CursorPlacement>({
+    visible: false, px: 0, py: 0, r: 0, rotation: 0, motionAngle: 0, motionStrength: 0,
+  });
   const propsRef = useRef({
     segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions,
   });
@@ -62,6 +70,7 @@ export default function VideoCanvas({
 
   useEffect(() => {
     resetCursorState(cursorStateRef.current);
+    resetCursorFollowState(followStateRef.current);
   }, [mouse]);
 
   useLayoutEffect(() => {
@@ -94,6 +103,7 @@ export default function VideoCanvas({
       const ch = Math.max(1, Math.round(h * dpr));
       if (canvas.width !== cw) canvas.width = cw;
       if (canvas.height !== ch) canvas.height = ch;
+      overlayRef.current?.resize(cw, ch);
     };
 
     apply();
@@ -105,6 +115,30 @@ export default function VideoCanvas({
       window.removeEventListener('resize', apply);
     };
   }, [display?.width, display?.height]);
+
+  // Attach the PixiJS cursor overlay once, after the overlay canvas exists.
+  useEffect(() => {
+    const overlayCanvas = overlayCanvasRef.current;
+    const baseCanvas = canvasRef.current;
+    if (!overlayCanvas || !baseCanvas) return;
+    let cancelled = false;
+    const overlay = new PixiCursorOverlay({ shape: 'arrow', motionBlurEnabled: true });
+    overlay
+      .attach(overlayCanvas, baseCanvas.width, baseCanvas.height)
+      .then(() => {
+        if (cancelled) {
+          overlay.destroy();
+          return;
+        }
+        overlayRef.current = overlay;
+      })
+      .catch((err) => console.warn('[cursor-overlay] attach failed:', err));
+    return () => {
+      cancelled = true;
+      overlayRef.current?.destroy();
+      overlayRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -125,7 +159,9 @@ export default function VideoCanvas({
       const lastSample = cursorStateRef.current.lastTms;
       if (lastSample != null && Math.abs(tMs - lastSample) > 150) {
         resetCursorState(cursorStateRef.current);
+        resetCursorFollowState(followStateRef.current);
       }
+      const overlayActive = overlayRef.current !== null;
       renderFrame(ctx, video, {
         tMs,
         segments: p.segments,
@@ -139,7 +175,14 @@ export default function VideoCanvas({
         cursorState: cursorStateRef.current,
         cursorOptions: p.cursorOptions,
         frame: p.frameOptions,
+        skipCursorDraw: overlayActive,
+        cursorOutput: cursorOutputRef.current,
+        cursorFollowState: followStateRef.current,
+        cursorFollowEnabled: true,
       });
+      if (overlayActive) {
+        overlayRef.current!.render(cursorOutputRef.current);
+      }
     };
 
     rafRef.current = requestAnimationFrame(tick);
@@ -153,9 +196,19 @@ export default function VideoCanvas({
     <div
       ref={wrapRef}
       className="canvas-wrap"
-      style={{ aspectRatio: `${sourceW} / ${sourceH}` }}
+      style={{ aspectRatio: `${sourceW} / ${sourceH}`, position: 'relative' }}
     >
       <canvas ref={canvasRef} width={sourceW} height={sourceH} />
+      <canvas
+        ref={overlayCanvasRef}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
+        }}
+      />
       {cropMode && onCropChange && (
         <CropOverlay
           canvasWidth={sourceW}

@@ -25,7 +25,28 @@ export interface KeyDownEvent {
   code: number;
 }
 
-export type KlipeMouseEvent = MouseMoveEvent | MouseClickEvent | KeyDownEvent;
+export type CursorType =
+  | 'arrow'
+  | 'text'
+  | 'pointer'
+  | 'crosshair'
+  | 'open-hand'
+  | 'closed-hand'
+  | 'resize-ew'
+  | 'resize-ns'
+  | 'not-allowed';
+
+export interface CursorTypeEvent {
+  type: 'cursorType';
+  t: number;
+  cursorType: CursorType;
+}
+
+export type KlipeMouseEvent =
+  | MouseMoveEvent
+  | MouseClickEvent
+  | KeyDownEvent
+  | CursorTypeEvent;
 
 export interface MouseTrack {
   startTime: number;
