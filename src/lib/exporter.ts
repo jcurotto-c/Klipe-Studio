@@ -12,14 +12,15 @@
 
 import { renderFrame } from './renderer';
 import { createCursorState } from './cursor-engine';
+import { fragmentDuration, totalOutputDuration } from './fragments';
 import type {
   Background,
   Crop,
   CursorOptions,
   Display,
   FrameOptions,
+  Fragment,
   MouseTrack,
-  Trim,
   ZoomSegment,
 } from '../types';
 
@@ -107,7 +108,7 @@ export interface ExportVideoOptions {
   display: Display;
   background?: Background;
   crop?: Crop | null;
-  trim: Trim;
+  fragments: Fragment[];
   resolution?: ResolutionName;
   fps?: number;
   format?: ExportFormat;
@@ -148,7 +149,7 @@ export async function exportVideo({
   display,
   background,
   crop = null,
-  trim,
+  fragments,
   resolution = '1080p',
   fps = 60,
   format = 'webm',
@@ -166,6 +167,8 @@ export async function exportVideo({
     if (signal?.aborted) throw new DOMException('Export aborted', 'AbortError');
   };
   throwIfAborted();
+
+  if (!fragments.length) throw new Error('No fragments to export');
 
   const canvas = document.createElement('canvas');
   canvas.width = w;
@@ -185,9 +188,7 @@ export async function exportVideo({
     video.addEventListener('error', () => rej(new Error('Failed to load source')), { once: true });
   });
 
-  const start = Math.max(0, trim.start);
-  const end = Math.min(trim.end, video.duration || trim.end);
-  const total = Math.max(0.05, end - start);
+  const total = Math.max(0.05, totalOutputDuration(fragments));
 
   const canvasStream = canvas.captureStream(fps);
 
@@ -218,9 +219,14 @@ export async function exportVideo({
   recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
 
   let stopRender = false;
+  let elapsedOutput = 0;
+  let activeFragmentEnd = fragments[0]!.srcEnd;
+  let activeFragmentStart = fragments[0]!.srcStart;
+
   const tick = (): void => {
     if (stopRender) return;
-    const tMs = video.currentTime * 1000;
+    const src = video.currentTime;
+    const tMs = src * 1000;
     renderFrame(ctx, video, {
       tMs,
       segments,
@@ -234,39 +240,21 @@ export async function exportVideo({
       frame,
     });
     if (onProgress) {
-      const elapsed = Math.max(0, video.currentTime - start);
-      onProgress('encoding', Math.min(1, elapsed / total));
+      const localOffset = Math.max(0, Math.min(activeFragmentEnd - activeFragmentStart, src - activeFragmentStart));
+      onProgress('encoding', Math.min(1, (elapsedOutput + localOffset) / total));
     }
     requestAnimationFrame(tick);
   };
 
-  await new Promise<void>((resolve) => {
-    const onSeeked = (): void => {
-      video.removeEventListener('seeked', onSeeked);
-      resolve();
-    };
-    video.addEventListener('seeked', onSeeked);
-    video.currentTime = start;
-  });
-
-  renderFrame(ctx, video, {
-    tMs: video.currentTime * 1000,
-    segments,
-    mouse,
-    displayWidth: display?.width,
-    displayHeight: display?.height,
-    background,
-    crop,
-    frame,
-  });
-
-  if (audioCtx && audioCtx.state === 'suspended') {
-    try { await audioCtx.resume(); } catch { /* ignore */ }
-  }
-
-  const stopped = new Promise<void>((resolve) => {
-    recorder.onstop = () => resolve();
-  });
+  const seekTo = (t: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      const onSeeked = (): void => {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      };
+      video.addEventListener('seeked', onSeeked);
+      video.currentTime = t;
+    });
 
   let aborted = false;
   const onAbort = (): void => {
@@ -274,6 +262,10 @@ export async function exportVideo({
     try { video.pause(); } catch { /* ignore */ }
   };
   if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+  const stopped = new Promise<void>((resolve) => {
+    recorder.onstop = () => resolve();
+  });
 
   const cleanup = async (): Promise<void> => {
     stopRender = true;
@@ -288,21 +280,51 @@ export async function exportVideo({
   };
 
   try {
+    await seekTo(fragments[0]!.srcStart);
+    activeFragmentStart = fragments[0]!.srcStart;
+    activeFragmentEnd = fragments[0]!.srcEnd;
+
+    renderFrame(ctx, video, {
+      tMs: video.currentTime * 1000,
+      segments,
+      mouse,
+      displayWidth: display?.width,
+      displayHeight: display?.height,
+      background,
+      crop,
+      frame,
+    });
+
+    if (audioCtx && audioCtx.state === 'suspended') {
+      try { await audioCtx.resume(); } catch { /* ignore */ }
+    }
+
     recorder.start(250);
     requestAnimationFrame(tick);
-    await video.play();
 
-    await new Promise<void>((resolve) => {
-      const check = (): void => {
-        if (aborted || video.currentTime >= end - 0.02 || video.ended) {
-          try { video.pause(); } catch { /* ignore */ }
-          resolve();
-        } else {
-          requestAnimationFrame(check);
-        }
-      };
-      requestAnimationFrame(check);
-    });
+    for (let i = 0; i < fragments.length; i++) {
+      if (aborted) break;
+      const f = fragments[i]!;
+      activeFragmentStart = f.srcStart;
+      activeFragmentEnd = f.srcEnd;
+      if (i > 0) {
+        try { video.pause(); } catch { /* ignore */ }
+        await seekTo(f.srcStart);
+      }
+      await video.play();
+      await new Promise<void>((resolve) => {
+        const check = (): void => {
+          if (aborted || video.currentTime >= f.srcEnd - 0.02 || video.ended) {
+            try { video.pause(); } catch { /* ignore */ }
+            resolve();
+          } else {
+            requestAnimationFrame(check);
+          }
+        };
+        requestAnimationFrame(check);
+      });
+      elapsedOutput += fragmentDuration(f);
+    }
 
     if (aborted) {
       await cleanup();

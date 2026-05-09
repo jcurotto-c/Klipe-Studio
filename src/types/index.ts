@@ -68,9 +68,10 @@ export interface Recording {
   name?: string;
 }
 
-export interface Trim {
-  start: number;
-  end: number;
+export interface Fragment {
+  id: string;
+  srcStart: number;
+  srcEnd: number;
 }
 
 export interface Crop {

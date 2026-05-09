@@ -15,6 +15,15 @@ import {
   DEFAULT_ZOOM,
 } from '../lib/zoom-engine';
 import { isFullCrop } from '../lib/layout';
+import {
+  createFragment,
+  cutFragmentAtSource,
+  fragmentDuration,
+  outputToSource,
+  removeFragmentAt,
+  setFragmentEdge,
+  totalOutputDuration,
+} from '../lib/fragments';
 import { DEFAULT_CAMERA_OPTIONS } from './panels/CameraPanel';
 import { DEFAULT_CURSOR_OPTIONS } from '../lib/cursor-engine';
 import { DEFAULT_FRAME_OPTIONS } from '../lib/renderer';
@@ -24,9 +33,9 @@ import type {
   Crop,
   CursorOptions,
   FrameOptions,
+  Fragment,
   KlipeMouseEvent,
   Recording,
-  Trim,
   ZoomDefaults,
   ZoomSegment,
 } from '../types';
@@ -86,12 +95,20 @@ interface EditorViewProps {
   navExtraEl: HTMLElement | null;
 }
 
+interface HistorySnapshot {
+  fragments: Fragment[];
+  segments: ZoomSegment[];
+}
+
+const HISTORY_LIMIT = 100;
+
 export default function EditorView({ recording, onNew, navExtraEl }: EditorViewProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [duration, setDuration] = useState(0);
+  const [sourceDuration, setSourceDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [trim, setTrim] = useState<Trim>({ start: 0, end: 0 });
+  const [fragments, setFragments] = useState<Fragment[]>([]);
+  const [selectedFragmentId, setSelectedFragmentId] = useState<string | null>(null);
   const [background, setBackground] = useState<Background>({ type: 'wallpaper', value: 'default', blur: 0 });
   const [cropMode, setCropMode] = useState(false);
   const [crop, setCrop] = useState<Crop | null>(null);
@@ -121,6 +138,85 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     [segments, selectedId],
   );
 
+  const duration = useMemo(() => totalOutputDuration(fragments), [fragments]);
+
+  const fragmentsRef = useRef<Fragment[]>(fragments);
+  fragmentsRef.current = fragments;
+  const segmentsRef = useRef<ZoomSegment[]>(segments);
+  segmentsRef.current = segments;
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+
+  const historyRef = useRef<{ past: HistorySnapshot[]; future: HistorySnapshot[] }>({
+    past: [],
+    future: [],
+  });
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  const syncHistoryFlags = useCallback((): void => {
+    const h = historyRef.current;
+    setCanUndo(h.past.length > 0);
+    setCanRedo(h.future.length > 0);
+  }, []);
+
+  const pushHistory = useCallback((): void => {
+    const h = historyRef.current;
+    h.past.push({ fragments: fragmentsRef.current, segments: segmentsRef.current });
+    if (h.past.length > HISTORY_LIMIT) h.past.shift();
+    h.future = [];
+    syncHistoryFlags();
+  }, [syncHistoryFlags]);
+
+  const applySnapshot = useCallback((snap: HistorySnapshot): void => {
+    fragmentsRef.current = snap.fragments;
+    segmentsRef.current = snap.segments;
+    setFragments(snap.fragments);
+    setSegments(snap.segments);
+  }, []);
+
+  const undo = useCallback((): void => {
+    const h = historyRef.current;
+    if (!h.past.length) return;
+    const prev = h.past.pop()!;
+    h.future.push({ fragments: fragmentsRef.current, segments: segmentsRef.current });
+    if (h.future.length > HISTORY_LIMIT) h.future.shift();
+    applySnapshot(prev);
+    syncHistoryFlags();
+  }, [applySnapshot, syncHistoryFlags]);
+
+  const redo = useCallback((): void => {
+    const h = historyRef.current;
+    if (!h.future.length) return;
+    const next = h.future.pop()!;
+    h.past.push({ fragments: fragmentsRef.current, segments: segmentsRef.current });
+    if (h.past.length > HISTORY_LIMIT) h.past.shift();
+    applySnapshot(next);
+    syncHistoryFlags();
+  }, [applySnapshot, syncHistoryFlags]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const meta = e.ctrlKey || e.metaKey;
+      if (!meta) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((k === 'z' && e.shiftKey) || k === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -128,50 +224,89 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
       const d = isFinite(v.duration) && v.duration > 0
         ? v.duration
         : (recording.mouse.events.at(-1)?.t ?? 0) / 1000;
-      setDuration(d);
-      setTrim({ start: 0, end: d });
+      setSourceDuration(d);
+      setFragments((prev) => (prev.length === 0 ? [createFragment(0, d)] : prev));
     };
-    const onTime = (): void => setCurrentTime(v.currentTime);
     const onEnd = (): void => setPlaying(false);
     v.addEventListener('loadedmetadata', onLoaded);
     v.addEventListener('durationchange', onLoaded);
-    v.addEventListener('timeupdate', onTime);
     v.addEventListener('ended', onEnd);
     return () => {
       v.removeEventListener('loadedmetadata', onLoaded);
       v.removeEventListener('durationchange', onLoaded);
-      v.removeEventListener('timeupdate', onTime);
       v.removeEventListener('ended', onEnd);
     };
   }, [recording]);
 
+  // Drive playback through fragments. Each frame, derive output-time from the
+  // <video> element's source-time + the active fragment's start offset; when the
+  // source crosses the fragment's srcEnd, advance to the next fragment.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (currentTime < trim.start) v.currentTime = trim.start;
-    if (currentTime > trim.end && trim.end > 0) {
-      v.pause();
-      setPlaying(false);
-    }
-  }, [currentTime, trim]);
+    let raf = 0;
+    const tick = (): void => {
+      raf = requestAnimationFrame(tick);
+      const frags = fragmentsRef.current;
+      if (!frags.length) return;
+      const out = currentTimeRef.current;
+      const m = outputToSource(frags, out);
+      if (!m) return;
+      if (!playingRef.current || v.paused) return;
+
+      const src = v.currentTime;
+      if (src >= m.fragment.srcEnd - 0.01) {
+        const nextIdx = m.index + 1;
+        if (nextIdx >= frags.length) {
+          v.pause();
+          setPlaying(false);
+          setCurrentTime(totalOutputDuration(frags));
+        } else {
+          const nf = frags[nextIdx]!;
+          v.currentTime = nf.srcStart;
+          setCurrentTime(m.fragOutputStart + fragmentDuration(m.fragment));
+        }
+        return;
+      }
+      if (src < m.fragment.srcStart - 0.05) {
+        v.currentTime = m.fragment.srcStart;
+        return;
+      }
+      const offset = Math.max(0, src - m.fragment.srcStart);
+      setCurrentTime(m.fragOutputStart + offset);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const seek = useCallback((outputT: number): void => {
+    const v = videoRef.current;
+    if (!v) return;
+    const total = totalOutputDuration(fragmentsRef.current);
+    const t = Math.max(0, Math.min(total, outputT));
+    const m = outputToSource(fragmentsRef.current, t);
+    if (m) v.currentTime = m.srcTime;
+    currentTimeRef.current = t;
+    setCurrentTime(t);
+  }, []);
 
   const togglePlay = (): void => {
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) {
-      if (v.currentTime < trim.start || v.currentTime >= trim.end) v.currentTime = trim.start;
+      const total = totalOutputDuration(fragmentsRef.current);
+      if (currentTimeRef.current >= total - 0.02) {
+        seek(0);
+      } else {
+        const m = outputToSource(fragmentsRef.current, currentTimeRef.current);
+        if (m) v.currentTime = m.srcTime;
+      }
       v.play();
       setPlaying(true);
     } else {
       v.pause();
       setPlaying(false);
     }
-  };
-
-  const seek = (t: number): void => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = Math.max(0, Math.min(duration, t));
   };
 
   const fmt = (s: number): string => {
@@ -181,7 +316,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   };
 
   const handleAddZoom = useCallback(() => {
-    const tMs = currentTime * 1000;
+    const m = outputToSource(fragmentsRef.current, currentTime);
+    const tMs = (m ? m.srcTime : 0) * 1000;
     const seg = createManualSegment({
       tMs,
       durationMs: zoomDefaults.duration,
@@ -190,22 +326,69 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
       scale: zoomDefaults.scale,
       display: recording.display,
     });
+    pushHistory();
     setSegments((prev) => addSegment(prev, seg));
     setSelectedId(seg.id);
-  }, [currentTime, zoomDefaults, recording.display]);
+  }, [currentTime, zoomDefaults, recording.display, pushHistory]);
+
+  const handleCut = useCallback(() => {
+    const m = outputToSource(fragmentsRef.current, currentTimeRef.current);
+    if (!m) return;
+    const next = cutFragmentAtSource(fragmentsRef.current, m.index, m.srcTime);
+    if (next === fragmentsRef.current) return;
+    pushHistory();
+    setFragments(next);
+  }, [pushHistory]);
+
+  const handleUpdateFragments = useCallback((next: Fragment[]) => {
+    setFragments(next);
+  }, []);
+
+  const handleSelectFragment = useCallback((id: string | null) => {
+    setSelectedFragmentId(id);
+    if (id) setSelectedId(null);
+  }, []);
+
+  const handleFragmentEdge = useCallback(
+    (index: number, edge: 'start' | 'end', srcTime: number) => {
+      setFragments((prev) => setFragmentEdge(prev, index, edge, srcTime));
+    },
+    [],
+  );
+
+  const handleDeleteFragment = useCallback(() => {
+    const prev = fragmentsRef.current;
+    if (!selectedFragmentId) return;
+    const idx = prev.findIndex((f) => f.id === selectedFragmentId);
+    if (idx < 0) return;
+    const next = removeFragmentAt(prev, idx);
+    if (next === prev) return;
+    pushHistory();
+    const newTotal = next.reduce((acc, f) => acc + fragmentDuration(f), 0);
+    const out = Math.min(currentTimeRef.current, newTotal);
+    const m = outputToSource(next, out);
+    const v = videoRef.current;
+    if (v && m) v.currentTime = m.srcTime;
+    currentTimeRef.current = out;
+    setCurrentTime(out);
+    setFragments(next);
+    setSelectedFragmentId(null);
+  }, [selectedFragmentId, pushHistory]);
 
   const handleUpdateSegment = useCallback((id: string, patch: Partial<ZoomSegment>) => {
     setSegments((prev) => updateSegment(prev, id, patch));
   }, []);
 
   const handleRemoveSegment = useCallback((id: string) => {
+    pushHistory();
     setSegments((prev) => removeSegment(prev, id));
     setSelectedId((cur) => (cur === id ? null : cur));
-  }, []);
+  }, [pushHistory]);
 
   const handleApplyToAll = useCallback((patch: Partial<ZoomSegment>) => {
+    pushHistory();
     setSegments((prev) => prev.map((s) => ({ ...s, ...patch })));
-  }, []);
+  }, [pushHistory]);
 
   const handleSetDefault = useCallback((patch: Partial<ZoomDefaults>) => {
     setZoomDefaults((prev) => {
@@ -328,7 +511,6 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               background={background}
               width={1280}
               height={720}
-              trim={trim}
               crop={exportCrop}
               cropMode={cropMode}
               onCropChange={setCrop}
@@ -378,16 +560,25 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             </button>
             <button
               className="icon-btn"
-              disabled
-              title="Cut at playhead (coming soon)"
+              onClick={handleCut}
+              disabled={!duration}
+              title="Cut fragment at playhead"
             >
               <ScissorsIcon />
+            </button>
+            <button
+              className="icon-btn danger-btn"
+              onClick={handleDeleteFragment}
+              disabled={!selectedFragmentId || fragments.length <= 1}
+              title="Delete selected fragment"
+            >
+              <TrashIcon />
             </button>
           </div>
 
           <div className="controls-center">
             <span className="time-pro">{fmt(currentTime)}</span>
-            <button className="icon-btn" onClick={() => seek(trim.start)} title="Skip to start">
+            <button className="icon-btn" onClick={() => seek(0)} title="Skip to start">
               <SkipBackIcon />
             </button>
             <button
@@ -397,13 +588,31 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             >
               {playing ? <PauseIcon /> : <PlayIcon />}
             </button>
-            <button className="icon-btn" onClick={() => seek(trim.end)} title="Skip to end">
+            <button className="icon-btn" onClick={() => seek(duration)} title="Skip to end">
               <SkipForwardIcon />
             </button>
             <span className="time-pro dim">{fmt(duration)}</span>
           </div>
 
           <div className="controls-right">
+            <button
+              className="icon-btn"
+              onClick={undo}
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z)"
+              aria-label="Undo"
+            >
+              <UndoIcon />
+            </button>
+            <button
+              className="icon-btn"
+              onClick={redo}
+              disabled={!canRedo}
+              title="Redo (Ctrl+Y)"
+              aria-label="Redo"
+            >
+              <RedoIcon />
+            </button>
             <button
               className="icon-btn"
               onClick={() => setZoomLevel((z) => Math.max(25, z - 25))}
@@ -435,8 +644,13 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             selectedId={selectedId}
             onSelectSegment={setSelectedId}
             onUpdateSegment={handleUpdateSegment}
-            trim={trim}
-            onTrimChange={setTrim}
+            fragments={fragments}
+            sourceDuration={sourceDuration}
+            selectedFragmentId={selectedFragmentId}
+            onSelectFragment={handleSelectFragment}
+            onUpdateFragments={handleUpdateFragments}
+            onFragmentEdge={handleFragmentEdge}
+            onBeginEdit={pushHistory}
           />
         ) : (
           <div className="empty">Loading clip…</div>
@@ -458,7 +672,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           segments={segments}
           display={recording.display}
           background={background}
-          trim={trim}
+          fragments={fragments}
           duration={duration}
           crop={exportCrop}
           cursorOptions={cursorOptions}
@@ -521,6 +735,16 @@ function ZoomInIcon(): JSX.Element {
     </svg>
   );
 }
+function TrashIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  );
+}
 function ScissorsIcon(): JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -551,6 +775,22 @@ function ChevronDownSmallIcon(): JSX.Element {
   return (
     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+function UndoIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="9 14 4 9 9 4" />
+      <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+    </svg>
+  );
+}
+function RedoIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 14 20 9 15 4" />
+      <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
     </svg>
   );
 }

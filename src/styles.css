@@ -1737,3 +1737,60 @@ select {
 }
 .timeline.pro .marker::before { display: none; }
 
+/* Fragments on the main clip track */
+.timeline .fragment {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: linear-gradient(180deg, rgba(124, 92, 255, 0.55) 0%, rgba(92, 70, 220, 0.65) 100%);
+  border: 1px solid rgba(124, 92, 255, 0.7);
+  border-radius: 6px;
+  cursor: grab;
+  transition: box-shadow 120ms, background 120ms, transform 80ms;
+  z-index: 1;
+}
+.timeline .fragment:hover {
+  background: linear-gradient(180deg, rgba(140, 110, 255, 0.7) 0%, rgba(110, 90, 240, 0.75) 100%);
+}
+.timeline .fragment.selected {
+  box-shadow: 0 0 0 2px var(--accent-2), 0 0 18px rgba(92, 196, 255, 0.45);
+  z-index: 3;
+}
+.timeline .fragment.dragging {
+  opacity: 0.6;
+  cursor: grabbing;
+}
+.timeline .fragment-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: rgba(255, 255, 255, 0);
+  z-index: 2;
+}
+.timeline .fragment-handle.left { left: 0; }
+.timeline .fragment-handle.right { right: 0; }
+.timeline .fragment-handle:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+.timeline .fragment-drop-indicator {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 3px;
+  background: var(--accent-2);
+  box-shadow: 0 0 12px var(--accent-2);
+  pointer-events: none;
+  z-index: 4;
+  margin-left: -1.5px;
+}
+
+/* Danger icon button (delete fragment) */
+.icon-btn.danger-btn {
+  color: var(--danger);
+}
+.icon-btn.danger-btn:hover:not(:disabled) {
+  background: rgba(255, 92, 122, 0.12);
+  border-color: rgba(255, 92, 122, 0.4);
+}

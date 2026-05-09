@@ -15,8 +15,8 @@ import type {
   CursorOptions,
   Display,
   FrameOptions,
+  Fragment,
   MouseTrack,
-  Trim,
   ZoomSegment,
 } from '../types';
 
@@ -62,7 +62,7 @@ interface ExportModalProps {
   segments: ZoomSegment[];
   display: Display;
   background: Background;
-  trim: Trim;
+  fragments: Fragment[];
   duration: number;
   crop: Crop | null;
   cursorOptions: CursorOptions;
@@ -77,7 +77,7 @@ export default function ExportModal({
   segments,
   display,
   background,
-  trim,
+  fragments,
   duration,
   crop,
   cursorOptions,
@@ -99,8 +99,7 @@ export default function ExportModal({
   const startedAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
-  const trimDuration = Math.max(0, (trim?.end ?? 0) - (trim?.start ?? 0));
-  const exportSeconds = trimDuration || duration || 0;
+  const exportSeconds = duration || 0;
 
   const dims = getResolution(size);
   const estBytes = useMemo(() => {
@@ -153,7 +152,7 @@ export default function ExportModal({
         display,
         background,
         crop,
-        trim: { start: trim.start, end: trim.end },
+        fragments,
         resolution: size,
         fps,
         format,
@@ -191,7 +190,7 @@ export default function ExportModal({
     }
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
-    trim, size, fps, format, quality, cursorOptions, onClose,
+    fragments, size, fps, format, quality, cursorOptions, frame, onClose,
   ]);
 
   const handleStop = useCallback(() => {

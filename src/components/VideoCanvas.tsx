@@ -15,7 +15,6 @@ import type {
   Display,
   FrameOptions,
   MouseTrack,
-  Trim,
   ZoomSegment,
 } from '../types';
 
@@ -27,7 +26,6 @@ interface VideoCanvasProps {
   background?: Background | string;
   width?: number;
   height?: number;
-  trim?: Trim;
   crop?: Crop | null;
   cropMode?: boolean;
   onCropChange?: (next: Crop) => void;
