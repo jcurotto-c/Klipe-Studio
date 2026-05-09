@@ -77,7 +77,7 @@ export interface ImagePreset {
 }
 
 /**
- * Image presets are auto-discovered from `public/ffmpeg/wallpapers/`.
+ * Image presets are auto-discovered from `public/wallpapers/`.
  * Drop a JPG/PNG/WEBP/GIF/AVIF into that folder — Vite picks it up via the
  * `virtual:wallpapers` plugin (see vite.config.ts) and it appears in the panel.
  */

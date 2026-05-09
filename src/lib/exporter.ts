@@ -14,7 +14,9 @@ import { renderFrame } from './renderer';
 import { createCursorState } from './cursor-engine';
 import { fragmentDuration, totalOutputDuration } from './fragments';
 import {
+  createSoundFxBus,
   detectAudioFxNeed,
+  loadSoundFxSamples,
   playClickSound,
   playKeystrokeSound,
   type SoundFxBus,
@@ -216,10 +218,8 @@ export async function exportVideo({
       if (audioFx) {
         fxNeed = detectAudioFxNeed(mouse.events, audioFx);
         if (fxNeed.clicks || fxNeed.keys) {
-          const master = audioCtx.createGain();
-          master.gain.value = 1.0;
-          master.connect(dest);
-          fxBus = { ctx: audioCtx, master, destination: dest };
+          fxBus = createSoundFxBus(dest);
+          if (fxBus) await loadSoundFxSamples(fxBus);
         }
       }
     }

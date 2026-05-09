@@ -8,10 +8,31 @@ export const DEFAULT_AUDIO_FX: AudioFxOptions = {
   mode: 'auto',
 };
 
+const CLICK_SAMPLE_URL = './sounds/mouse-click.mp3';
+const KEY_SAMPLE_URL = './sounds/keyboard-office.mp3';
+
+// Each event plays a short slice of the sample so the rendered audio length
+// stays proportional to the click/keystroke count, not the source file's
+// duration — sources contain many sounds back-to-back as a sample library.
+const CLICK_SLICE_SEC = 0.10;
+const KEY_SLICE_SEC = 0.12;
+const FADE_SEC = 0.005;
+
+// Onset detection thresholds — a slice is anchored to a detected peak so we
+// never sample from silent gaps in the source file.
+const ONSET_THRESHOLD_RATIO = 0.35;
+const ONSET_MIN_GAP_SEC = 0.05;
+const ONSET_LOOKBACK_SEC = 0.005;
+
 export interface SoundFxBus {
   ctx: AudioContext;
   master: GainNode;
   destination: AudioNode;
+  clickBuffer: AudioBuffer | null;
+  clickOnsets: ReadonlyArray<number> | null;
+  keyBuffer: AudioBuffer | null;
+  keyOnsets: ReadonlyArray<number> | null;
+  loadPromise: Promise<void> | null;
 }
 
 interface ContextCtor {
@@ -38,7 +59,16 @@ export function createSoundFxBus(target?: AudioNode): SoundFxBus | null {
   master.gain.value = 1.0;
   const destination = target ?? ctx.destination;
   master.connect(destination);
-  return { ctx, master, destination };
+  return {
+    ctx,
+    master,
+    destination,
+    clickBuffer: null,
+    clickOnsets: null,
+    keyBuffer: null,
+    keyOnsets: null,
+    loadPromise: null,
+  };
 }
 
 export async function resumeBus(bus: SoundFxBus | null): Promise<void> {
@@ -48,68 +78,73 @@ export async function resumeBus(bus: SoundFxBus | null): Promise<void> {
   }
 }
 
+async function fetchAndDecode(ctx: AudioContext, url: string): Promise<AudioBuffer | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`[sound-fx] ${url} → ${res.status}`);
+      return null;
+    }
+    const data = await res.arrayBuffer();
+    return await ctx.decodeAudioData(data);
+  } catch (err) {
+    console.warn(`[sound-fx] Failed to load ${url}:`, err);
+    return null;
+  }
+}
+
+function detectOnsets(buffer: AudioBuffer): number[] {
+  const sr = buffer.sampleRate;
+  const len = buffer.length;
+  const ch = buffer.getChannelData(0);
+
+  let peak = 0;
+  for (let i = 0; i < len; i++) {
+    const a = Math.abs(ch[i]!);
+    if (a > peak) peak = a;
+  }
+  if (peak < 1e-4) return [];
+
+  const threshold = peak * ONSET_THRESHOLD_RATIO;
+  const minGapSamples = Math.floor(sr * ONSET_MIN_GAP_SEC);
+  const lookbackSamples = Math.floor(sr * ONSET_LOOKBACK_SEC);
+  const onsets: number[] = [];
+  let lastOnset = -minGapSamples;
+
+  for (let i = 0; i < len; i++) {
+    if (Math.abs(ch[i]!) >= threshold && i - lastOnset >= minGapSamples) {
+      const start = Math.max(0, i - lookbackSamples);
+      onsets.push(start / sr);
+      lastOnset = i;
+    }
+  }
+  return onsets;
+}
+
+export function loadSoundFxSamples(bus: SoundFxBus): Promise<void> {
+  if (bus.loadPromise) return bus.loadPromise;
+  const p = (async () => {
+    const [click, key] = await Promise.all([
+      fetchAndDecode(bus.ctx, CLICK_SAMPLE_URL),
+      fetchAndDecode(bus.ctx, KEY_SAMPLE_URL),
+    ]);
+    bus.clickBuffer = click;
+    bus.clickOnsets = click ? detectOnsets(click) : null;
+    bus.keyBuffer = key;
+    bus.keyOnsets = key ? detectOnsets(key) : null;
+    if (click) {
+      console.info(`[sound-fx] click: ${click.duration.toFixed(2)}s, ${bus.clickOnsets?.length ?? 0} onsets`);
+    }
+    if (key) {
+      console.info(`[sound-fx] keyboard: ${key.duration.toFixed(2)}s, ${bus.keyOnsets?.length ?? 0} onsets`);
+    }
+  })();
+  bus.loadPromise = p;
+  return p;
+}
+
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
-}
-
-function noiseBuffer(ctx: AudioContext, durationSec: number, decay = 0.15): AudioBuffer {
-  const sr = ctx.sampleRate;
-  const len = Math.max(8, Math.floor(durationSec * sr));
-  const buf = ctx.createBuffer(1, len, sr);
-  const data = buf.getChannelData(0);
-  const tau = len * decay;
-  for (let i = 0; i < len; i++) {
-    const env = Math.exp(-i / tau);
-    data[i] = (Math.random() * 2 - 1) * env;
-  }
-  return buf;
-}
-
-export function playClickSound(
-  bus: SoundFxBus,
-  whenSec: number,
-  volume: number,
-  variant: 'left' | 'right' | 'middle' = 'left',
-): void {
-  const v = clamp(volume, 0, 1);
-  if (v <= 0) return;
-  const ctx = bus.ctx;
-  const t = Math.max(whenSec, ctx.currentTime + 0.001);
-
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.value = 0.55 * v;
-
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer(ctx, 0.045, 0.14);
-
-  const hp = ctx.createBiquadFilter();
-  hp.type = 'highpass';
-  hp.frequency.value = variant === 'right' ? 1100 : 1500;
-
-  const lp = ctx.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.value = 7000;
-
-  noise.connect(hp);
-  hp.connect(lp);
-  lp.connect(noiseGain);
-  noiseGain.connect(bus.master);
-  noise.start(t);
-  noise.stop(t + 0.06);
-
-  const osc = ctx.createOscillator();
-  osc.type = 'square';
-  const startFreq = variant === 'right' ? 1700 : variant === 'middle' ? 2600 : 2200;
-  osc.frequency.setValueAtTime(startFreq, t);
-  osc.frequency.exponentialRampToValueAtTime(700, t + 0.012);
-  const oscGain = ctx.createGain();
-  oscGain.gain.setValueAtTime(0.0, t);
-  oscGain.gain.linearRampToValueAtTime(0.18 * v, t + 0.0015);
-  oscGain.gain.exponentialRampToValueAtTime(0.0008, t + 0.03);
-  osc.connect(oscGain);
-  oscGain.connect(bus.master);
-  osc.start(t);
-  osc.stop(t + 0.045);
 }
 
 function hashSeed(seed: number): number {
@@ -120,6 +155,63 @@ function hashSeed(seed: number): number {
   return x / 0xffffffff;
 }
 
+function pickOffset(
+  buffer: AudioBuffer,
+  sliceDur: number,
+  onsets: ReadonlyArray<number> | null,
+  rand: number,
+): number {
+  const maxOffset = Math.max(0, buffer.duration - sliceDur);
+  if (onsets && onsets.length > 0) {
+    const idx = Math.min(onsets.length - 1, Math.floor(rand * onsets.length));
+    return Math.min(onsets[idx]!, maxOffset);
+  }
+  return maxOffset > 0 ? rand * maxOffset : 0;
+}
+
+function playSlice(
+  bus: SoundFxBus,
+  buffer: AudioBuffer,
+  whenSec: number,
+  volume: number,
+  sliceDur: number,
+  offset: number,
+): void {
+  const ctx = bus.ctx;
+  const t = Math.max(whenSec, ctx.currentTime + 0.001);
+
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+
+  const gain = ctx.createGain();
+  const fade = Math.min(FADE_SEC, sliceDur / 4);
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(volume, t + fade);
+  gain.gain.setValueAtTime(volume, t + Math.max(fade, sliceDur - fade));
+  gain.gain.linearRampToValueAtTime(0, t + sliceDur);
+
+  src.connect(gain);
+  gain.connect(bus.master);
+  src.start(t, offset, sliceDur);
+  src.stop(t + sliceDur + 0.02);
+}
+
+export function playClickSound(
+  bus: SoundFxBus,
+  whenSec: number,
+  volume: number,
+  variant: 'left' | 'right' | 'middle' = 'left',
+): void {
+  const v = clamp(volume, 0, 1);
+  if (v <= 0) return;
+  const buf = bus.clickBuffer;
+  if (!buf) return;
+  const variantSeed = variant === 'right' ? 17 : variant === 'middle' ? 31 : 0;
+  const rand = hashSeed(variantSeed ^ Math.floor(bus.ctx.currentTime * 1000));
+  const offset = pickOffset(buf, CLICK_SLICE_SEC, bus.clickOnsets, rand);
+  playSlice(bus, buf, whenSec, v, CLICK_SLICE_SEC, offset);
+}
+
 export function playKeystrokeSound(
   bus: SoundFxBus,
   whenSec: number,
@@ -128,62 +220,11 @@ export function playKeystrokeSound(
 ): void {
   const v = clamp(volume, 0, 1);
   if (v <= 0) return;
-  const ctx = bus.ctx;
-  const t = Math.max(whenSec, ctx.currentTime + 0.001);
-
-  const r = hashSeed(seed);
-  const r2 = hashSeed(seed * 7919 + 13);
-
-  const bodyFreq = 220 + r * 90;
-  const osc = ctx.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(bodyFreq * 1.7, t);
-  osc.frequency.exponentialRampToValueAtTime(bodyFreq * 0.85, t + 0.04);
-
-  const oscGain = ctx.createGain();
-  oscGain.gain.setValueAtTime(0.0, t);
-  oscGain.gain.linearRampToValueAtTime(0.13 * v, t + 0.002);
-  oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-  osc.connect(oscGain);
-  oscGain.connect(bus.master);
-  osc.start(t);
-  osc.stop(t + 0.09);
-
-  const tickDur = 0.03;
-  const tick = ctx.createBufferSource();
-  tick.buffer = noiseBuffer(ctx, tickDur, 0.1);
-
-  const bp = ctx.createBiquadFilter();
-  bp.type = 'bandpass';
-  bp.frequency.value = 2600 + r2 * 1800;
-  bp.Q.value = 1.6;
-
-  const tickGain = ctx.createGain();
-  tickGain.gain.value = 0.22 * v;
-
-  tick.connect(bp);
-  bp.connect(tickGain);
-  tickGain.connect(bus.master);
-  tick.start(t);
-  tick.stop(t + tickDur + 0.01);
-
-  if (r2 > 0.6) {
-    const releaseDur = 0.022;
-    const release = ctx.createBufferSource();
-    release.buffer = noiseBuffer(ctx, releaseDur, 0.08);
-    const rbp = ctx.createBiquadFilter();
-    rbp.type = 'bandpass';
-    rbp.frequency.value = 1800 + r * 1200;
-    rbp.Q.value = 1.4;
-    const rGain = ctx.createGain();
-    rGain.gain.value = 0.1 * v;
-    release.connect(rbp);
-    rbp.connect(rGain);
-    rGain.connect(bus.master);
-    const rDelay = 0.045 + r * 0.02;
-    release.start(t + rDelay);
-    release.stop(t + rDelay + releaseDur + 0.01);
-  }
+  const buf = bus.keyBuffer;
+  if (!buf) return;
+  const rand = hashSeed((seed | 0) ^ Math.floor(bus.ctx.currentTime * 1000));
+  const offset = pickOffset(buf, KEY_SLICE_SEC, bus.keyOnsets, rand);
+  playSlice(bus, buf, whenSec, v, KEY_SLICE_SEC, offset);
 }
 
 export function detectAudioFxNeed(

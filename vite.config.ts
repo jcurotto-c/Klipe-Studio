@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const WALLPAPERS_DIR = path.resolve(__dirname, 'public/ffmpeg/wallpapers');
+const WALLPAPERS_DIR = path.resolve(__dirname, 'public/wallpapers');
 const WALLPAPER_IMAGE_RE = /\.(jpe?g|png|webp|gif|avif)$/i;
 const WALLPAPERS_VIRTUAL_ID = 'virtual:wallpapers';
 const WALLPAPERS_RESOLVED_ID = '\0' + WALLPAPERS_VIRTUAL_ID;
@@ -30,7 +30,7 @@ function wallpapersManifestPlugin(): Plugin {
       if (id !== WALLPAPERS_RESOLVED_ID) return null;
       const files = scanWallpapers();
       return `const files = ${JSON.stringify(files)};
-const PREFIX = './ffmpeg/wallpapers/';
+const PREFIX = './wallpapers/';
 export default files.map(function (f) {
   const key = f.replace(/\\.[^.]+$/, '');
   const label = key

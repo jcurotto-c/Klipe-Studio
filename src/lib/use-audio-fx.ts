@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import {
   createSoundFxBus,
   detectAudioFxNeed,
+  loadSoundFxSamples,
   playClickSound,
   playKeystrokeSound,
   resumeBus,
@@ -49,6 +50,7 @@ export function useAudioFx({
     }
     if (!runtime.current.bus) {
       runtime.current.bus = createSoundFxBus();
+      if (runtime.current.bus) void loadSoundFxSamples(runtime.current.bus);
     }
     void resumeBus(runtime.current.bus);
   }, [playing]);
