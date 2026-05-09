@@ -507,8 +507,14 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     });
   }, []);
 
+  const handleUpdateBackgroundMusic = useCallback((patch: Partial<BackgroundMusic>) => {
+    setBackgroundMusic((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
   // Keep a hidden <audio> in sync with playback so the editor previews
-  // background music alongside the video.
+  // background music alongside the video. Music plays only while
+  // currentTime is within [startMs, endMs]; outside that window it is
+  // silent (paused).
   useEffect(() => {
     if (!backgroundMusic) {
       if (bgMusicAudioRef.current) {
@@ -525,32 +531,55 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
       el.loop = true;
       el.preload = 'auto';
       bgMusicAudioRef.current = el;
+      // When metadata arrives, fill in the natural duration and pick a
+      // sensible default end if the user hasn't trimmed yet.
+      el.addEventListener('loadedmetadata', () => {
+        const natural = isFinite(el!.duration) ? el!.duration * 1000 : 0;
+        setBackgroundMusic((prev) => {
+          if (!prev || prev.src !== el!.src) return prev;
+          if (prev.durationMs === natural && prev.endMs > prev.startMs) return prev;
+          const clipMs = duration * 1000;
+          const defaultEnd = clipMs > 0
+            ? Math.min(natural || clipMs, clipMs)
+            : (natural || prev.endMs);
+          return {
+            ...prev,
+            durationMs: natural,
+            endMs: prev.endMs > prev.startMs ? prev.endMs : defaultEnd,
+          };
+        });
+      }, { once: true });
     }
     el.volume = Math.max(0, Math.min(1, backgroundMusic.volume));
     return () => {
       // Note: don't tear down here — only on unmount or src change above.
     };
-  }, [backgroundMusic]);
+  }, [backgroundMusic, duration]);
 
   useEffect(() => {
     const el = bgMusicAudioRef.current;
-    if (!el) return;
-    if (playing) {
-      void el.play().catch(() => { /* user gesture needed; will resume on next play click */ });
+    if (!el || !backgroundMusic) return;
+    const tSec = currentTime;
+    const startSec = backgroundMusic.startMs / 1000;
+    const endSec = backgroundMusic.endMs / 1000;
+    const sourceStartSec = (backgroundMusic.sourceStartMs || 0) / 1000;
+    const inWindow = tSec >= startSec && tSec < endSec;
+    if (playing && inWindow) {
+      // Sync source position: start from sourceStartSec when at the window's
+      // left edge, and loop modulo natural duration if the window outlasts
+      // (natural - sourceStartSec).
+      const natural = el.duration && isFinite(el.duration) ? el.duration : 0;
+      if (natural > 0) {
+        const wantTime = (sourceStartSec + (tSec - startSec)) % natural;
+        if (Math.abs(el.currentTime - wantTime) > 0.25) {
+          el.currentTime = wantTime;
+        }
+      }
+      void el.play().catch(() => { /* user gesture needed */ });
     } else {
       el.pause();
     }
-  }, [playing]);
-
-  useEffect(() => {
-    const el = bgMusicAudioRef.current;
-    if (!el || playing) return;
-    // While paused, mirror scrubs so the user hears a tick from the new position
-    // when they resume. Loop semantics: modulo into the clip length.
-    if (el.duration && isFinite(el.duration)) {
-      el.currentTime = currentTime % el.duration;
-    }
-  }, [currentTime, playing]);
+  }, [playing, currentTime, backgroundMusic]);
 
   useEffect(() => () => {
     // On unmount, free the object URL.
@@ -847,6 +876,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             onUpdateFragments={handleUpdateFragments}
             onFragmentEdge={handleFragmentEdge}
             onBeginEdit={pushHistory}
+            backgroundMusic={backgroundMusic}
+            onUpdateBackgroundMusic={handleUpdateBackgroundMusic}
           />
         ) : (
           <div className="empty">Loading clip…</div>

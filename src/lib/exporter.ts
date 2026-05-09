@@ -211,6 +211,7 @@ export async function exportVideo({
   let fxNeed: { clicks: boolean; keys: boolean } = { clicks: false, keys: false };
   let bgMusicEl: HTMLAudioElement | null = null;
   let bgMusicGain: GainNode | null = null;
+  let bgMusicTimers: number[] = [];
   try {
     const Ctor = getAudioContextCtor();
     if (Ctor) {
@@ -319,6 +320,10 @@ export async function exportVideo({
     try { if (recorder.state !== 'inactive') recorder.stop(); } catch { /* ignore */ }
     try { await stopped; } catch { /* ignore */ }
     canvasStream.getTracks().forEach((t) => t.stop());
+    for (const t of bgMusicTimers) {
+      clearTimeout(t);
+    }
+    bgMusicTimers = [];
     if (bgMusicEl) {
       try { bgMusicEl.pause(); } catch { /* ignore */ }
       bgMusicEl = null;
@@ -359,21 +364,45 @@ export async function exportVideo({
     }
 
     if (bgMusicEl && bgMusicGain && audioCtx && backgroundMusic) {
+      // Only play music inside the user's [startMs, endMs] window.
       const targetVol = Math.max(0, Math.min(1, backgroundMusic.volume));
       const fadeSec = Math.max(0, (backgroundMusic.fadeMs || 0) / 1000);
+      const startSec = Math.max(0, Math.min(total, backgroundMusic.startMs / 1000));
+      const endSec = Math.max(startSec, Math.min(total, backgroundMusic.endMs / 1000));
+      const windowSec = endSec - startSec;
       const now = audioCtx.currentTime;
-      const endAt = now + total;
+      const winStart = now + startSec;
+      const winEnd = now + endSec;
+      const halfWindow = windowSec / 2;
+      const inDur = Math.min(fadeSec, halfWindow);
+      const outDur = Math.min(fadeSec, halfWindow);
+
       bgMusicGain.gain.cancelScheduledValues(now);
       bgMusicGain.gain.setValueAtTime(0, now);
-      // Fade-in over fadeSec (clipped if the clip is shorter than 2*fade).
-      const halfTotal = total / 2;
-      const inDur = Math.min(fadeSec, halfTotal);
-      const outDur = Math.min(fadeSec, halfTotal);
-      bgMusicGain.gain.linearRampToValueAtTime(targetVol, now + inDur);
-      // Hold at full volume until fade-out begins.
-      bgMusicGain.gain.setValueAtTime(targetVol, endAt - outDur);
-      bgMusicGain.gain.linearRampToValueAtTime(0, endAt);
-      try { await bgMusicEl.play(); } catch { /* user gesture; will retry on next interaction */ }
+      bgMusicGain.gain.setValueAtTime(0, winStart);
+      bgMusicGain.gain.linearRampToValueAtTime(targetVol, winStart + inDur);
+      bgMusicGain.gain.setValueAtTime(targetVol, winEnd - outDur);
+      bgMusicGain.gain.linearRampToValueAtTime(0, winEnd);
+
+      const sourceStartSec = Math.max(
+        0,
+        Math.min(
+          (backgroundMusic.durationMs || 0) / 1000 || 0,
+          (backgroundMusic.sourceStartMs || 0) / 1000,
+        ),
+      );
+      bgMusicEl.currentTime = sourceStartSec;
+      const startTimer = window.setTimeout(() => {
+        if (!bgMusicEl) return;
+        // Re-seek right before play in case any other code touched currentTime
+        // between the schedule and the fire (defensive).
+        try { bgMusicEl.currentTime = sourceStartSec; } catch { /* ignore */ }
+        void bgMusicEl.play().catch(() => { /* ignore */ });
+      }, Math.max(0, startSec * 1000));
+      const stopTimer = window.setTimeout(() => {
+        try { bgMusicEl?.pause(); } catch { /* ignore */ }
+      }, Math.max(0, endSec * 1000));
+      bgMusicTimers = [startTimer, stopTimer];
     }
 
     recorder.start(250);

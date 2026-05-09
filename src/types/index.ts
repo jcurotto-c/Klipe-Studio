@@ -169,11 +169,21 @@ export interface AudioFxOptions {
 }
 
 // Session-only: src is an in-memory object URL (not persisted across reloads).
+// startMs/endMs delimit the OUTPUT-time window the music plays in;
+// outside that window the music is silent. durationMs is the source's
+// natural length, populated when audio metadata loads (0 until then).
+// sourceStartMs is the position WITHIN the source file the block plays
+// from — lets the user pick a chorus or outro instead of always starting
+// from 0:00. The source loops if the window outlasts (durationMs - sourceStartMs).
 export interface BackgroundMusic {
   name: string;
   src: string;
   volume: number;
   fadeMs: number;
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+  sourceStartMs: number;
 }
 
 export type CursorStyle = 'arrow' | 'arrow-outline' | 'arrow-mini' | 'dot' | 'figma';

@@ -10,7 +10,7 @@ import {
   fragmentDuration,
   reorderFragment,
 } from '../lib/fragments';
-import type { Fragment, KlipeMouseEvent, ZoomSegment } from '../types';
+import type { BackgroundMusic, Fragment, KlipeMouseEvent, ZoomSegment } from '../types';
 
 const fmt = (s: number): string => {
   const m = Math.floor(s / 60);
@@ -27,7 +27,8 @@ type DragState =
   | { kind: 'playhead' }
   | { kind: 'fragMove'; id: string; index: number; startX: number; armed: boolean }
   | { kind: 'fragEdge'; index: number; edge: 'start' | 'end'; startX: number; origSrc: number }
-  | { kind: 'seg' | 'segStart' | 'segEnd'; id: string; startX: number; origStart: number; origEnd: number };
+  | { kind: 'seg' | 'segStart' | 'segEnd'; id: string; startX: number; origStart: number; origEnd: number }
+  | { kind: 'audioMove' | 'audioStart' | 'audioEnd'; startX: number; origStart: number; origEnd: number };
 
 interface TimelineProps {
   duration: number;
@@ -45,6 +46,8 @@ interface TimelineProps {
   onUpdateFragments: (next: Fragment[]) => void;
   onFragmentEdge: (index: number, edge: 'start' | 'end', srcTime: number) => void;
   onBeginEdit?: () => void;
+  backgroundMusic?: BackgroundMusic | null;
+  onUpdateBackgroundMusic?: (patch: Partial<BackgroundMusic>) => void;
 }
 
 interface FragmentLayout {
@@ -70,6 +73,8 @@ export default function Timeline({
   onUpdateFragments,
   onFragmentEdge,
   onBeginEdit,
+  backgroundMusic,
+  onUpdateBackgroundMusic,
 }: TimelineProps): JSX.Element {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -151,6 +156,21 @@ export default function Timeline({
         let ne = tMs;
         ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(duration * 1000, ne));
         onUpdateSegment(drag.id, { tEnd: ne });
+      } else if (drag.kind === 'audioMove' && onUpdateBackgroundMusic) {
+        const dx = e.clientX - drag.startX;
+        const dMs = (dx / trackRef.current!.getBoundingClientRect().width) * duration * 1000;
+        const len = drag.origEnd - drag.origStart;
+        let ns = drag.origStart + dMs;
+        ns = Math.max(0, Math.min(duration * 1000 - len, ns));
+        onUpdateBackgroundMusic({ startMs: ns, endMs: ns + len });
+      } else if (drag.kind === 'audioStart' && onUpdateBackgroundMusic) {
+        let ns = tMs;
+        ns = Math.max(0, Math.min(drag.origEnd - MIN_SEG_MS, ns));
+        onUpdateBackgroundMusic({ startMs: ns });
+      } else if (drag.kind === 'audioEnd' && onUpdateBackgroundMusic) {
+        let ne = tMs;
+        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(duration * 1000, ne));
+        onUpdateBackgroundMusic({ endMs: ne });
       }
     };
     const up = (): void => {
@@ -169,6 +189,7 @@ export default function Timeline({
     };
   }, [
     drag, onSeek, onUpdateSegment, onUpdateFragments, onFragmentEdge, onBeginEdit,
+    onUpdateBackgroundMusic,
     xToOutputTime, xDeltaToSeconds, duration, sourceDuration,
     fragments, layouts, dropIndex,
   ]);
@@ -213,6 +234,37 @@ export default function Timeline({
       startX: e.clientX,
       origStart: seg.tStart,
       origEnd: seg.tEnd,
+    });
+  };
+
+  const onAudioMouseDown = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    if (!backgroundMusic) return;
+    e.stopPropagation();
+    onSelectSegment?.(null);
+    onSelectFragment(null);
+    onBeginEdit?.();
+    setDrag({
+      kind: 'audioMove',
+      startX: e.clientX,
+      origStart: backgroundMusic.startMs,
+      origEnd: backgroundMusic.endMs,
+    });
+  };
+
+  const onAudioEdgeMouseDown = (
+    e: ReactMouseEvent<HTMLDivElement>,
+    edge: 'start' | 'end',
+  ): void => {
+    if (!backgroundMusic) return;
+    e.stopPropagation();
+    onSelectSegment?.(null);
+    onSelectFragment(null);
+    onBeginEdit?.();
+    setDrag({
+      kind: edge === 'start' ? 'audioStart' : 'audioEnd',
+      startX: e.clientX,
+      origStart: backgroundMusic.startMs,
+      origEnd: backgroundMusic.endMs,
     });
   };
 
@@ -405,6 +457,33 @@ export default function Timeline({
               </div>
             );
           })}
+          <div className="playhead ghost" style={{ left: pct(currentTime) }} />
+        </div>
+
+        <div className="track audio-track">
+          {backgroundMusic && backgroundMusic.endMs > backgroundMusic.startMs && (
+            <div
+              className={`audio-block ${drag?.kind?.startsWith('audio') ? 'dragging' : ''}`}
+              style={{
+                left: pct(backgroundMusic.startMs / 1000),
+                width: wPct(backgroundMusic.startMs / 1000, backgroundMusic.endMs / 1000),
+              }}
+              title={`${backgroundMusic.name} · ${(backgroundMusic.startMs / 1000).toFixed(2)}s → ${(backgroundMusic.endMs / 1000).toFixed(2)}s`}
+              onMouseDown={onAudioMouseDown}
+            >
+              <span className="audio-block-label">{backgroundMusic.name}</span>
+              <div
+                className="audio-block-handle left"
+                data-handle="audio-start"
+                onMouseDown={(e) => onAudioEdgeMouseDown(e, 'start')}
+              />
+              <div
+                className="audio-block-handle right"
+                data-handle="audio-end"
+                onMouseDown={(e) => onAudioEdgeMouseDown(e, 'end')}
+              />
+            </div>
+          )}
           <div className="playhead ghost" style={{ left: pct(currentTime) }} />
         </div>
       </div>

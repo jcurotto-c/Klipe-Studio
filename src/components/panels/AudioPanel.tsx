@@ -184,6 +184,12 @@ function BackgroundMusicSection({ value, onChange }: BackgroundMusicSectionProps
       src,
       volume: value?.volume ?? DEFAULT_BG_MUSIC_VOLUME,
       fadeMs: value?.fadeMs ?? DEFAULT_BG_MUSIC_FADE_MS,
+      // Bounds initialized by EditorView once audio metadata + clip duration
+      // are known. 0/0 is the "uninitialized" sentinel.
+      startMs: 0,
+      endMs: 0,
+      durationMs: 0,
+      sourceStartMs: 0,
     });
   };
 
@@ -192,6 +198,12 @@ function BackgroundMusicSection({ value, onChange }: BackgroundMusicSectionProps
   const handleVolume = (v: number): void => {
     if (!value) return;
     onChange({ ...value, volume: v });
+  };
+
+  const handleSourceStart = (ms: number): void => {
+    if (!value) return;
+    const clamped = Math.max(0, Math.min(value.durationMs || 0, Math.round(ms)));
+    onChange({ ...value, sourceStartMs: clamped });
   };
 
   return (
@@ -225,6 +237,11 @@ function BackgroundMusicSection({ value, onChange }: BackgroundMusicSectionProps
               disabled={false}
               onChange={handleVolume}
             />
+            <SourceStartRow
+              value={value.sourceStartMs}
+              max={value.durationMs}
+              onChange={handleSourceStart}
+            />
             <div className="audio-meta dim">Loops automatically · fades in/out on export</div>
           </>
         ) : (
@@ -243,6 +260,48 @@ function BackgroundMusicSection({ value, onChange }: BackgroundMusicSectionProps
           style={{ display: 'none' }}
           onChange={handleFileChange}
         />
+      </div>
+    </div>
+  );
+}
+
+interface SourceStartRowProps {
+  value: number;
+  max: number;
+  onChange: (next: number) => void;
+}
+
+function fmtClock(ms: number): string {
+  if (!isFinite(ms) || ms < 0) ms = 0;
+  const sec = Math.floor(ms / 1000);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function SourceStartRow({ value, max, onChange }: SourceStartRowProps): JSX.Element {
+  const disabled = max <= 0;
+  const safeMax = Math.max(1, max);
+  const pct = Math.round((value / safeMax) * 100);
+  return (
+    <div className={`cursor-slider ${disabled ? 'disabled' : ''}`}>
+      <div className="cursor-slider-label">Start from</div>
+      <div
+        className="cursor-slider-track"
+        style={{ ['--fill' as string]: `${pct}%` }}
+      >
+        <input
+          type="range"
+          min={0}
+          max={safeMax}
+          step={100}
+          value={Math.min(value, safeMax)}
+          disabled={disabled}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+        <span className="cursor-slider-value">
+          {disabled ? '—' : `${fmtClock(value)} / ${fmtClock(max)}`}
+        </span>
       </div>
     </div>
   );
