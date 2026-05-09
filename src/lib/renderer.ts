@@ -4,7 +4,7 @@
  */
 
 import { sampleZoom } from './zoom-engine';
-import { computeInsetRect, PREVIEW_PADDING_SCALE } from './layout';
+import { computeInsetRect } from './layout';
 import { sampleCursor, DEFAULT_CURSOR_OPTIONS } from './cursor-engine';
 import type {
   Background,
@@ -14,9 +14,17 @@ import type {
   CursorOptions,
   CursorSample,
   CursorState,
+  FrameOptions,
   MouseTrack,
   ZoomSegment,
 } from '../types';
+
+export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
+  shadow: 50,
+  radius: 24,
+  padding: 6,
+  removeBackground: false,
+};
 
 const RIPPLE_DURATION = 600;
 const CURSOR_BASE_RADIUS = 10;
@@ -171,6 +179,7 @@ export interface RenderFrameOptions {
   cameraOptions?: CameraOptions | null;
   cursorState?: CursorState | null;
   cursorOptions?: Partial<CursorOptions> | null;
+  frame?: Partial<FrameOptions> | null;
 }
 
 type RenderableSource = CanvasImageSource & {
@@ -192,15 +201,17 @@ export function renderFrame(
     displayWidth,
     displayHeight,
     background = 'default',
-    paddingScale = PREVIEW_PADDING_SCALE,
+    paddingScale,
     showCursor = true,
     crop = null,
     cameraSource = null,
     cameraOptions = null,
     cursorState = null,
     cursorOptions = null,
+    frame = null,
   } = opts;
   const cOpts: CursorOptions = { ...DEFAULT_CURSOR_OPTIONS, ...(cursorOptions ?? {}) };
+  const fOpts: FrameOptions = { ...DEFAULT_FRAME_OPTIONS, ...(frame ?? {}) };
 
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
@@ -208,7 +219,11 @@ export function renderFrame(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  drawBackground(ctx, cw, ch, normalizeBackground(background));
+  if (!fOpts.removeBackground) {
+    drawBackground(ctx, cw, ch, normalizeBackground(background));
+  } else {
+    ctx.clearRect(0, 0, cw, ch);
+  }
 
   const sw = source.videoWidth || source.displayWidth || displayWidth;
   const sh = source.videoHeight || source.displayHeight || displayHeight;
@@ -219,7 +234,10 @@ export function renderFrame(
   const swEff = crop ? crop.width * sw : sw;
   const shEff = crop ? crop.height * sh : sh;
 
-  const { baseX, baseY, baseW, baseH } = computeInsetRect(cw, ch, swEff, shEff, paddingScale);
+  const effectivePadding = paddingScale != null
+    ? paddingScale
+    : Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
+  const { baseX, baseY, baseW, baseH } = computeInsetRect(cw, ch, swEff, shEff, effectivePadding);
 
   const { scale, cx, cy, p: zoomP } = sampleZoom(segments, tMs);
 
@@ -244,17 +262,23 @@ export function renderFrame(
     drawY = Math.min(baseY, Math.max(baseY + baseH - drawH, drawY));
   }
 
-  const radius = Math.min(drawW, drawH) * CORNER_RADIUS_RATIO;
+  const radiusScale = (fOpts.radius / 24);
+  const radius = Math.min(drawW, drawH) * CORNER_RADIUS_RATIO * radiusScale;
 
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.5)';
-  ctx.shadowBlur = 40;
-  ctx.shadowOffsetY = 16;
-  ctx.fillStyle = '#000';
-  ctx.beginPath();
-  ctx.roundRect(drawX, drawY, drawW, drawH, radius);
-  ctx.fill();
-  ctx.restore();
+  if (fOpts.shadow > 0) {
+    const shadowAlpha = Math.min(0.85, 0.18 + (fOpts.shadow / 100) * 0.7);
+    const shadowBlur = 8 + (fOpts.shadow / 100) * 70;
+    const shadowOffset = 4 + (fOpts.shadow / 100) * 28;
+    ctx.save();
+    ctx.shadowColor = `rgba(0,0,0,${shadowAlpha})`;
+    ctx.shadowBlur = shadowBlur;
+    ctx.shadowOffsetY = shadowOffset;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+    ctx.fill();
+    ctx.restore();
+  }
 
   ctx.save();
   ctx.beginPath();

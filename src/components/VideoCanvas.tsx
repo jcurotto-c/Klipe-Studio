@@ -13,6 +13,7 @@ import type {
   Crop,
   CursorOptions,
   Display,
+  FrameOptions,
   MouseTrack,
   Trim,
   ZoomSegment,
@@ -33,6 +34,7 @@ interface VideoCanvasProps {
   cameraVideoRef?: RefObject<HTMLVideoElement> | null;
   cameraOptions?: CameraOptions | null;
   cursorOptions?: CursorOptions | null;
+  frameOptions?: FrameOptions | null;
 }
 
 export default function VideoCanvas({
@@ -47,16 +49,17 @@ export default function VideoCanvas({
   cameraVideoRef = null,
   cameraOptions = null,
   cursorOptions = null,
+  frameOptions = null,
 }: VideoCanvasProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number>(0);
   const cursorStateRef = useRef(createCursorState());
   const propsRef = useRef({
-    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions,
   });
   propsRef.current = {
-    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions,
   };
 
   useEffect(() => {
@@ -137,6 +140,7 @@ export default function VideoCanvas({
         cameraOptions: p.cameraOptions,
         cursorState: cursorStateRef.current,
         cursorOptions: p.cursorOptions,
+        frame: p.frameOptions,
       });
     };
 

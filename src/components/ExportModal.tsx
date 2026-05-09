@@ -14,6 +14,7 @@ import type {
   Crop,
   CursorOptions,
   Display,
+  FrameOptions,
   MouseTrack,
   Trim,
   ZoomSegment,
@@ -65,6 +66,7 @@ interface ExportModalProps {
   duration: number;
   crop: Crop | null;
   cursorOptions: CursorOptions;
+  frame?: FrameOptions | null;
   sourceLabel?: string;
   onClose: () => void;
 }
@@ -79,6 +81,7 @@ export default function ExportModal({
   duration,
   crop,
   cursorOptions,
+  frame,
   sourceLabel,
   onClose,
 }: ExportModalProps): React.ReactPortal {
@@ -156,6 +159,7 @@ export default function ExportModal({
         format,
         quality,
         cursorOptions,
+        frame,
         signal: controller.signal,
         onProgress: (s, v) => {
           setProgressStage(s);

@@ -108,6 +108,13 @@ export type Background =
   | BackgroundColor
   | BackgroundImage;
 
+export interface FrameOptions {
+  shadow: number;
+  radius: number;
+  padding: number;
+  removeBackground: boolean;
+}
+
 export type CameraPosition =
   | 'top-left' | 'top-center' | 'top-right'
   | 'middle-left' | 'middle-right'

@@ -17,6 +17,7 @@ import type {
   Crop,
   CursorOptions,
   Display,
+  FrameOptions,
   MouseTrack,
   Trim,
   ZoomSegment,
@@ -112,6 +113,7 @@ export interface ExportVideoOptions {
   format?: ExportFormat;
   quality?: QualityName;
   cursorOptions?: Partial<CursorOptions> | null;
+  frame?: Partial<FrameOptions> | null;
   signal?: AbortSignal;
   onProgress?: ExportProgressCallback;
   onLog?: ExportLogCallback;
@@ -152,6 +154,7 @@ export async function exportVideo({
   format = 'webm',
   quality = 'social',
   cursorOptions = null,
+  frame = null,
   signal,
   onProgress,
   onLog,
@@ -228,6 +231,7 @@ export async function exportVideo({
       crop,
       cursorState,
       cursorOptions,
+      frame,
     });
     if (onProgress) {
       const elapsed = Math.max(0, video.currentTime - start);
@@ -253,6 +257,7 @@ export async function exportVideo({
     displayHeight: display?.height,
     background,
     crop,
+    frame,
   });
 
   if (audioCtx && audioCtx.state === 'suspended') {

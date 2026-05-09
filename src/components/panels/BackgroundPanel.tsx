@@ -1,41 +1,56 @@
 import { useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react';
-import { WALLPAPER_PRESETS } from '../../lib/renderer';
-import type { Background } from '../../types';
+import { WALLPAPER_PRESETS, DEFAULT_FRAME_OPTIONS } from '../../lib/renderer';
+import type { Background, Crop, FrameOptions } from '../../types';
 
-type BgTab = 'wallpaper' | 'gradient' | 'color' | 'image';
+type BgTab = 'image' | 'video' | 'color' | 'gradient';
 
-const TABS: ReadonlyArray<{ id: BgTab; label: string }> = [
-  { id: 'wallpaper', label: 'Wallpaper' },
-  { id: 'gradient',  label: 'Gradient' },
-  { id: 'color',     label: 'Color' },
-  { id: 'image',     label: 'Image' },
+const TABS: ReadonlyArray<{ id: BgTab; label: string; disabled?: boolean }> = [
+  { id: 'image',    label: 'Image' },
+  { id: 'video',    label: 'Video', disabled: true },
+  { id: 'color',    label: 'Color' },
+  { id: 'gradient', label: 'Gradient' },
 ];
 
 function tabFromValue(bg: Background | null | undefined): BgTab {
-  if (!bg) return 'wallpaper';
-  if (TABS.some((t) => t.id === bg.type)) return bg.type;
-  return 'wallpaper';
+  if (!bg) return 'image';
+  if (bg.type === 'wallpaper') return 'image';
+  if (bg.type === 'gradient') return 'gradient';
+  if (bg.type === 'color') return 'color';
+  if (bg.type === 'image') return 'image';
+  return 'image';
 }
 
 interface BackgroundPanelProps {
   value: Background | null | undefined;
   onChange: (next: Background) => void;
+  frame: FrameOptions;
+  onFrameChange: (next: FrameOptions) => void;
+  crop: Crop | null;
+  onCropChange: (next: Crop | null) => void;
 }
 
-export default function BackgroundPanel({ value, onChange }: BackgroundPanelProps): JSX.Element {
+export default function BackgroundPanel({
+  value,
+  onChange,
+  frame,
+  onFrameChange,
+  crop,
+  onCropChange,
+}: BackgroundPanelProps): JSX.Element {
   const [tab, setTab] = useState<BgTab>(() => tabFromValue(value));
   const blur = (value && 'blur' in value && value.blur) || 0;
 
-  const update = (patch: Partial<Background> & { type?: BgTab }): void => {
+  const update = (patch: Partial<Background>): void => {
     const merged = { ...(value ?? {}), ...patch } as Background;
     onChange(merged);
   };
 
   const switchTab = (id: BgTab): void => {
+    if (id === 'video') return;
     setTab(id);
-    if (id === 'wallpaper') {
-      const v = value && value.type === 'wallpaper' ? value.value : 'default';
-      onChange({ type: 'wallpaper', value: v, blur });
+    if (id === 'image') {
+      if (value && (value.type === 'wallpaper' || value.type === 'image')) return;
+      onChange({ type: 'wallpaper', value: 'default', blur });
     }
     if (id === 'gradient') {
       const from = value && value.type === 'gradient' ? value.from : '#7c5cff';
@@ -47,139 +62,259 @@ export default function BackgroundPanel({ value, onChange }: BackgroundPanelProp
       const v = value && value.type === 'color' ? value.value : '#7c5cff';
       onChange({ type: 'color', value: v, blur });
     }
-    if (id === 'image') {
-      const src = value && value.type === 'image' ? value.src : null;
-      onChange({ type: 'image', src, blur });
+  };
+
+  const updateFrame = (patch: Partial<FrameOptions>): void => {
+    onFrameChange({ ...frame, ...patch });
+  };
+
+  const resetBackground = (): void => {
+    onChange({ type: 'wallpaper', value: 'default', blur: 0 });
+    setTab('image');
+  };
+
+  const resetFrame = (): void => {
+    onFrameChange({ ...DEFAULT_FRAME_OPTIONS, removeBackground: frame.removeBackground });
+  };
+
+  const cropTop = crop ? Math.round(crop.y * 100) : 0;
+  const cropBottom = crop ? Math.round((1 - crop.y - crop.height) * 100) : 0;
+  const cropLeft = crop ? Math.round(crop.x * 100) : 0;
+  const cropRight = crop ? Math.round((1 - crop.x - crop.width) * 100) : 0;
+
+  const updateCrop = (next: Partial<{ top: number; bottom: number; left: number; right: number }>): void => {
+    const t = Math.max(0, Math.min(95, next.top ?? cropTop));
+    const b = Math.max(0, Math.min(95 - t, next.bottom ?? cropBottom));
+    const l = Math.max(0, Math.min(95, next.left ?? cropLeft));
+    const r = Math.max(0, Math.min(95 - l, next.right ?? cropRight));
+    const x = l / 100;
+    const y = t / 100;
+    const width = Math.max(0.05, 1 - x - r / 100);
+    const height = Math.max(0.05, 1 - y - b / 100);
+    if (x === 0 && y === 0 && width >= 0.999 && height >= 0.999) {
+      onCropChange(null);
+    } else {
+      onCropChange({ x, y, width, height });
     }
   };
 
   return (
-    <div className="panel">
-      <div className="panel-section">
-        <div className="panel-label">
-          <BgIcon /> Background
-        </div>
-        <div className="tabs">
+    <div className="panel-pro">
+      {/* BACKGROUND */}
+      <SectionCard
+        title="Background"
+        action={<ResetBtn onClick={resetBackground} />}
+      >
+        <NumericRow
+          label="Background Blur"
+          value={blur}
+          unit="px"
+          min={0}
+          max={40}
+          step={0.1}
+          onChange={(v) => update({ blur: v })}
+        />
+
+        <div className="seg-tabs four">
           {TABS.map((t) => (
             <button
               key={t.id}
-              className={`tab ${tab === t.id ? 'active' : ''}`}
+              className={`seg-tab ${tab === t.id ? 'active' : ''}`}
               onClick={() => switchTab(t.id)}
+              disabled={t.disabled}
             >
               {t.label}
+              {t.disabled && <span className="soon">soon</span>}
             </button>
           ))}
         </div>
+
+        {tab === 'image' && <WallpaperImageTab value={value} update={update} />}
+        {tab === 'gradient' && <GradientTab value={value} update={update} />}
+        {tab === 'color' && <ColorTab value={value} update={update} />}
+      </SectionCard>
+
+      {/* FRAME */}
+      <SectionCard
+        title="Frame"
+        action={<ResetBtn onClick={resetFrame} />}
+      >
+        <NumericRow
+          label="Shadow"
+          value={frame.shadow}
+          unit="%"
+          min={0}
+          max={100}
+          step={1}
+          onChange={(v) => updateFrame({ shadow: v })}
+        />
+        <NumericRow
+          label="Radius"
+          value={frame.radius}
+          unit="px"
+          min={0}
+          max={80}
+          step={1}
+          onChange={(v) => updateFrame({ radius: v })}
+        />
+      </SectionCard>
+
+      {/* PADDING */}
+      <SectionCard
+        title="Padding"
+        action={<button className="link-action">Advanced</button>}
+      >
+        <NumericRow
+          label=""
+          value={frame.padding}
+          unit="%"
+          min={0}
+          max={50}
+          step={1}
+          onChange={(v) => updateFrame({ padding: v })}
+        />
+
+        <ToggleRow
+          label="Remove background"
+          checked={frame.removeBackground}
+          onChange={(v) => updateFrame({ removeBackground: v })}
+        />
+      </SectionCard>
+
+      {/* CROP */}
+      <SectionCard title="Crop">
+        <NumericRow
+          label="Top"
+          value={cropTop}
+          unit="%"
+          min={0}
+          max={95}
+          step={1}
+          onChange={(v) => updateCrop({ top: v })}
+        />
+        <NumericRow
+          label="Bottom"
+          value={cropBottom}
+          unit="%"
+          min={0}
+          max={95}
+          step={1}
+          onChange={(v) => updateCrop({ bottom: v })}
+        />
+        <NumericRow
+          label="Left"
+          value={cropLeft}
+          unit="%"
+          min={0}
+          max={95}
+          step={1}
+          onChange={(v) => updateCrop({ left: v })}
+        />
+        <NumericRow
+          label="Right"
+          value={cropRight}
+          unit="%"
+          min={0}
+          max={95}
+          step={1}
+          onChange={(v) => updateCrop({ right: v })}
+        />
+      </SectionCard>
+    </div>
+  );
+}
+
+interface SectionCardProps {
+  title: string;
+  children: React.ReactNode;
+  action?: React.ReactNode;
+}
+
+function SectionCard({ title, children, action }: SectionCardProps): JSX.Element {
+  return (
+    <div className="section-card">
+      <div className="section-head">
+        <span className="section-title">{title}</span>
+        {action}
       </div>
+      <div className="section-body">{children}</div>
+    </div>
+  );
+}
 
-      {tab === 'wallpaper' && <WallpaperTab value={value} update={update} />}
-      {tab === 'gradient' && <GradientTab value={value} update={update} />}
-      {tab === 'color' && <ColorTab value={value} update={update} />}
-      {tab === 'image' && <ImageTab value={value} update={update} />}
+function ResetBtn({ onClick }: { onClick: () => void }): JSX.Element {
+  return (
+    <button className="link-action" onClick={onClick}>
+      Reset
+    </button>
+  );
+}
 
-      <div className="panel-section">
-        <div className="panel-label">
-          <BlurIcon /> Background blur
-        </div>
+interface NumericRowProps {
+  label: string;
+  value: number;
+  unit: string;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (next: number) => void;
+}
+
+function NumericRow({ label, value, unit, min, max, step, onChange }: NumericRowProps): JSX.Element {
+  const fillPct = ((value - min) / (max - min)) * 100;
+  return (
+    <div className="num-row">
+      {label && <span className="num-row-label">{label}</span>}
+      <div className="num-row-control" style={{ ['--fill' as string]: `${fillPct}%` }}>
+        <span className="num-row-value">
+          {step < 1 ? value.toFixed(1) : Math.round(value)}{unit}
+        </span>
         <input
           type="range"
-          min={0}
-          max={40}
-          step={1}
-          value={blur}
-          onChange={(e) => update({ blur: Number(e.target.value) })}
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
         />
       </div>
+    </div>
+  );
+}
+
+interface ToggleRowProps {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}
+
+function ToggleRow({ label, checked, onChange }: ToggleRowProps): JSX.Element {
+  return (
+    <div className="toggle-row pro">
+      <span className="toggle-row-label-pro">{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        className={`switch ${checked ? 'on' : ''}`}
+        onClick={() => onChange(!checked)}
+      >
+        <span className="switch-thumb" />
+      </button>
     </div>
   );
 }
 
 interface SubTabProps {
   value: Background | null | undefined;
-  update: (patch: Partial<Background> & { type?: BgTab }) => void;
+  update: (patch: Partial<Background>) => void;
 }
 
-function WallpaperTab({ value, update }: SubTabProps): JSX.Element {
-  const active = value && value.type === 'wallpaper' ? value.value : 'default';
-  return (
-    <div className="panel-section">
-      <div className="panel-sublabel">Presets</div>
-      <div className="wallpaper-grid">
-        {Object.entries(WALLPAPER_PRESETS).map(([key, p]) => (
-          <button
-            key={key}
-            className={`wallpaper-swatch ${active === key ? 'active' : ''}`}
-            style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
-            onClick={() => update({ type: 'wallpaper', value: key })}
-            title={key}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function GradientTab({ value, update }: SubTabProps): JSX.Element {
-  const from = value && value.type === 'gradient' ? value.from : '#7c5cff';
-  const to = value && value.type === 'gradient' ? value.to : '#5cc4ff';
-  const angle = value && value.type === 'gradient' && value.angle != null ? value.angle : 135;
-  return (
-    <div className="panel-section">
-      <div className="panel-sublabel">Gradient</div>
-      <div
-        className="gradient-preview"
-        style={{ background: `linear-gradient(${angle}deg, ${from}, ${to})` }}
-      />
-      <div className="field-row">
-        <label>From</label>
-        <input type="color" value={from} onChange={(e) => update({ type: 'gradient', from: e.target.value, to, angle })} />
-      </div>
-      <div className="field-row">
-        <label>To</label>
-        <input type="color" value={to} onChange={(e) => update({ type: 'gradient', from, to: e.target.value, angle })} />
-      </div>
-      <div className="field-row">
-        <label>Angle</label>
-        <input
-          type="range"
-          min={0}
-          max={360}
-          step={1}
-          value={angle}
-          onChange={(e) => update({ type: 'gradient', from, to, angle: Number(e.target.value) })}
-        />
-        <span className="field-value">{angle}°</span>
-      </div>
-    </div>
-  );
-}
-
-function ColorTab({ value, update }: SubTabProps): JSX.Element {
-  const color = value && value.type === 'color' ? value.value : '#7c5cff';
-  return (
-    <div className="panel-section">
-      <div className="panel-sublabel">Color</div>
-      <div className="field-row">
-        <input
-          type="color"
-          value={color}
-          onChange={(e) => update({ type: 'color', value: e.target.value })}
-        />
-        <input
-          type="text"
-          className="hex-input"
-          value={color}
-          onChange={(e) => update({ type: 'color', value: e.target.value })}
-        />
-      </div>
-    </div>
-  );
-}
-
-function ImageTab({ value, update }: SubTabProps): JSX.Element {
-  const src = value && value.type === 'image' ? value.src : null;
+function WallpaperImageTab({ value, update }: SubTabProps): JSX.Element {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
+  const customSrc = value && value.type === 'image' ? value.src : null;
+  const activeWallpaper = value && value.type === 'wallpaper' ? value.value : null;
 
   const readFile = (file: File | null | undefined): void => {
     if (!file) return;
@@ -197,36 +332,30 @@ function ImageTab({ value, update }: SubTabProps): JSX.Element {
     readFile(file);
     e.target.value = '';
   };
-  const onDrop = (e: DragEvent<HTMLDivElement>): void => {
+  const onDrop = (e: DragEvent<HTMLButtonElement>): void => {
     e.preventDefault();
     setDragging(false);
     const file = Array.from(e.dataTransfer.files || []).find((f) => f.type.startsWith('image/'));
     readFile(file);
   };
-  const onPaste = (e: ClipboardEvent<HTMLDivElement>): void => {
+  const onPaste = (e: ClipboardEvent<HTMLButtonElement>): void => {
     const file = Array.from(e.clipboardData?.files || []).find((f) => f.type.startsWith('image/'));
     if (file) readFile(file);
   };
 
   return (
-    <div className="panel-section">
-      <div className="panel-sublabel">Background image</div>
-      <div
-        className={`image-dropzone ${dragging ? 'dragging' : ''} ${src ? 'has-image' : ''}`}
+    <div className="wallpaper-block">
+      <button
+        className={`upload-btn ${dragging ? 'dragging' : ''} ${customSrc ? 'has-image' : ''}`}
         onClick={onPick}
         onPaste={onPaste}
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        tabIndex={0}
-        style={src ? { backgroundImage: `url(${src})` } : undefined}
+        style={customSrc ? { backgroundImage: `url(${customSrc})` } : undefined}
       >
-        {!src && (
-          <div className="dropzone-hint">
-            <PhotoIcon />
-            <span>Click to select, drop image, or paste while focused.</span>
-          </div>
-        )}
+        <UploadIcon />
+        <span>{customSrc ? 'Custom Image' : 'Upload Custom'}</span>
         <input
           ref={inputRef}
           type="file"
@@ -234,39 +363,94 @@ function ImageTab({ value, update }: SubTabProps): JSX.Element {
           style={{ display: 'none' }}
           onChange={onChange}
         />
+      </button>
+
+      <div className="wallpaper-grid-pro">
+        {Object.entries(WALLPAPER_PRESETS).map(([key, p]) => (
+          <button
+            key={key}
+            className={`wallpaper-swatch-pro ${activeWallpaper === key ? 'active' : ''}`}
+            style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
+            onClick={() => update({ type: 'wallpaper', value: key })}
+            title={key}
+          />
+        ))}
       </div>
-      {src && (
-        <button className="ghost panel-btn" onClick={() => update({ type: 'image', src: null })}>
-          Remove image
-        </button>
-      )}
     </div>
   );
 }
 
-function BgIcon(): JSX.Element {
+function GradientTab({ value, update }: SubTabProps): JSX.Element {
+  const from = value && value.type === 'gradient' ? value.from : '#7c5cff';
+  const to = value && value.type === 'gradient' ? value.to : '#5cc4ff';
+  const angle = value && value.type === 'gradient' && value.angle != null ? value.angle : 135;
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <circle cx="9" cy="9" r="1.5" fill="currentColor" />
-      <path d="M21 15l-5-5L5 21" />
-    </svg>
+    <div className="grad-block">
+      <div
+        className="gradient-preview-pro"
+        style={{ background: `linear-gradient(${angle}deg, ${from}, ${to})` }}
+      />
+      <div className="grad-row">
+        <label>From</label>
+        <input type="color" value={from} onChange={(e) => update({ type: 'gradient', from: e.target.value, to, angle })} />
+        <input
+          type="text"
+          className="hex-input"
+          value={from}
+          onChange={(e) => update({ type: 'gradient', from: e.target.value, to, angle })}
+        />
+      </div>
+      <div className="grad-row">
+        <label>To</label>
+        <input type="color" value={to} onChange={(e) => update({ type: 'gradient', from, to: e.target.value, angle })} />
+        <input
+          type="text"
+          className="hex-input"
+          value={to}
+          onChange={(e) => update({ type: 'gradient', from, to: e.target.value, angle })}
+        />
+      </div>
+      <NumericRow
+        label="Angle"
+        value={angle}
+        unit="°"
+        min={0}
+        max={360}
+        step={1}
+        onChange={(v) => update({ type: 'gradient', from, to, angle: v })}
+      />
+    </div>
   );
 }
-function BlurIcon(): JSX.Element {
+
+function ColorTab({ value, update }: SubTabProps): JSX.Element {
+  const color = value && value.type === 'color' ? value.value : '#7c5cff';
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="4" />
-    </svg>
+    <div className="grad-block">
+      <div className="gradient-preview-pro" style={{ background: color }} />
+      <div className="grad-row">
+        <input
+          type="color"
+          value={color}
+          onChange={(e) => update({ type: 'color', value: e.target.value })}
+        />
+        <input
+          type="text"
+          className="hex-input"
+          value={color}
+          onChange={(e) => update({ type: 'color', value: e.target.value })}
+        />
+      </div>
+    </div>
   );
 }
-function PhotoIcon(): JSX.Element {
+
+function UploadIcon(): JSX.Element {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <circle cx="8.5" cy="10" r="1.5" />
-      <path d="M21 17l-5-5-9 9" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
     </svg>
   );
 }

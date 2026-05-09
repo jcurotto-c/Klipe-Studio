@@ -3,7 +3,7 @@ import BackgroundPanel from './panels/BackgroundPanel';
 import CameraPanel from './panels/CameraPanel';
 import CursorPanel from './panels/CursorPanel';
 import PlaceholderPanel from './panels/PlaceholderPanel';
-import type { Background, CameraOptions, CursorOptions } from '../types';
+import type { Background, CameraOptions, Crop, CursorOptions, FrameOptions } from '../types';
 
 type CategoryId =
   | 'background'
@@ -33,6 +33,10 @@ const CATEGORIES: Category[] = [
 interface SidebarPanelProps {
   background: Background;
   onBackgroundChange: (next: Background) => void;
+  frame: FrameOptions;
+  onFrameChange: (next: FrameOptions) => void;
+  crop: Crop | null;
+  onCropChange: (next: Crop | null) => void;
   cameraOptions: CameraOptions;
   onCameraOptionsChange: (next: CameraOptions) => void;
   cameraAvailable: boolean;
@@ -43,6 +47,10 @@ interface SidebarPanelProps {
 export default function SidebarPanel({
   background,
   onBackgroundChange,
+  frame,
+  onFrameChange,
+  crop,
+  onCropChange,
   cameraOptions,
   onCameraOptionsChange,
   cameraAvailable,
@@ -57,7 +65,16 @@ export default function SidebarPanel({
   const renderPanel = (): JSX.Element | null => {
     switch (activeId) {
       case 'background':
-        return <BackgroundPanel value={background} onChange={onBackgroundChange} />;
+        return (
+          <BackgroundPanel
+            value={background}
+            onChange={onBackgroundChange}
+            frame={frame}
+            onFrameChange={onFrameChange}
+            crop={crop}
+            onCropChange={onCropChange}
+          />
+        );
       case 'cursor':
         return <CursorPanel value={cursorOptions} onChange={onCursorOptionsChange} />;
       case 'camera':
@@ -83,7 +100,6 @@ export default function SidebarPanel({
 
   return (
     <div className={`sidebar ${activeId ? 'open' : ''}`}>
-      {activeId && <div className="sidebar-content">{renderPanel()}</div>}
       <div className="sidebar-rail">
         {CATEGORIES.map((c) => {
           const Icon = c.icon;
@@ -102,6 +118,7 @@ export default function SidebarPanel({
           );
         })}
       </div>
+      {activeId && <div className="sidebar-content">{renderPanel()}</div>}
     </div>
   );
 }

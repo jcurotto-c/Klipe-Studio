@@ -151,7 +151,7 @@ export default function Timeline({
   const w = (a: number, b: number): string => `${((b - a) / duration) * 100}%`;
 
   return (
-    <div className="timeline">
+    <div className="timeline pro">
       <div className="ruler">
         {ticks.map((s) => (
           <div key={s} className="tick" style={{ left: pct(s) }}>
@@ -160,68 +160,75 @@ export default function Timeline({
         ))}
       </div>
 
-      <div className="track" ref={trackRef} onMouseDown={onTrackMouseDown}>
-        {segments.map((seg) => {
-          const isSel = seg.id === selectedId;
-          return (
+      <div className="track-stack">
+        <div className="track main-clip" ref={trackRef} onMouseDown={onTrackMouseDown}>
+          <span className="clip-label">Clip <span className="clip-sub">{`${(duration).toFixed(1)}s`}</span></span>
+
+          {clicks.map((c, i) => (
             <div
-              key={seg.id}
-              className={`zoom-seg ${isSel ? 'selected' : ''} ${seg.source === 'manual' ? 'manual' : 'auto'}`}
-              style={{
-                left: pct(seg.tStart / 1000),
-                width: w(seg.tStart / 1000, seg.tEnd / 1000),
-              }}
-              title={`Zoom ${seg.scale.toFixed(2)}x · ${seg.source}`}
-              onMouseDown={(e) => onSegMouseDown(e, seg)}
-            >
-              <span className="zoom-seg-label">
-                {`${seg.scale.toFixed(1)}× ${seg.source === 'manual' ? 'Manual' : 'Auto'}`}
-              </span>
-              <div
-                className="zoom-seg-handle left"
-                data-handle="seg-start"
-                onMouseDown={(e) => onSegEdgeMouseDown(e, seg, 'start')}
-              />
-              <div
-                className="zoom-seg-handle right"
-                data-handle="seg-end"
-                onMouseDown={(e) => onSegEdgeMouseDown(e, seg, 'end')}
-              />
-            </div>
-          );
-        })}
+              key={i}
+              className="marker"
+              style={{ left: pct(c.t / 1000) }}
+              title={`Click @ ${(c.t / 1000).toFixed(2)}s`}
+            />
+          ))}
 
-        {clicks.map((c, i) => (
+          <div className="trim" style={{ left: 0, width: pct(trim.start) }} />
+          <div className="trim" style={{ left: pct(trim.end), width: `calc(${pct(duration - trim.end)})` }} />
           <div
-            key={i}
-            className="marker"
-            style={{ left: pct(c.t / 1000) }}
-            title={`Click @ ${(c.t / 1000).toFixed(2)}s`}
+            className="trim-handle"
+            data-handle="start"
+            style={{ left: pct(trim.start) }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              setDrag({ kind: 'trimStart' });
+            }}
           />
-        ))}
+          <div
+            className="trim-handle"
+            data-handle="end"
+            style={{ left: `calc(${pct(trim.end)} - 8px)` }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              setDrag({ kind: 'trimEnd' });
+            }}
+          />
 
-        <div className="trim" style={{ left: 0, width: pct(trim.start) }} />
-        <div className="trim" style={{ left: pct(trim.end), width: `calc(${pct(duration - trim.end)})` }} />
-        <div
-          className="trim-handle"
-          data-handle="start"
-          style={{ left: pct(trim.start) }}
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            setDrag({ kind: 'trimStart' });
-          }}
-        />
-        <div
-          className="trim-handle"
-          data-handle="end"
-          style={{ left: `calc(${pct(trim.end)} - 8px)` }}
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            setDrag({ kind: 'trimEnd' });
-          }}
-        />
+          <div className="playhead" style={{ left: pct(currentTime) }} />
+        </div>
 
-        <div className="playhead" style={{ left: pct(currentTime) }} />
+        <div className="track zoom-track">
+          {segments.map((seg) => {
+            const isSel = seg.id === selectedId;
+            return (
+              <div
+                key={seg.id}
+                className={`zoom-seg ${isSel ? 'selected' : ''} ${seg.source === 'manual' ? 'manual' : 'auto'}`}
+                style={{
+                  left: pct(seg.tStart / 1000),
+                  width: w(seg.tStart / 1000, seg.tEnd / 1000),
+                }}
+                title={`Zoom ${seg.scale.toFixed(2)}x · ${seg.source}`}
+                onMouseDown={(e) => onSegMouseDown(e, seg)}
+              >
+                <span className="zoom-seg-label">
+                  {`${seg.scale.toFixed(1)}×`}
+                </span>
+                <div
+                  className="zoom-seg-handle left"
+                  data-handle="seg-start"
+                  onMouseDown={(e) => onSegEdgeMouseDown(e, seg, 'start')}
+                />
+                <div
+                  className="zoom-seg-handle right"
+                  data-handle="seg-end"
+                  onMouseDown={(e) => onSegEdgeMouseDown(e, seg, 'end')}
+                />
+              </div>
+            );
+          })}
+          <div className="playhead ghost" style={{ left: pct(currentTime) }} />
+        </div>
       </div>
     </div>
   );
