@@ -157,7 +157,9 @@ export function resetCursorState(state: CursorState): void {
   state.lastTms = null;
 }
 
-function getNearestSample(events: readonly KlipeMouseEvent[], t: number): KlipeMouseEvent {
+type PositionalEvent = Extract<KlipeMouseEvent, { x: number; y: number }>;
+
+function getNearestSample(events: readonly KlipeMouseEvent[], t: number): PositionalEvent | null {
   let lo = 0;
   let hi = events.length - 1;
   while (lo < hi) {
@@ -165,7 +167,11 @@ function getNearestSample(events: readonly KlipeMouseEvent[], t: number): KlipeM
     if (events[mid]!.t <= t) lo = mid;
     else hi = mid - 1;
   }
-  return events[lo]!;
+  for (let i = lo; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.type !== 'key') return e;
+  }
+  return null;
 }
 
 function lastClickBefore(
@@ -205,6 +211,7 @@ export function sampleCursor(
   }
 
   const sample = getNearestSample(mouse.events, tMs);
+  if (!sample) return { visible: false };
   const targetX = sample.x;
   const targetY = sample.y;
 

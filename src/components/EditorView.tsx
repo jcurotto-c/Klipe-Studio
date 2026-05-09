@@ -27,7 +27,10 @@ import {
 import { DEFAULT_CAMERA_OPTIONS } from './panels/CameraPanel';
 import { DEFAULT_CURSOR_OPTIONS } from '../lib/cursor-engine';
 import { DEFAULT_FRAME_OPTIONS } from '../lib/renderer';
+import { DEFAULT_AUDIO_FX } from '../lib/sound-fx';
+import { useAudioFx } from '../lib/use-audio-fx';
 import type {
+  AudioFxOptions,
   Background,
   CameraOptions,
   Crop,
@@ -44,6 +47,7 @@ const DEFAULTS_KEY = 'klipe.zoomDefaults';
 const CAMERA_OPTIONS_KEY = 'klipe.cameraOptions';
 const CURSOR_OPTIONS_KEY = 'klipe.cursorOptions';
 const FRAME_OPTIONS_KEY = 'klipe.frameOptions';
+const AUDIO_FX_OPTIONS_KEY = 'klipe.audioFxOptions';
 
 function loadDefaults(): ZoomDefaults {
   try {
@@ -89,6 +93,17 @@ function loadFrameOptions(): FrameOptions {
   }
 }
 
+function loadAudioFxOptions(): AudioFxOptions {
+  try {
+    const raw = localStorage.getItem(AUDIO_FX_OPTIONS_KEY);
+    if (!raw) return DEFAULT_AUDIO_FX;
+    const parsed = JSON.parse(raw) as Partial<AudioFxOptions>;
+    return { ...DEFAULT_AUDIO_FX, ...parsed };
+  } catch {
+    return DEFAULT_AUDIO_FX;
+  }
+}
+
 interface EditorViewProps {
   recording: Recording;
   onNew: () => void;
@@ -122,6 +137,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   const [cameraAvailable, setCameraAvailable] = useState(false);
   const [cursorOptions, setCursorOptions] = useState<CursorOptions>(loadCursorOptions);
   const [frameOptions, setFrameOptions] = useState<FrameOptions>(loadFrameOptions);
+  const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(loadAudioFxOptions);
   const [aspectRatio, setAspectRatio] = useState<string>('16:9');
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -413,6 +429,19 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     try { localStorage.setItem(FRAME_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   }, []);
 
+  const handleAudioFxOptionsChange = useCallback((next: AudioFxOptions) => {
+    setAudioFxOptions(next);
+    try { localStorage.setItem(AUDIO_FX_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  }, []);
+
+  useAudioFx({
+    mouse: recording.mouse,
+    fragments,
+    options: audioFxOptions,
+    playing,
+    currentTime,
+  });
+
   useEffect(() => {
     let cancelled = false;
     let stream: MediaStream | null = null;
@@ -465,6 +494,9 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             cameraAvailable={cameraAvailable}
             cursorOptions={cursorOptions}
             onCursorOptionsChange={handleCursorOptionsChange}
+            audioFxOptions={audioFxOptions}
+            onAudioFxOptionsChange={handleAudioFxOptionsChange}
+            inputEvents={recording.mouse.events}
           />
         </div>
 
@@ -677,6 +709,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           crop={exportCrop}
           cursorOptions={cursorOptions}
           frame={frameOptions}
+          audioFx={audioFxOptions}
           sourceLabel={recording.name || 'recording'}
           onClose={() => setExportOpen(false)}
         />

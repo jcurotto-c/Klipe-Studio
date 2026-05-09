@@ -19,7 +19,13 @@ export interface MouseClickEvent {
   button: 'left' | 'right' | 'middle';
 }
 
-export type KlipeMouseEvent = MouseMoveEvent | MouseClickEvent;
+export interface KeyDownEvent {
+  type: 'key';
+  t: number;
+  code: number;
+}
+
+export type KlipeMouseEvent = MouseMoveEvent | MouseClickEvent | KeyDownEvent;
 
 export interface MouseTrack {
   startTime: number;
@@ -129,6 +135,16 @@ export interface CameraOptions {
   size: number;
   zoomDifferent: boolean;
   sizeDuringZoom: number;
+}
+
+export type AudioFxMode = 'auto' | 'on' | 'off';
+
+export interface AudioFxOptions {
+  clickEnabled: boolean;
+  clickVolume: number;
+  keyEnabled: boolean;
+  keyVolume: number;
+  mode: AudioFxMode;
 }
 
 export type CursorStyle = 'arrow' | 'arrow-outline' | 'arrow-mini' | 'dot' | 'figma';

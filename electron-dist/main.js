@@ -218,6 +218,21 @@ public class W {
 $start = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
 $lastL = $false; $lastR = $false; $lastM = $false
 $lastX = -9999; $lastY = -9999
+
+# Virtual-key codes we emit as 'KEY' events (typing-relevant keys).
+# 0x08 BACKSPACE, 0x09 TAB, 0x0D ENTER, 0x20 SPACE,
+# 0x30-0x39 digits, 0x41-0x5A letters, 0xBA-0xC0 / 0xDB-0xDF punctuation,
+# 0x6A-0x6F numpad operators (*, +, -, ., /), 0x60-0x69 numpad digits.
+$keyCodes = @(0x08, 0x09, 0x0D, 0x20)
+$keyCodes += 0x30..0x39
+$keyCodes += 0x41..0x5A
+$keyCodes += 0x60..0x69
+$keyCodes += 0x6A..0x6F
+$keyCodes += 0xBA..0xC0
+$keyCodes += 0xDB..0xDF
+$keyState = @{}
+foreach ($c in $keyCodes) { $keyState[$c] = $false }
+
 while ($true) {
   $p = New-Object W+POINT
   [void][W]::GetCursorPos([ref]$p)
@@ -234,6 +249,15 @@ while ($true) {
   if ($r -and -not $lastR) { Write-Host ("CLICK|{0}|{1}|{2}|right"  -f $t, $p.X, $p.Y) }
   if ($m -and -not $lastM) { Write-Host ("CLICK|{0}|{1}|{2}|middle" -f $t, $p.X, $p.Y) }
   $lastL = $l; $lastR = $r; $lastM = $m
+
+  foreach ($c in $keyCodes) {
+    $down = ([W]::GetAsyncKeyState($c) -band 0x8000) -ne 0
+    if ($down -and -not $keyState[$c]) {
+      Write-Host ("KEY|{0}|{1}" -f $t, $c)
+    }
+    $keyState[$c] = $down
+  }
+
   Start-Sleep -Milliseconds 12
 }
 `;
@@ -284,6 +308,13 @@ function startMouseTracking() {
                     x: Number(parts[2]),
                     y: Number(parts[3]),
                     button: parts[4],
+                });
+            }
+            else if (parts[0] === 'KEY') {
+                mainWindow.webContents.send('mouse-event', {
+                    type: 'key',
+                    t: Number(parts[1]),
+                    code: Number(parts[2]),
                 });
             }
         }

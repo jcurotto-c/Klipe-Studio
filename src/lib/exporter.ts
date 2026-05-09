@@ -13,7 +13,14 @@
 import { renderFrame } from './renderer';
 import { createCursorState } from './cursor-engine';
 import { fragmentDuration, totalOutputDuration } from './fragments';
+import {
+  detectAudioFxNeed,
+  playClickSound,
+  playKeystrokeSound,
+  type SoundFxBus,
+} from './sound-fx';
 import type {
+  AudioFxOptions,
   Background,
   Crop,
   CursorOptions,
@@ -115,6 +122,7 @@ export interface ExportVideoOptions {
   quality?: QualityName;
   cursorOptions?: Partial<CursorOptions> | null;
   frame?: Partial<FrameOptions> | null;
+  audioFx?: AudioFxOptions | null;
   signal?: AbortSignal;
   onProgress?: ExportProgressCallback;
   onLog?: ExportLogCallback;
@@ -156,6 +164,7 @@ export async function exportVideo({
   quality = 'social',
   cursorOptions = null,
   frame = null,
+  audioFx = null,
   signal,
   onProgress,
   onLog,
@@ -193,6 +202,8 @@ export async function exportVideo({
   const canvasStream = canvas.captureStream(fps);
 
   let audioCtx: AudioContext | null = null;
+  let fxBus: SoundFxBus | null = null;
+  let fxNeed: { clicks: boolean; keys: boolean } = { clicks: false, keys: false };
   try {
     const Ctor = getAudioContextCtor();
     if (Ctor) {
@@ -201,6 +212,16 @@ export async function exportVideo({
       const dest = audioCtx.createMediaStreamDestination();
       srcNode.connect(dest);
       dest.stream.getAudioTracks().forEach((t) => canvasStream.addTrack(t));
+
+      if (audioFx) {
+        fxNeed = detectAudioFxNeed(mouse.events, audioFx);
+        if (fxNeed.clicks || fxNeed.keys) {
+          const master = audioCtx.createGain();
+          master.gain.value = 1.0;
+          master.connect(dest);
+          fxBus = { ctx: audioCtx, master, destination: dest };
+        }
+      }
     }
   } catch (e) {
     onLog?.(`Audio capture skipped: ${errorMessage(e)}`);
@@ -272,6 +293,10 @@ export async function exportVideo({
     try { if (recorder.state !== 'inactive') recorder.stop(); } catch { /* ignore */ }
     try { await stopped; } catch { /* ignore */ }
     canvasStream.getTracks().forEach((t) => t.stop());
+    if (fxBus) {
+      try { fxBus.master.disconnect(); } catch { /* ignore */ }
+      fxBus = null;
+    }
     if (audioCtx) {
       try { await audioCtx.close(); } catch { /* ignore */ }
     }
@@ -312,6 +337,23 @@ export async function exportVideo({
         await seekTo(f.srcStart);
       }
       await video.play();
+
+      if (fxBus && (fxNeed.clicks || fxNeed.keys) && audioFx) {
+        const startMs = f.srcStart * 1000;
+        const endMs = f.srcEnd * 1000;
+        const playStartCtxTime = fxBus.ctx.currentTime;
+        for (const evt of mouse.events) {
+          if (evt.t < startMs || evt.t > endMs) continue;
+          const offsetSec = (evt.t - startMs) / 1000;
+          const when = playStartCtxTime + offsetSec;
+          if (evt.type === 'click' && fxNeed.clicks) {
+            playClickSound(fxBus, when, audioFx.clickVolume, evt.button);
+          } else if (evt.type === 'key' && fxNeed.keys) {
+            playKeystrokeSound(fxBus, when, audioFx.keyVolume, evt.code | 0);
+          }
+        }
+      }
+
       await new Promise<void>((resolve) => {
         const check = (): void => {
           if (aborted || video.currentTime >= f.srcEnd - 0.02 || video.ended) {

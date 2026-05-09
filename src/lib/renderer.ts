@@ -349,7 +349,15 @@ function staticCursorSample(
     if (evs[mid]!.t <= tMs) lo = mid;
     else hi = mid - 1;
   }
-  const s = evs[lo]!;
+  let s: { x: number; y: number } | null = null;
+  for (let i = lo; i >= 0; i--) {
+    const e = evs[i]!;
+    if (e.type !== 'key') {
+      s = e;
+      break;
+    }
+  }
+  if (!s) return { visible: false };
 
   let scaleMul = 1;
   for (let i = evs.length - 1; i >= 0; i--) {

@@ -2,8 +2,17 @@ import { useState, type ComponentType } from 'react';
 import BackgroundPanel from './panels/BackgroundPanel';
 import CameraPanel from './panels/CameraPanel';
 import CursorPanel from './panels/CursorPanel';
+import AudioPanel from './panels/AudioPanel';
 import PlaceholderPanel from './panels/PlaceholderPanel';
-import type { Background, CameraOptions, Crop, CursorOptions, FrameOptions } from '../types';
+import type {
+  AudioFxOptions,
+  Background,
+  CameraOptions,
+  Crop,
+  CursorOptions,
+  FrameOptions,
+  KlipeMouseEvent,
+} from '../types';
 
 type CategoryId =
   | 'background'
@@ -42,6 +51,9 @@ interface SidebarPanelProps {
   cameraAvailable: boolean;
   cursorOptions: CursorOptions;
   onCursorOptionsChange: (next: CursorOptions) => void;
+  audioFxOptions: AudioFxOptions;
+  onAudioFxOptionsChange: (next: AudioFxOptions) => void;
+  inputEvents: ReadonlyArray<KlipeMouseEvent>;
 }
 
 export default function SidebarPanel({
@@ -56,6 +68,9 @@ export default function SidebarPanel({
   cameraAvailable,
   cursorOptions,
   onCursorOptionsChange,
+  audioFxOptions,
+  onAudioFxOptionsChange,
+  inputEvents,
 }: SidebarPanelProps): JSX.Element {
   const [activeId, setActiveId] = useState<CategoryId | null>('background');
 
@@ -88,7 +103,13 @@ export default function SidebarPanel({
       case 'captions':
         return <PlaceholderPanel title="Captions" description="Auto-generated subtitles and styling." />;
       case 'audio':
-        return <PlaceholderPanel title="Audio" description="Volume levels and noise suppression." />;
+        return (
+          <AudioPanel
+            value={audioFxOptions}
+            onChange={onAudioFxOptionsChange}
+            events={inputEvents}
+          />
+        );
       case 'shortcuts':
         return <PlaceholderPanel title="Shortcuts" description="Keyboard shortcut overlay during recording." />;
       case 'connections':

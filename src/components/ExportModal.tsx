@@ -10,6 +10,7 @@ import {
   type ResolutionName,
 } from '../lib/exporter';
 import type {
+  AudioFxOptions,
   Background,
   Crop,
   CursorOptions,
@@ -67,6 +68,7 @@ interface ExportModalProps {
   crop: Crop | null;
   cursorOptions: CursorOptions;
   frame?: FrameOptions | null;
+  audioFx?: AudioFxOptions | null;
   sourceLabel?: string;
   onClose: () => void;
 }
@@ -82,6 +84,7 @@ export default function ExportModal({
   crop,
   cursorOptions,
   frame,
+  audioFx,
   sourceLabel,
   onClose,
 }: ExportModalProps): React.ReactPortal {
@@ -159,6 +162,7 @@ export default function ExportModal({
         quality,
         cursorOptions,
         frame,
+        audioFx,
         signal: controller.signal,
         onProgress: (s, v) => {
           setProgressStage(s);
@@ -190,7 +194,7 @@ export default function ExportModal({
     }
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
-    fragments, size, fps, format, quality, cursorOptions, frame, onClose,
+    fragments, size, fps, format, quality, cursorOptions, frame, audioFx, onClose,
   ]);
 
   const handleStop = useCallback(() => {
