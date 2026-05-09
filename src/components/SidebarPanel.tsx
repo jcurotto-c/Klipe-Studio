@@ -7,6 +7,7 @@ import PlaceholderPanel from './panels/PlaceholderPanel';
 import type {
   AudioFxOptions,
   Background,
+  BackgroundMusic,
   CameraOptions,
   Crop,
   CursorOptions,
@@ -54,6 +55,8 @@ interface SidebarPanelProps {
   onCursorOptionsChange: (next: CursorOptions) => void;
   audioFxOptions: AudioFxOptions;
   onAudioFxOptionsChange: (next: AudioFxOptions) => void;
+  backgroundMusic: BackgroundMusic | null;
+  onBackgroundMusicChange: (next: BackgroundMusic | null) => void;
   inputEvents: ReadonlyArray<KlipeMouseEvent>;
 }
 
@@ -71,6 +74,8 @@ export default function SidebarPanel({
   onCursorOptionsChange,
   audioFxOptions,
   onAudioFxOptionsChange,
+  backgroundMusic,
+  onBackgroundMusicChange,
   inputEvents,
 }: SidebarPanelProps): JSX.Element {
   const [activeId, setActiveId] = useState<CategoryId>('background');
@@ -144,6 +149,8 @@ export default function SidebarPanel({
           <AudioPanel
             value={audioFxOptions}
             onChange={onAudioFxOptionsChange}
+            backgroundMusic={backgroundMusic}
+            onBackgroundMusicChange={onBackgroundMusicChange}
             events={inputEvents}
           />
         );

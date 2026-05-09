@@ -168,6 +168,14 @@ export interface AudioFxOptions {
   mode: AudioFxMode;
 }
 
+// Session-only: src is an in-memory object URL (not persisted across reloads).
+export interface BackgroundMusic {
+  name: string;
+  src: string;
+  volume: number;
+  fadeMs: number;
+}
+
 export type CursorStyle = 'arrow' | 'arrow-outline' | 'arrow-mini' | 'dot' | 'figma';
 
 export interface CursorOptions {
@@ -255,7 +263,6 @@ export type HudEvent =
       sourceId: string;
       micId: string;
       camId: string | null;
-      systemAudio: boolean;
       autoZoom: boolean;
       display: Display;
     }
@@ -263,5 +270,4 @@ export type HudEvent =
   | { type: 'source-change'; sourceId: string }
   | { type: 'mic-change'; deviceId: string }
   | { type: 'camera-change'; deviceId: string }
-  | { type: 'system-audio-change'; enabled: boolean }
   | { type: 'auto-zoom-change'; enabled: boolean };

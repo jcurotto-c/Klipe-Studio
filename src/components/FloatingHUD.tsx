@@ -81,7 +81,6 @@ export default function FloatingHUD(): JSX.Element {
   const [micId, setMicId] = useState('');
   const [camEnabled, setCamEnabled] = useState(false);
   const [camId, setCamId] = useState('');
-  const [systemAudio, setSystemAudio] = useState(false);
   const [autoZoom, setAutoZoom] = useState<boolean>(loadAutoZoom);
 
   const [recording, setRecording] = useState(false);
@@ -182,7 +181,6 @@ export default function FloatingHUD(): JSX.Element {
     sources.length,
     micEnabled,
     camEnabled,
-    systemAudio,
     autoZoom,
     recording,
     countdown,
@@ -248,13 +246,6 @@ export default function FloatingHUD(): JSX.Element {
       return next;
     });
   };
-  const onToggleSystemAudio = (): void => {
-    setSystemAudio((v) => {
-      const next = !v;
-      emit({ type: 'system-audio-change', enabled: next });
-      return next;
-    });
-  };
   const onToggleAutoZoom = (): void => {
     setAutoZoom((v) => {
       const next = !v;
@@ -286,7 +277,6 @@ export default function FloatingHUD(): JSX.Element {
           sourceId: selectedId,
           micId: micEnabled ? micId : '',
           camId: camEnabled ? camId : null,
-          systemAudio,
           autoZoom,
           display: {
             width: source.width,
@@ -302,7 +292,7 @@ export default function FloatingHUD(): JSX.Element {
     };
     countdownTimer.current = setTimeout(tick, 1000);
   }, [
-    selectedId, sources, micEnabled, micId, camEnabled, camId, systemAudio, autoZoom, emit,
+    selectedId, sources, micEnabled, micId, camEnabled, camId, autoZoom, emit,
   ]);
 
   const onRecordClick = (): void => {
@@ -437,13 +427,6 @@ export default function FloatingHUD(): JSX.Element {
             onClose={() => setCamMenuOpen(false)}
           />
         )}
-
-        <StackedToggle
-          icon={<SpeakerIcon muted={!systemAudio} />}
-          label="System audio"
-          active={systemAudio}
-          onClick={onToggleSystemAudio}
-        />
 
         <StackedToggle
           icon={<SparkleIcon />}
@@ -887,19 +870,6 @@ function CamIcon(): JSX.Element {
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="6" width="14" height="12" rx="2.5" />
       <circle cx="10" cy="12" r="3" />
-    </svg>
-  );
-}
-interface SpeakerIconProps { muted?: boolean }
-function SpeakerIcon({ muted }: SpeakerIconProps): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 10v4h3l5 4V6L7 10H4z" />
-      {muted ? (
-        <path d="M16 9l5 6M21 9l-5 6" />
-      ) : (
-        <path d="M16 8a6 6 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13" />
-      )}
     </svg>
   );
 }

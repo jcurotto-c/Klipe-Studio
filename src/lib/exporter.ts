@@ -24,6 +24,7 @@ import {
 import type {
   AudioFxOptions,
   Background,
+  BackgroundMusic,
   Crop,
   CursorOptions,
   Display,
@@ -125,6 +126,7 @@ export interface ExportVideoOptions {
   cursorOptions?: Partial<CursorOptions> | null;
   frame?: Partial<FrameOptions> | null;
   audioFx?: AudioFxOptions | null;
+  backgroundMusic?: BackgroundMusic | null;
   signal?: AbortSignal;
   onProgress?: ExportProgressCallback;
   onLog?: ExportLogCallback;
@@ -167,6 +169,7 @@ export async function exportVideo({
   cursorOptions = null,
   frame = null,
   audioFx = null,
+  backgroundMusic = null,
   signal,
   onProgress,
   onLog,
@@ -206,6 +209,8 @@ export async function exportVideo({
   let audioCtx: AudioContext | null = null;
   let fxBus: SoundFxBus | null = null;
   let fxNeed: { clicks: boolean; keys: boolean } = { clicks: false, keys: false };
+  let bgMusicEl: HTMLAudioElement | null = null;
+  let bgMusicGain: GainNode | null = null;
   try {
     const Ctor = getAudioContextCtor();
     if (Ctor) {
@@ -220,6 +225,27 @@ export async function exportVideo({
         if (fxNeed.clicks || fxNeed.keys) {
           fxBus = createSoundFxBus(dest);
           if (fxBus) await loadSoundFxSamples(fxBus);
+        }
+      }
+
+      if (backgroundMusic && backgroundMusic.src) {
+        try {
+          const el = new Audio(backgroundMusic.src);
+          el.loop = true;
+          el.crossOrigin = 'anonymous';
+          el.preload = 'auto';
+          await new Promise<void>((res, rej) => {
+            el.addEventListener('canplaythrough', () => res(), { once: true });
+            el.addEventListener('error', () => rej(new Error('Failed to load background music')), { once: true });
+          });
+          const musicSrc = audioCtx.createMediaElementSource(el);
+          const gain = audioCtx.createGain();
+          gain.gain.value = 0; // start silent; ramp in when recording starts
+          musicSrc.connect(gain).connect(dest);
+          bgMusicEl = el;
+          bgMusicGain = gain;
+        } catch (e) {
+          onLog?.(`Background music skipped: ${errorMessage(e)}`);
         }
       }
     }
@@ -293,6 +319,14 @@ export async function exportVideo({
     try { if (recorder.state !== 'inactive') recorder.stop(); } catch { /* ignore */ }
     try { await stopped; } catch { /* ignore */ }
     canvasStream.getTracks().forEach((t) => t.stop());
+    if (bgMusicEl) {
+      try { bgMusicEl.pause(); } catch { /* ignore */ }
+      bgMusicEl = null;
+    }
+    if (bgMusicGain) {
+      try { bgMusicGain.disconnect(); } catch { /* ignore */ }
+      bgMusicGain = null;
+    }
     if (fxBus) {
       try { fxBus.master.disconnect(); } catch { /* ignore */ }
       fxBus = null;
@@ -322,6 +356,24 @@ export async function exportVideo({
 
     if (audioCtx && audioCtx.state === 'suspended') {
       try { await audioCtx.resume(); } catch { /* ignore */ }
+    }
+
+    if (bgMusicEl && bgMusicGain && audioCtx && backgroundMusic) {
+      const targetVol = Math.max(0, Math.min(1, backgroundMusic.volume));
+      const fadeSec = Math.max(0, (backgroundMusic.fadeMs || 0) / 1000);
+      const now = audioCtx.currentTime;
+      const endAt = now + total;
+      bgMusicGain.gain.cancelScheduledValues(now);
+      bgMusicGain.gain.setValueAtTime(0, now);
+      // Fade-in over fadeSec (clipped if the clip is shorter than 2*fade).
+      const halfTotal = total / 2;
+      const inDur = Math.min(fadeSec, halfTotal);
+      const outDur = Math.min(fadeSec, halfTotal);
+      bgMusicGain.gain.linearRampToValueAtTime(targetVol, now + inDur);
+      // Hold at full volume until fade-out begins.
+      bgMusicGain.gain.setValueAtTime(targetVol, endAt - outDur);
+      bgMusicGain.gain.linearRampToValueAtTime(0, endAt);
+      try { await bgMusicEl.play(); } catch { /* user gesture; will retry on next interaction */ }
     }
 
     recorder.start(250);

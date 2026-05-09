@@ -1,10 +1,20 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { DEFAULT_AUDIO_FX } from '../../lib/sound-fx';
-import type { AudioFxMode, AudioFxOptions, KlipeMouseEvent } from '../../types';
+import type {
+  AudioFxMode,
+  AudioFxOptions,
+  BackgroundMusic,
+  KlipeMouseEvent,
+} from '../../types';
+
+const DEFAULT_BG_MUSIC_VOLUME = 0.3;
+const DEFAULT_BG_MUSIC_FADE_MS = 1200;
 
 interface AudioPanelProps {
   value: AudioFxOptions | null | undefined;
   onChange: (next: AudioFxOptions) => void;
+  backgroundMusic: BackgroundMusic | null;
+  onBackgroundMusicChange: (next: BackgroundMusic | null) => void;
   events: ReadonlyArray<KlipeMouseEvent>;
 }
 
@@ -14,7 +24,13 @@ const MODES: ReadonlyArray<{ id: AudioFxMode; label: string; help: string }> = [
   { id: 'off',  label: 'Off',  help: 'Mute all generated sound effects.' },
 ];
 
-export default function AudioPanel({ value, onChange, events }: AudioPanelProps): JSX.Element {
+export default function AudioPanel({
+  value,
+  onChange,
+  backgroundMusic,
+  onBackgroundMusicChange,
+  events,
+}: AudioPanelProps): JSX.Element {
   const opts: AudioFxOptions = { ...DEFAULT_AUDIO_FX, ...(value ?? {}) };
   const update = (patch: Partial<AudioFxOptions>): void => onChange({ ...opts, ...patch });
   const reset = (): void => onChange({ ...DEFAULT_AUDIO_FX });
@@ -116,6 +132,11 @@ export default function AudioPanel({ value, onChange, events }: AudioPanelProps)
           </div>
         </div>
       </div>
+
+      <BackgroundMusicSection
+        value={backgroundMusic}
+        onChange={onBackgroundMusicChange}
+      />
     </div>
   );
 }
@@ -140,6 +161,100 @@ function ToggleRow({ label, checked, onChange }: ToggleRowProps): JSX.Element {
         <span className="switch-thumb" />
       </button>
     </div>
+  );
+}
+
+interface BackgroundMusicSectionProps {
+  value: BackgroundMusic | null;
+  onChange: (next: BackgroundMusic | null) => void;
+}
+
+function BackgroundMusicSection({ value, onChange }: BackgroundMusicSectionProps): JSX.Element {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handlePick = (): void => fileInputRef.current?.click();
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const src = URL.createObjectURL(file);
+    onChange({
+      name: file.name,
+      src,
+      volume: value?.volume ?? DEFAULT_BG_MUSIC_VOLUME,
+      fadeMs: value?.fadeMs ?? DEFAULT_BG_MUSIC_FADE_MS,
+    });
+  };
+
+  const handleRemove = (): void => onChange(null);
+
+  const handleVolume = (v: number): void => {
+    if (!value) return;
+    onChange({ ...value, volume: v });
+  };
+
+  return (
+    <div className="section-card">
+      <div className="section-head">
+        <span className="section-title">Background Music</span>
+        <span className={`pill ${value ? 'on' : 'off'}`}>{value ? 'Active' : 'None'}</span>
+      </div>
+      <div className="section-body">
+        {value ? (
+          <>
+            <div className="toggle-row pro" title={value.name}>
+              <span
+                className="toggle-row-label-pro"
+                style={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: '60%',
+                }}
+              >
+                {value.name}
+              </span>
+              <button type="button" className="link-action" onClick={handleRemove}>
+                Remove
+              </button>
+            </div>
+            <VolumeRow
+              label="Volume"
+              value={value.volume}
+              disabled={false}
+              onChange={handleVolume}
+            />
+            <div className="audio-meta dim">Loops automatically · fades in/out on export</div>
+          </>
+        ) : (
+          <>
+            <button type="button" className="upload-btn" onClick={handlePick}>
+              <UploadIcon />
+              <span>Upload audio file</span>
+            </button>
+            <div className="audio-meta dim">MP3, WAV, OGG, M4A. Plays under the recording, looped.</div>
+          </>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*"
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+        />
+      </div>
+    </div>
+  );
+}
+
+function UploadIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
   );
 }
 

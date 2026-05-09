@@ -32,6 +32,7 @@ import { useAudioFx } from '../lib/use-audio-fx';
 import type {
   AudioFxOptions,
   Background,
+  BackgroundMusic,
   CameraOptions,
   Crop,
   CursorOptions,
@@ -155,6 +156,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   const [cursorOptions, setCursorOptions] = useState<CursorOptions>(loadCursorOptions);
   const [frameOptions, setFrameOptions] = useState<FrameOptions>(loadFrameOptions);
   const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(loadAudioFxOptions);
+  const [backgroundMusic, setBackgroundMusic] = useState<BackgroundMusic | null>(null);
+  const bgMusicAudioRef = useRef<HTMLAudioElement | null>(null);
   const [aspectRatioId, setAspectRatioId] = useState<string>('auto');
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
   const aspectMenuRef = useRef<HTMLDivElement | null>(null);
@@ -494,6 +497,73 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     try { localStorage.setItem(AUDIO_FX_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   }, []);
 
+  const handleBackgroundMusicChange = useCallback((next: BackgroundMusic | null) => {
+    setBackgroundMusic((prev) => {
+      // Revoke the previous object URL when the source actually changes.
+      if (prev && prev.src && prev.src !== next?.src) {
+        try { URL.revokeObjectURL(prev.src); } catch { /* ignore */ }
+      }
+      return next;
+    });
+  }, []);
+
+  // Keep a hidden <audio> in sync with playback so the editor previews
+  // background music alongside the video.
+  useEffect(() => {
+    if (!backgroundMusic) {
+      if (bgMusicAudioRef.current) {
+        bgMusicAudioRef.current.pause();
+        bgMusicAudioRef.current.src = '';
+        bgMusicAudioRef.current = null;
+      }
+      return undefined;
+    }
+    let el = bgMusicAudioRef.current;
+    if (!el || el.src !== backgroundMusic.src) {
+      el?.pause();
+      el = new Audio(backgroundMusic.src);
+      el.loop = true;
+      el.preload = 'auto';
+      bgMusicAudioRef.current = el;
+    }
+    el.volume = Math.max(0, Math.min(1, backgroundMusic.volume));
+    return () => {
+      // Note: don't tear down here — only on unmount or src change above.
+    };
+  }, [backgroundMusic]);
+
+  useEffect(() => {
+    const el = bgMusicAudioRef.current;
+    if (!el) return;
+    if (playing) {
+      void el.play().catch(() => { /* user gesture needed; will resume on next play click */ });
+    } else {
+      el.pause();
+    }
+  }, [playing]);
+
+  useEffect(() => {
+    const el = bgMusicAudioRef.current;
+    if (!el || playing) return;
+    // While paused, mirror scrubs so the user hears a tick from the new position
+    // when they resume. Loop semantics: modulo into the clip length.
+    if (el.duration && isFinite(el.duration)) {
+      el.currentTime = currentTime % el.duration;
+    }
+  }, [currentTime, playing]);
+
+  useEffect(() => () => {
+    // On unmount, free the object URL.
+    if (backgroundMusic?.src) {
+      try { URL.revokeObjectURL(backgroundMusic.src); } catch { /* ignore */ }
+    }
+    if (bgMusicAudioRef.current) {
+      bgMusicAudioRef.current.pause();
+      bgMusicAudioRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useAudioFx({
     mouse: recording.mouse,
     fragments,
@@ -556,6 +626,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           onCursorOptionsChange={handleCursorOptionsChange}
           audioFxOptions={audioFxOptions}
           onAudioFxOptionsChange={handleAudioFxOptionsChange}
+          backgroundMusic={backgroundMusic}
+          onBackgroundMusicChange={handleBackgroundMusicChange}
           inputEvents={recording.mouse.events}
         />
       </div>
@@ -802,6 +874,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           cursorOptions={cursorOptions}
           frame={frameOptions}
           audioFx={audioFxOptions}
+          backgroundMusic={backgroundMusic}
           sourceLabel={recording.name || 'recording'}
           onClose={() => setExportOpen(false)}
         />
