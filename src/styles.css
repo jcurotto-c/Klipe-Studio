@@ -97,6 +97,10 @@ button.ghost { background: transparent; }
   overflow: auto;
   padding: 22px;
 }
+.view:has(> .editor.pro) {
+  padding: 0;
+  overflow: hidden;
+}
 
 /* RecorderView */
 .recorder {
@@ -179,7 +183,22 @@ button.ghost { background: transparent; }
   min-height: 0;
 }
 .editor.pro {
-  gap: 12px;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  grid-template-columns: 1fr;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+.editor-top {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  min-height: 0;
+  min-width: 0;
+}
+.editor-timeline {
+  padding: 0;
+  min-width: 0;
 }
 .editor-main {
   display: grid;
@@ -188,14 +207,24 @@ button.ghost { background: transparent; }
   min-height: 0;
 }
 .editor.pro .editor-main {
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 1fr auto;
   gap: 12px;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 .editor-side {
   display: flex;
   align-items: stretch;
-  gap: 14px;
   min-height: 0;
+  height: 100%;
+}
+.editor-right {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
 }
 .editor-side-right {
   display: flex;
@@ -205,7 +234,7 @@ button.ghost { background: transparent; }
 .preview-wrap {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   min-height: 0;
   min-width: 0;
 }
@@ -277,8 +306,8 @@ button.ghost { background: transparent; }
 }
 .editor .preview {
   background: var(--bg-0);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: none;
+  border-radius: 0;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden; min-height: 0;
   flex: 1;
@@ -288,7 +317,7 @@ button.ghost { background: transparent; }
   position: relative;
   max-width: 100%;
   max-height: 100%;
-  border-radius: 10px;
+  border-radius: 0;
   overflow: hidden;
   line-height: 0;
 }
@@ -366,8 +395,9 @@ button.tool.active {
 .timeline {
   position: relative;
   background: var(--bg-1);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
   padding: 10px 12px 16px;
   user-select: none;
 }
@@ -378,6 +408,12 @@ button.tool.active {
   position: absolute; top: 0; bottom: 0;
   border-left: 1px solid var(--border);
   padding-left: 4px;
+}
+.timeline .ruler .tick.right-anchor {
+  border-left: none;
+  border-right: 1px solid var(--border);
+  padding-left: 0;
+  padding-right: 4px;
 }
 .timeline .track {
   position: relative; height: 44px; margin-top: 6px;
@@ -781,52 +817,101 @@ select {
   text-align: center;
 }
 
-/* Sidebar (icon rail + active panel) — rail on LEFT, panel to its right */
+/* Sidebar (horizontal tabs on top, panel below) */
 .sidebar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  width: 300px;
+  min-width: 0;
+  max-width: 100%;
+  background: var(--bg-1);
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  overflow: hidden;
+}
+.sidebar-tabs-bar {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  gap: 8px;
-  height: 100%;
-  min-height: 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
-.sidebar-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 6px;
-  background: var(--bg-1);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-}
-.rail-icon {
-  width: 36px;
-  height: 36px;
+.sidebar-tabs-arrow {
+  flex: 0 0 auto;
+  width: 28px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--text-1);
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color 120ms ease, opacity 120ms ease;
+}
+.sidebar-tabs-arrow:hover:not(:disabled) { color: var(--text-0); }
+.sidebar-tabs-arrow:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.sidebar-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 4px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
   position: relative;
+  -webkit-mask-image: linear-gradient(to right, black 0, black 100%);
+          mask-image: linear-gradient(to right, black 0, black 100%);
 }
-.rail-icon:hover:not(:disabled) {
-  background: var(--bg-2);
+.sidebar-tabs.fade-left {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 24px, black 100%);
+          mask-image: linear-gradient(to right, transparent 0, black 24px, black 100%);
+}
+.sidebar-tabs.fade-right {
+  -webkit-mask-image: linear-gradient(to right, black 0, black calc(100% - 24px), transparent 100%);
+          mask-image: linear-gradient(to right, black 0, black calc(100% - 24px), transparent 100%);
+}
+.sidebar-tabs.fade-left.fade-right {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 24px, black calc(100% - 24px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, black 24px, black calc(100% - 24px), transparent 100%);
+}
+.sidebar-tabs::-webkit-scrollbar { display: none; }
+.sidebar-tab {
+  flex: 0 0 auto;
+  padding: 10px 8px;
+  margin-right: 4px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.sidebar-tab:hover:not(:disabled) {
   color: var(--text-0);
 }
-.rail-icon.active {
-  background: rgba(124, 92, 255, 0.20);
+.sidebar-tab.active {
   color: var(--text-0);
-  box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.4) inset;
+  border-bottom-color: var(--accent, #7c5cff);
 }
 .sidebar-content {
-  width: 300px;
-  background: var(--bg-1);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1550,8 +1635,16 @@ select {
   gap: 14px;
   padding: 8px 12px;
   background: var(--bg-1);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+.controls-divider {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 4px;
 }
 .controls-left {
   display: flex;

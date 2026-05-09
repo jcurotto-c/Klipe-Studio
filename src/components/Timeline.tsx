@@ -307,11 +307,20 @@ export default function Timeline({
   return (
     <div className="timeline pro">
       <div className="ruler">
-        {ticks.map((s) => (
-          <div key={s} className="tick" style={{ left: pct(s) }}>
-            {fmt(s)}
-          </div>
-        ))}
+        {ticks.map((s, i) => {
+          const isLast = i === ticks.length - 1;
+          const pos = (s / Math.max(0.001, duration)) * 100;
+          const rightAnchor = isLast && pos >= 95;
+          return (
+            <div
+              key={s}
+              className={`tick ${rightAnchor ? 'right-anchor' : ''}`}
+              style={rightAnchor ? { right: 0 } : { left: pct(s) }}
+            >
+              {fmt(s)}
+            </div>
+          );
+        })}
       </div>
 
       <div className="track-stack">

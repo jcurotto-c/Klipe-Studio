@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import BackgroundPanel from './panels/BackgroundPanel';
 import CameraPanel from './panels/CameraPanel';
 import CursorPanel from './panels/CursorPanel';
@@ -26,18 +26,19 @@ type CategoryId =
 interface Category {
   id: CategoryId;
   label: string;
-  icon: ComponentType;
 }
 
 const CATEGORIES: Category[] = [
-  { id: 'background',  label: 'Background',  icon: BackgroundIcon },
-  { id: 'cursor',      label: 'Cursor',      icon: CursorIcon },
-  { id: 'camera',      label: 'Camera',      icon: CameraIcon },
-  { id: 'captions',    label: 'Captions',    icon: CaptionIcon },
-  { id: 'audio',       label: 'Audio',       icon: AudioIcon },
-  { id: 'shortcuts',   label: 'Shortcuts',   icon: ShortcutIcon },
-  { id: 'connections', label: 'Connections', icon: LinkIcon },
+  { id: 'background',  label: 'Background' },
+  { id: 'cursor',      label: 'Cursor' },
+  { id: 'camera',      label: 'Camera' },
+  { id: 'captions',    label: 'Captions' },
+  { id: 'audio',       label: 'Audio' },
+  { id: 'shortcuts',   label: 'Shortcuts' },
+  { id: 'connections', label: 'Connections' },
 ];
+
+const SCROLL_STEP_PX = 140;
 
 interface SidebarPanelProps {
   background: Background;
@@ -72,10 +73,46 @@ export default function SidebarPanel({
   onAudioFxOptionsChange,
   inputEvents,
 }: SidebarPanelProps): JSX.Element {
-  const [activeId, setActiveId] = useState<CategoryId | null>('background');
+  const [activeId, setActiveId] = useState<CategoryId>('background');
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<Partial<Record<CategoryId, HTMLButtonElement | null>>>({});
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
 
-  const togglePanel = (id: CategoryId): void =>
-    setActiveId((prev) => (prev === id ? null : id));
+  const updateScrollState = (): void => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft < maxScroll - 1);
+  };
+
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    updateScrollState();
+    const onScroll = (): void => updateScrollState();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = new ResizeObserver(() => updateScrollState());
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const btn = tabRefs.current[activeId];
+    if (btn && typeof btn.scrollIntoView === 'function') {
+      btn.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+    }
+  }, [activeId]);
+
+  const scrollBy = (delta: number): void => {
+    const el = tabsRef.current;
+    if (!el) return;
+    el.scrollBy({ left: delta, behavior: 'smooth' });
+  };
 
   const renderPanel = (): JSX.Element | null => {
     switch (activeId) {
@@ -120,83 +157,65 @@ export default function SidebarPanel({
   };
 
   return (
-    <div className={`sidebar ${activeId ? 'open' : ''}`}>
-      <div className="sidebar-rail">
-        {CATEGORIES.map((c) => {
-          const Icon = c.icon;
-          return (
+    <div className="sidebar open">
+      <div className="sidebar-tabs-bar">
+        <button
+          type="button"
+          className="sidebar-tabs-arrow left"
+          onClick={() => scrollBy(-SCROLL_STEP_PX)}
+          disabled={!canScrollLeft}
+          aria-label="Scroll tabs left"
+          tabIndex={-1}
+        >
+          <ChevronLeft />
+        </button>
+        <div
+          className={`sidebar-tabs ${canScrollLeft ? 'fade-left' : ''} ${canScrollRight ? 'fade-right' : ''}`}
+          ref={tabsRef}
+          role="tablist"
+        >
+          {CATEGORIES.map((c) => (
             <button
               key={c.id}
               type="button"
-              className={`rail-icon ${activeId === c.id ? 'active' : ''}`}
-              onClick={() => togglePanel(c.id)}
-              title={c.label}
-              aria-label={c.label}
-              aria-pressed={activeId === c.id}
+              role="tab"
+              ref={(el) => { tabRefs.current[c.id] = el; }}
+              className={`sidebar-tab ${activeId === c.id ? 'active' : ''}`}
+              onClick={() => setActiveId(c.id)}
+              aria-selected={activeId === c.id}
             >
-              <Icon />
+              {c.label}
             </button>
-          );
-        })}
+          ))}
+        </div>
+        <button
+          type="button"
+          className="sidebar-tabs-arrow right"
+          onClick={() => scrollBy(SCROLL_STEP_PX)}
+          disabled={!canScrollRight}
+          aria-label="Scroll tabs right"
+          tabIndex={-1}
+        >
+          <ChevronRight />
+        </button>
       </div>
-      {activeId && <div className="sidebar-content">{renderPanel()}</div>}
+      <div className="sidebar-content">{renderPanel()}</div>
     </div>
   );
 }
 
-function BackgroundIcon(): JSX.Element {
+function ChevronLeft(): JSX.Element {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <path d="M3 16l5-5 4 4 3-3 6 6" />
-      <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 18 9 12 15 6" />
     </svg>
   );
 }
-function CursorIcon(): JSX.Element {
+
+function ChevronRight(): JSX.Element {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5 3l6 16 2-7 7-2z" />
-    </svg>
-  );
-}
-function CameraIcon(): JSX.Element {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="6" width="14" height="12" rx="2" />
-      <path d="M22 8l-6 4 6 4V8z" />
-    </svg>
-  );
-}
-function CaptionIcon(): JSX.Element {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12a8 8 0 1 1-3-6.2L21 4v6h-6" />
-      <path d="M8 13h3M13 13h3" />
-    </svg>
-  );
-}
-function AudioIcon(): JSX.Element {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M11 5L6 9H2v6h4l5 4V5z" />
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-    </svg>
-  );
-}
-function ShortcutIcon(): JSX.Element {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 6V4a2 2 0 1 0-2 2h2zM15 6V4a2 2 0 1 1 2 2h-2zM9 18v2a2 2 0 1 1-2-2h2zM15 18v2a2 2 0 1 0 2-2h-2z" />
-      <rect x="9" y="6" width="6" height="12" />
-    </svg>
-  );
-}
-function LinkIcon(): JSX.Element {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
-      <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="9 18 15 12 9 6" />
     </svg>
   );
 }

@@ -480,53 +480,29 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
 
   return (
     <div className="editor pro">
+      <div className="editor-top">
+      <div className="editor-side">
+        <SidebarPanel
+          background={background}
+          onBackgroundChange={setBackground}
+          frame={frameOptions}
+          onFrameChange={handleFrameOptionsChange}
+          crop={crop}
+          onCropChange={setCrop}
+          cameraOptions={cameraOptions}
+          onCameraOptionsChange={handleCameraOptionsChange}
+          cameraAvailable={cameraAvailable}
+          cursorOptions={cursorOptions}
+          onCursorOptionsChange={handleCursorOptionsChange}
+          audioFxOptions={audioFxOptions}
+          onAudioFxOptionsChange={handleAudioFxOptionsChange}
+          inputEvents={recording.mouse.events}
+        />
+      </div>
+      <div className="editor-right">
       <div className="editor-main">
-        <div className="editor-side">
-          <SidebarPanel
-            background={background}
-            onBackgroundChange={setBackground}
-            frame={frameOptions}
-            onFrameChange={handleFrameOptionsChange}
-            crop={crop}
-            onCropChange={setCrop}
-            cameraOptions={cameraOptions}
-            onCameraOptionsChange={handleCameraOptionsChange}
-            cameraAvailable={cameraAvailable}
-            cursorOptions={cursorOptions}
-            onCursorOptionsChange={handleCursorOptionsChange}
-            audioFxOptions={audioFxOptions}
-            onAudioFxOptionsChange={handleAudioFxOptionsChange}
-            inputEvents={recording.mouse.events}
-          />
-        </div>
 
         <div className="preview-wrap">
-          <div className="preview-toolbar">
-            <div className="preview-toolbar-left" />
-            <div className="preview-toolbar-right">
-              <div className="aspect-select">
-                <select
-                  value={aspectRatio}
-                  onChange={(e) => setAspectRatio(e.target.value)}
-                  aria-label="Aspect ratio"
-                >
-                  <option value="16:9">16:9</option>
-                  <option value="9:16">9:16</option>
-                  <option value="1:1">1:1</option>
-                  <option value="4:3">4:3</option>
-                  <option value="auto">Auto</option>
-                </select>
-                <ChevronDownIcon />
-              </div>
-              <button
-                className={`tool-btn ${cropMode ? 'active' : ''}`}
-                onClick={() => setCropMode((v) => !v)}
-              >
-                <CropIcon /> Crop Video
-              </button>
-            </div>
-          </div>
-
           <div className="preview">
             <video
               ref={videoRef}
@@ -576,7 +552,6 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
         )}
       </div>
 
-      <div className="editor-bottom">
         <div className="controls-pro">
           <div className="controls-left">
             <button className="add-layer-btn" disabled title="Add a media layer (coming soon)">
@@ -605,6 +580,28 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               title="Delete selected fragment"
             >
               <TrashIcon />
+            </button>
+            <span className="controls-divider" aria-hidden="true" />
+            <div className="aspect-select">
+              <select
+                value={aspectRatio}
+                onChange={(e) => setAspectRatio(e.target.value)}
+                aria-label="Aspect ratio"
+              >
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+                <option value="1:1">1:1</option>
+                <option value="4:3">4:3</option>
+                <option value="auto">Auto</option>
+              </select>
+              <ChevronDownIcon />
+            </div>
+            <button
+              className={`tool-btn ${cropMode ? 'active' : ''}`}
+              onClick={() => setCropMode((v) => !v)}
+              title="Crop the video"
+            >
+              <CropIcon /> Crop Video
             </button>
           </div>
 
@@ -665,7 +662,10 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             </button>
           </div>
         </div>
+      </div>
+      </div>
 
+      <div className="editor-timeline">
         {duration > 0 ? (
           <Timeline
             duration={duration}
