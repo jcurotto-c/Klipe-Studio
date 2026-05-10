@@ -30,8 +30,8 @@ interface FormatDef {
 }
 
 const FORMATS: FormatDef[] = [
+  { id: 'mp4',  label: 'MP4',  enabled: true },
   { id: 'webm', label: 'WebM', enabled: true },
-  { id: 'mp4',  label: 'GIF',  enabled: false },
 ];
 
 const FPS_OPTIONS: number[] = [24, 30, 60];
@@ -95,7 +95,7 @@ export default function ExportModal({
   onClose,
 }: ExportModalProps): React.ReactPortal {
   const [stage, setStage] = useState<Stage>('settings');
-  const [format, setFormat] = useState<ExportFormat>('webm');
+  const [format, setFormat] = useState<ExportFormat>('mp4');
   const [fps, setFps] = useState<number>(60);
   const [size, setSize] = useState<ResolutionName>('1080p');
   const [quality, setQuality] = useState<QualityName>('studio');
@@ -241,7 +241,7 @@ export default function ExportModal({
         {stage === 'progress' && (
           <ExportProgress
             sourceLabel={sourceLabel || 'recording'}
-            destLabel={destPath || `klipe-export.webm`}
+            destLabel={destPath || `klipe-export.${format}`}
             progress={progress}
             progressStage={progressStage}
             elapsed={elapsed}
