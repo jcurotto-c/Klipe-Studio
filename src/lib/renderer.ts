@@ -12,8 +12,14 @@ import {
   type CursorFollowConfig,
   type CursorFollowState,
 } from './cursor-follow-camera';
+import {
+  sampleBlurRegion,
+  strengthToBlockPx,
+  strengthToBlurPx,
+} from './blur-engine';
 import type {
   Background,
+  BlurRegion,
   CameraOptions,
   CameraPosition,
   Crop,
@@ -35,6 +41,19 @@ export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
   padding: 6,
   removeBackground: false,
 };
+
+/**
+ * Padding scale the renderer uses when drawing the source into the canvas.
+ * Overlays (CropOverlay, BlurOverlay) call this so their handles land exactly
+ * where the source pixels do — otherwise a region drawn on the overlay would
+ * be applied to the canvas at a slightly different y/x than the user expected.
+ */
+export function computeFramePaddingScale(
+  frame: Partial<FrameOptions> | null | undefined,
+): number {
+  const fOpts: FrameOptions = { ...DEFAULT_FRAME_OPTIONS, ...(frame ?? {}) };
+  return Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
+}
 
 const CURSOR_BASE_RADIUS = 10;
 const CURSOR_REFERENCE_WIDTH = 1920;
@@ -197,6 +216,8 @@ export interface RenderFrameOptions {
   cursorFollowEnabled?: boolean;
   /** Cursor-follow tuning. */
   cursorFollowConfig?: Partial<CursorFollowConfig>;
+  /** Blur/redaction regions to bake into the frame. */
+  blurRegions?: BlurRegion[] | null;
 }
 
 export interface CursorPlacement {
@@ -317,6 +338,7 @@ export function renderFrame(
     cursorFollowState = null,
     cursorFollowEnabled = false,
     cursorFollowConfig,
+    blurRegions = null,
   } = opts;
   if (cursorOutput) {
     cursorOutput.visible = false;
@@ -492,6 +514,12 @@ export function renderFrame(
   ctx.drawImage(source, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH);
   ctx.restore();
 
+  if (blurRegions && blurRegions.length > 0) {
+    applyBlurRegions(ctx, source, blurRegions, tMs, {
+      sw, sh, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius,
+    });
+  }
+
   if (!cursorEnabled) {
     drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP || 0);
     return;
@@ -534,6 +562,201 @@ export function renderFrame(
   drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP || 0);
 }
 
+
+interface BlurDrawGeometry {
+  /** Full source dimensions in pixels. */
+  sw: number;
+  sh: number;
+  /** Crop offset in source pixels (zero when no crop). */
+  sx0: number;
+  sy0: number;
+  /** Visible (post-crop) source size in pixels. */
+  swEff: number;
+  shEff: number;
+  /** Where the source is drawn on the canvas (already zoomed/positioned). */
+  drawX: number;
+  drawY: number;
+  drawW: number;
+  drawH: number;
+  /** Rounded-corner radius of the video frame, for clipping the blur. */
+  radius: number;
+}
+
+let _blurTmpCanvas: HTMLCanvasElement | null = null;
+function getBlurTmpCanvas(w: number, h: number): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  if (!_blurTmpCanvas) _blurTmpCanvas = document.createElement('canvas');
+  if (_blurTmpCanvas.width !== w) _blurTmpCanvas.width = w;
+  if (_blurTmpCanvas.height !== h) _blurTmpCanvas.height = h;
+  return _blurTmpCanvas;
+}
+
+let _pixelTmpCanvas: HTMLCanvasElement | null = null;
+function getPixelTmpCanvas(w: number, h: number): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  if (!_pixelTmpCanvas) _pixelTmpCanvas = document.createElement('canvas');
+  if (_pixelTmpCanvas.width !== w) _pixelTmpCanvas.width = w;
+  if (_pixelTmpCanvas.height !== h) _pixelTmpCanvas.height = h;
+  return _pixelTmpCanvas;
+}
+
+/**
+ * Multiply the offscreen's alpha by a soft-edged mask so the redaction blends
+ * into the surrounding pixels instead of stamping a hard rectangle. For a
+ * rect we use two `destination-in` passes with linear gradients (vertical
+ * then horizontal) — alpha multiplies under destination-in, so the corners
+ * naturally taper to transparent. For an ellipse we use a single radial
+ * gradient stretched to the region's aspect.
+ */
+function applyFeatherMask(
+  tctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  shape: BlurRegion['shape'],
+): void {
+  tctx.globalCompositeOperation = 'destination-in';
+  if (shape === 'ellipse') {
+    const minDim = Math.min(w, h);
+    tctx.save();
+    tctx.translate(w / 2, h / 2);
+    tctx.scale(w / minDim, h / minDim);
+    const grad = tctx.createRadialGradient(0, 0, 0, 0, 0, minDim / 2);
+    grad.addColorStop(0,    'rgba(0,0,0,1)');
+    grad.addColorStop(0.55, 'rgba(0,0,0,1)');
+    grad.addColorStop(1,    'rgba(0,0,0,0)');
+    tctx.fillStyle = grad;
+    tctx.fillRect(-minDim / 2, -minDim / 2, minDim, minDim);
+    tctx.restore();
+  } else {
+    // Cap the feather so very small regions don't lose their solid center.
+    const featherPx = Math.min(28, Math.min(w, h) * 0.22);
+    const fW = Math.min(0.45, featherPx / w);
+    const fH = Math.min(0.45, featherPx / h);
+    const v = tctx.createLinearGradient(0, 0, 0, h);
+    v.addColorStop(0,      'rgba(0,0,0,0)');
+    v.addColorStop(fH,     'rgba(0,0,0,1)');
+    v.addColorStop(1 - fH, 'rgba(0,0,0,1)');
+    v.addColorStop(1,      'rgba(0,0,0,0)');
+    tctx.fillStyle = v;
+    tctx.fillRect(0, 0, w, h);
+    const hG = tctx.createLinearGradient(0, 0, w, 0);
+    hG.addColorStop(0,      'rgba(0,0,0,0)');
+    hG.addColorStop(fW,     'rgba(0,0,0,1)');
+    hG.addColorStop(1 - fW, 'rgba(0,0,0,1)');
+    hG.addColorStop(1,      'rgba(0,0,0,0)');
+    tctx.fillStyle = hG;
+    tctx.fillRect(0, 0, w, h);
+  }
+  tctx.globalCompositeOperation = 'source-over';
+}
+
+function applyBlurRegions(
+  ctx: CanvasRenderingContext2D,
+  source: RenderableSource,
+  regions: BlurRegion[],
+  tMs: number,
+  geom: BlurDrawGeometry,
+): void {
+  const { sw, sh, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius } = geom;
+  if (swEff <= 0 || shEff <= 0 || drawW <= 0 || drawH <= 0) return;
+
+  for (const region of regions) {
+    const rect = sampleBlurRegion(region, tMs);
+    if (!rect) continue;
+    if (rect.width <= 0 || rect.height <= 0) continue;
+
+    // Region in absolute source pixels.
+    const srcX = rect.x * sw;
+    const srcY = rect.y * sh;
+    const srcW = rect.width * sw;
+    const srcH = rect.height * sh;
+
+    // Clamp the source-side rect to the visible (post-crop) area so we never
+    // sample outside the source or outside the crop.
+    const clipSrcX = Math.max(sx0, srcX);
+    const clipSrcY = Math.max(sy0, srcY);
+    const clipSrcEndX = Math.min(sx0 + swEff, srcX + srcW);
+    const clipSrcEndY = Math.min(sy0 + shEff, srcY + srcH);
+    if (clipSrcEndX <= clipSrcX || clipSrcEndY <= clipSrcY) continue;
+
+    const clipSrcW = clipSrcEndX - clipSrcX;
+    const clipSrcH = clipSrcEndY - clipSrcY;
+
+    // Map the (clamped) region rect onto the canvas, following the same
+    // transform the main video draw used.
+    const localX = clipSrcX - sx0;
+    const localY = clipSrcY - sy0;
+    const cX = drawX + (localX / swEff) * drawW;
+    const cY = drawY + (localY / shEff) * drawH;
+    const cW = (clipSrcW / swEff) * drawW;
+    const cH = (clipSrcH / shEff) * drawH;
+    if (cW <= 0 || cH <= 0) continue;
+
+    // Build the redacted pixels in an offscreen canvas at the region's size,
+    // then mask its alpha with a feathered falloff so the redaction fades
+    // smoothly into the surrounding video instead of stamping a hard edge.
+    const tmpW = Math.max(1, Math.ceil(cW));
+    const tmpH = Math.max(1, Math.ceil(cH));
+    const tmp = getBlurTmpCanvas(tmpW, tmpH);
+    if (!tmp) continue;
+    const tctx = tmp.getContext('2d');
+    if (!tctx) continue;
+    tctx.setTransform(1, 0, 0, 1, 0, 0);
+    tctx.clearRect(0, 0, tmpW, tmpH);
+    tctx.imageSmoothingEnabled = true;
+    tctx.imageSmoothingQuality = 'high';
+
+    if (region.style === 'pixelate') {
+      const blockPx = Math.max(2, strengthToBlockPx(region.strength));
+      const pxW = Math.max(1, Math.floor(tmpW / blockPx));
+      const pxH = Math.max(1, Math.floor(tmpH / blockPx));
+      const tiny = getPixelTmpCanvas(pxW, pxH);
+      if (tiny) {
+        const ttctx = tiny.getContext('2d');
+        if (ttctx) {
+          ttctx.imageSmoothingEnabled = false;
+          ttctx.clearRect(0, 0, pxW, pxH);
+          ttctx.drawImage(source, clipSrcX, clipSrcY, clipSrcW, clipSrcH, 0, 0, pxW, pxH);
+          tctx.imageSmoothingEnabled = false;
+          tctx.drawImage(tiny, 0, 0, pxW, pxH, 0, 0, tmpW, tmpH);
+        }
+      }
+    } else {
+      const blurPx = strengthToBlurPx(region.strength);
+      // CSS-filter blur darkens edges of a clipped draw because the kernel
+      // reads transparent pixels outside the rect. Sampling a slightly
+      // padded source rect covers the kernel's reach so the blurred result
+      // stays uniform across the region (no dark vignette around the edge).
+      const padPx = Math.max(0, Math.ceil(blurPx * 2));
+      const padSrcX = Math.max(sx0, clipSrcX - padPx * (clipSrcW / Math.max(1, cW)));
+      const padSrcY = Math.max(sy0, clipSrcY - padPx * (clipSrcH / Math.max(1, cH)));
+      const padSrcEndX = Math.min(sx0 + swEff, clipSrcEndX + padPx * (clipSrcW / Math.max(1, cW)));
+      const padSrcEndY = Math.min(sy0 + shEff, clipSrcEndY + padPx * (clipSrcH / Math.max(1, cH)));
+      const padSrcW = padSrcEndX - padSrcX;
+      const padSrcH = padSrcEndY - padSrcY;
+      const dstOffsetX = (clipSrcX - padSrcX) / clipSrcW * cW;
+      const dstOffsetY = (clipSrcY - padSrcY) / clipSrcH * cH;
+      const dstW = padSrcW / clipSrcW * cW;
+      const dstH = padSrcH / clipSrcH * cH;
+      tctx.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
+      tctx.drawImage(source, padSrcX, padSrcY, padSrcW, padSrcH, -dstOffsetX, -dstOffsetY, dstW, dstH);
+      tctx.filter = 'none';
+    }
+
+    applyFeatherMask(tctx, tmpW, tmpH, region.shape);
+
+    // Compose onto the main canvas, clipped to the rounded video frame so
+    // the feathered edge can't bleed onto the background.
+    ctx.save();
+    if (radius > 0) {
+      ctx.beginPath();
+      ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+      ctx.clip();
+    }
+    ctx.drawImage(tmp, cX, cY, cW, cH);
+    ctx.restore();
+  }
+}
 
 function staticCursorSample(
   mouse: MouseTrack | null | undefined,

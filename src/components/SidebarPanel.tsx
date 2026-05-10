@@ -8,6 +8,7 @@ import type {
   AudioFxOptions,
   Background,
   BackgroundMusic,
+  BlurRegion,
   CameraOptions,
   Crop,
   CursorOptions,
@@ -16,7 +17,7 @@ import type {
 } from '../types';
 
 type CategoryId =
-  | 'background'
+  | 'scene'
   | 'cursor'
   | 'camera'
   | 'captions'
@@ -30,7 +31,7 @@ interface Category {
 }
 
 const CATEGORIES: Category[] = [
-  { id: 'background',  label: 'Background' },
+  { id: 'scene',       label: 'Scene' },
   { id: 'cursor',      label: 'Cursor' },
   { id: 'camera',      label: 'Camera' },
   { id: 'captions',    label: 'Captions' },
@@ -58,6 +59,13 @@ interface SidebarPanelProps {
   backgroundMusic: BackgroundMusic | null;
   onBackgroundMusicChange: (next: BackgroundMusic | null) => void;
   inputEvents: ReadonlyArray<KlipeMouseEvent>;
+  blurRegions: BlurRegion[];
+  blurMode: boolean;
+  onBlurModeChange: (next: boolean) => void;
+  selectedBlurId: string | null;
+  onSelectBlur: (id: string | null) => void;
+  onAddBlurAtPlayhead: () => void;
+  onRemoveBlur: (id: string) => void;
 }
 
 export default function SidebarPanel({
@@ -77,8 +85,15 @@ export default function SidebarPanel({
   backgroundMusic,
   onBackgroundMusicChange,
   inputEvents,
+  blurRegions,
+  blurMode,
+  onBlurModeChange,
+  selectedBlurId,
+  onSelectBlur,
+  onAddBlurAtPlayhead,
+  onRemoveBlur,
 }: SidebarPanelProps): JSX.Element {
-  const [activeId, setActiveId] = useState<CategoryId>('background');
+  const [activeId, setActiveId] = useState<CategoryId>('scene');
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef<Partial<Record<CategoryId, HTMLButtonElement | null>>>({});
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -121,7 +136,7 @@ export default function SidebarPanel({
 
   const renderPanel = (): JSX.Element | null => {
     switch (activeId) {
-      case 'background':
+      case 'scene':
         return (
           <BackgroundPanel
             value={background}
@@ -130,6 +145,13 @@ export default function SidebarPanel({
             onFrameChange={onFrameChange}
             crop={crop}
             onCropChange={onCropChange}
+            blurRegions={blurRegions}
+            blurMode={blurMode}
+            onBlurModeChange={onBlurModeChange}
+            selectedBlurId={selectedBlurId}
+            onSelectBlur={onSelectBlur}
+            onAddBlurAtPlayhead={onAddBlurAtPlayhead}
+            onRemoveBlur={onRemoveBlur}
           />
         );
       case 'cursor':

@@ -2095,3 +2095,189 @@ select {
   opacity: 0.5;
   pointer-events: none;
 }
+
+/* ── Blur / Redaction ─────────────────────────────────────────── */
+
+.blur-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.blur-region {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid rgba(124, 92, 255, 0.95);
+  background: rgba(124, 92, 255, 0.06);
+  cursor: move;
+  touch-action: none;
+}
+.blur-region.shape-ellipse {
+  border-radius: 9999px;
+}
+.blur-region .blur-region-fill {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(124, 92, 255, 0.10) 0,
+    rgba(124, 92, 255, 0.10) 6px,
+    rgba(124, 92, 255, 0.18) 6px,
+    rgba(124, 92, 255, 0.18) 12px
+  );
+  pointer-events: none;
+}
+.blur-region.shape-ellipse .blur-region-fill {
+  border-radius: 9999px;
+}
+.blur-region.is-selected {
+  border-color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.6);
+}
+.blur-region.drawing {
+  border-style: dashed;
+  cursor: crosshair;
+}
+
+.blur-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-top: -6px;
+  background: white;
+  border: 1.5px solid #7c5cff;
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  touch-action: none;
+}
+.blur-handle-n, .blur-handle-s { width: 28px; }
+.blur-handle-e, .blur-handle-w { height: 28px; }
+.blur-handle-n { margin-left: -14px; }
+.blur-handle-s { margin-left: -14px; }
+.blur-handle-e { margin-top: -14px; }
+.blur-handle-w { margin-top: -14px; }
+
+/* Panel: Blur region list */
+.blur-region-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.blur-region-empty {
+  font-size: 11.5px;
+  color: var(--text-2);
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  text-align: center;
+  line-height: 1.4;
+}
+.blur-region-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 100ms, background-color 100ms;
+}
+.blur-region-row:hover {
+  background: var(--bg-3);
+}
+.blur-region-row.is-selected {
+  border-color: rgba(124, 92, 255, 0.7);
+  background: rgba(124, 92, 255, 0.08);
+}
+.blur-region-dot {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  background: linear-gradient(135deg, #7c5cff, #5cc4ff);
+  border-radius: 3px;
+}
+.blur-region-dot.shape-ellipse {
+  border-radius: 50%;
+}
+.blur-region-name {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-0);
+  font-weight: 500;
+}
+.blur-region-badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 1px 5px;
+  background: rgba(124, 92, 255, 0.18);
+  color: #b9a7ff;
+  border-radius: 999px;
+}
+.blur-region-meta {
+  flex: 1;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.blur-region-remove {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.blur-region-remove:hover {
+  background: rgba(220, 60, 60, 0.18);
+  color: #ff8b8b;
+}
+
+/* Inspector keyframe list */
+.blur-keyframe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}
+.blur-keyframe-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.blur-keyframe-row.is-active {
+  border-color: rgba(124, 92, 255, 0.7);
+  background: rgba(124, 92, 255, 0.08);
+}
+.blur-keyframe-time {
+  flex: 0 0 50px;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.blur-keyframe-pos {
+  flex: 1;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}

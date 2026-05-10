@@ -13,6 +13,7 @@ import type {
   AudioFxOptions,
   Background,
   BackgroundMusic,
+  BlurRegion,
   Crop,
   CursorOptions,
   Display,
@@ -71,6 +72,7 @@ interface ExportModalProps {
   frame?: FrameOptions | null;
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
+  blurRegions?: BlurRegion[] | null;
   sourceLabel?: string;
   onClose: () => void;
 }
@@ -88,6 +90,7 @@ export default function ExportModal({
   frame,
   audioFx,
   backgroundMusic,
+  blurRegions,
   sourceLabel,
   onClose,
 }: ExportModalProps): React.ReactPortal {
@@ -167,6 +170,7 @@ export default function ExportModal({
         frame,
         audioFx,
         backgroundMusic,
+        blurRegions,
         signal: controller.signal,
         onProgress: (s, v) => {
           setProgressStage(s);
@@ -198,7 +202,8 @@ export default function ExportModal({
     }
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
-    fragments, size, fps, format, quality, cursorOptions, frame, audioFx, backgroundMusic, onClose,
+    fragments, size, fps, format, quality, cursorOptions, frame, audioFx, backgroundMusic,
+    blurRegions, onClose,
   ]);
 
   const handleStop = useCallback(() => {

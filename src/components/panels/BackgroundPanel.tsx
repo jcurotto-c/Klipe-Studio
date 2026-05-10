@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react';
 import { WALLPAPER_PRESETS, IMAGE_PRESETS, DEFAULT_FRAME_OPTIONS } from '../../lib/renderer';
-import type { Background, Crop, FrameOptions } from '../../types';
+import type { Background, BlurRegion, Crop, FrameOptions } from '../../types';
 
 type BgTab = 'image' | 'video' | 'color' | 'gradient';
 
@@ -61,6 +61,13 @@ interface BackgroundPanelProps {
   onFrameChange: (next: FrameOptions) => void;
   crop: Crop | null;
   onCropChange: (next: Crop | null) => void;
+  blurRegions: BlurRegion[];
+  blurMode: boolean;
+  onBlurModeChange: (next: boolean) => void;
+  selectedBlurId: string | null;
+  onSelectBlur: (id: string | null) => void;
+  onAddBlurAtPlayhead: () => void;
+  onRemoveBlur: (id: string) => void;
 }
 
 export default function BackgroundPanel({
@@ -70,6 +77,13 @@ export default function BackgroundPanel({
   onFrameChange,
   crop,
   onCropChange,
+  blurRegions,
+  blurMode,
+  onBlurModeChange,
+  selectedBlurId,
+  onSelectBlur,
+  onAddBlurAtPlayhead,
+  onRemoveBlur,
 }: BackgroundPanelProps): JSX.Element {
   const [tab, setTab] = useState<BgTab>(() => tabFromValue(value));
   const [customImages, setCustomImages] = useState<CustomImagePreset[]>(() => loadCustomImages());
@@ -280,6 +294,66 @@ export default function BackgroundPanel({
           step={1}
           onChange={(v) => updateCrop({ right: v })}
         />
+      </SectionCard>
+
+      {/* BLUR */}
+      <SectionCard
+        title="Blur & Redaction"
+        action={
+          <button className="link-action" onClick={onAddBlurAtPlayhead}>
+            + Add region
+          </button>
+        }
+      >
+        <ToggleRow
+          label="Blur mode"
+          checked={blurMode}
+          onChange={onBlurModeChange}
+        />
+        <div className="blur-region-list">
+          {blurRegions.length === 0 ? (
+            <div className="blur-region-empty">
+              {blurMode
+                ? 'Drag on the preview to draw a region, or click "+ Add region".'
+                : 'Enable Blur mode, then draw a region on the preview.'}
+            </div>
+          ) : (
+            blurRegions.map((r, i) => {
+              const isSel = r.id === selectedBlurId;
+              const startSec = (r.tStart / 1000).toFixed(1);
+              const endSec = (r.tEnd / 1000).toFixed(1);
+              const animated = r.keyframes.length > 1;
+              return (
+                <div
+                  key={r.id}
+                  className={`blur-region-row ${isSel ? 'is-selected' : ''}`}
+                  onClick={() => onSelectBlur(isSel ? null : r.id)}
+                >
+                  <span className={`blur-region-dot shape-${r.shape}`} />
+                  <span className="blur-region-name">
+                    Region {i + 1}
+                    {animated && <span className="blur-region-badge">anim</span>}
+                  </span>
+                  <span className="blur-region-meta">
+                    {r.style} · {startSec}–{endSec}s
+                  </span>
+                  <button
+                    type="button"
+                    className="blur-region-remove"
+                    title="Remove region"
+                    aria-label={`Remove region ${i + 1}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveBlur(r.id);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
       </SectionCard>
     </div>
   );

@@ -5,6 +5,7 @@ import Timeline from './Timeline';
 import ExportButton from './ExportButton';
 import ExportModal from './ExportModal';
 import ZoomInspector from './ZoomInspector';
+import BlurInspector from './BlurInspector';
 import SidebarPanel from './SidebarPanel';
 import {
   generateZoomSegments,
@@ -14,6 +15,15 @@ import {
   removeSegment,
   DEFAULT_ZOOM,
 } from '../lib/zoom-engine';
+import {
+  addBlurRegion,
+  addKeyframeAt,
+  commitKeyframeAtTime,
+  createBlurRegion,
+  removeBlurRegion,
+  removeKeyframe,
+  updateBlurRegion,
+} from '../lib/blur-engine';
 import { isFullCrop } from '../lib/layout';
 import {
   createFragment,
@@ -33,6 +43,8 @@ import type {
   AudioFxOptions,
   Background,
   BackgroundMusic,
+  BlurRegion,
+  BlurSampleRect,
   CameraOptions,
   Crop,
   CursorOptions,
@@ -114,6 +126,7 @@ interface EditorViewProps {
 interface HistorySnapshot {
   fragments: Fragment[];
   segments: ZoomSegment[];
+  blurRegions: BlurRegion[];
 }
 
 const HISTORY_LIMIT = 100;
@@ -163,6 +176,9 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   const aspectMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [blurRegions, setBlurRegions] = useState<BlurRegion[]>([]);
+  const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
+  const [blurMode, setBlurMode] = useState<boolean>(false);
 
   const exportCrop: Crop | null = isFullCrop(crop) ? null : crop;
 
@@ -223,6 +239,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   fragmentsRef.current = fragments;
   const segmentsRef = useRef<ZoomSegment[]>(segments);
   segmentsRef.current = segments;
+  const blurRegionsRef = useRef<BlurRegion[]>(blurRegions);
+  blurRegionsRef.current = blurRegions;
   const currentTimeRef = useRef(currentTime);
   currentTimeRef.current = currentTime;
   const playingRef = useRef(playing);
@@ -241,40 +259,48 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     setCanRedo(h.future.length > 0);
   }, []);
 
+  const snapshot = useCallback((): HistorySnapshot => ({
+    fragments: fragmentsRef.current,
+    segments: segmentsRef.current,
+    blurRegions: blurRegionsRef.current,
+  }), []);
+
   const pushHistory = useCallback((): void => {
     const h = historyRef.current;
-    h.past.push({ fragments: fragmentsRef.current, segments: segmentsRef.current });
+    h.past.push(snapshot());
     if (h.past.length > HISTORY_LIMIT) h.past.shift();
     h.future = [];
     syncHistoryFlags();
-  }, [syncHistoryFlags]);
+  }, [snapshot, syncHistoryFlags]);
 
   const applySnapshot = useCallback((snap: HistorySnapshot): void => {
     fragmentsRef.current = snap.fragments;
     segmentsRef.current = snap.segments;
+    blurRegionsRef.current = snap.blurRegions;
     setFragments(snap.fragments);
     setSegments(snap.segments);
+    setBlurRegions(snap.blurRegions);
   }, []);
 
   const undo = useCallback((): void => {
     const h = historyRef.current;
     if (!h.past.length) return;
     const prev = h.past.pop()!;
-    h.future.push({ fragments: fragmentsRef.current, segments: segmentsRef.current });
+    h.future.push(snapshot());
     if (h.future.length > HISTORY_LIMIT) h.future.shift();
     applySnapshot(prev);
     syncHistoryFlags();
-  }, [applySnapshot, syncHistoryFlags]);
+  }, [applySnapshot, snapshot, syncHistoryFlags]);
 
   const redo = useCallback((): void => {
     const h = historyRef.current;
     if (!h.future.length) return;
     const next = h.future.pop()!;
-    h.past.push({ fragments: fragmentsRef.current, segments: segmentsRef.current });
+    h.past.push(snapshot());
     if (h.past.length > HISTORY_LIMIT) h.past.shift();
     applySnapshot(next);
     syncHistoryFlags();
-  }, [applySnapshot, syncHistoryFlags]);
+  }, [applySnapshot, snapshot, syncHistoryFlags]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -425,7 +451,15 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
 
   const handleSelectFragment = useCallback((id: string | null) => {
     setSelectedFragmentId(id);
-    if (id) setSelectedId(null);
+    if (id) {
+      setSelectedId(null);
+      setSelectedBlurId(null);
+    }
+  }, []);
+
+  const handleSelectZoom = useCallback((id: string | null) => {
+    setSelectedId(id);
+    if (id) setSelectedBlurId(null);
   }, []);
 
   const handleFragmentEdge = useCallback(
@@ -496,6 +530,96 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     setAudioFxOptions(next);
     try { localStorage.setItem(AUDIO_FX_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   }, []);
+
+  // Map current output time → source time once per render so the overlay,
+  // inspector, and any blur action invoked from the panel all agree.
+  const currentSrcMs = useMemo<number>(() => {
+    const m = outputToSource(fragments, currentTime);
+    return (m ? m.srcTime : 0) * 1000;
+  }, [fragments, currentTime]);
+
+  const sourceDurationMs = useMemo<number>(
+    () => Math.max(0, sourceDuration * 1000),
+    [sourceDuration],
+  );
+
+  const selectedBlur = useMemo<BlurRegion | null>(
+    () => blurRegions.find((r) => r.id === selectedBlurId) ?? null,
+    [blurRegions, selectedBlurId],
+  );
+
+  const handleSelectBlur = useCallback((id: string | null) => {
+    setSelectedBlurId(id);
+    if (id) setSelectedId(null);
+  }, []);
+
+  const handleBlurModeChange = useCallback((next: boolean) => {
+    setBlurMode(next);
+    if (!next) setSelectedBlurId(null);
+  }, []);
+
+  const handleAddBlurAtPlayhead = useCallback(() => {
+    // Default region: 30%×20% centered at playhead, 4-second window clamped
+    // to the source. Drops the user straight into the new region with the
+    // overlay visible so they can immediately drag it where it belongs.
+    const tStart = Math.max(0, currentSrcMs - 2000);
+    const tEnd = Math.min(sourceDurationMs > 0 ? sourceDurationMs : currentSrcMs + 4000, currentSrcMs + 2000);
+    const region = createBlurRegion({
+      tStart,
+      tEnd,
+      initial: { tMs: currentSrcMs, x: 0.35, y: 0.4, width: 0.3, height: 0.2 },
+    });
+    pushHistory();
+    setBlurRegions((prev) => addBlurRegion(prev, region));
+    setSelectedBlurId(region.id);
+    setBlurMode(true);
+    setSelectedId(null);
+  }, [currentSrcMs, sourceDurationMs, pushHistory]);
+
+  const handleCreateBlur = useCallback((rect: BlurSampleRect) => {
+    const tStart = Math.max(0, currentSrcMs - 2000);
+    const tEnd = Math.min(sourceDurationMs > 0 ? sourceDurationMs : currentSrcMs + 4000, currentSrcMs + 2000);
+    const region = createBlurRegion({
+      tStart,
+      tEnd,
+      initial: { tMs: currentSrcMs, ...rect },
+    });
+    pushHistory();
+    setBlurRegions((prev) => addBlurRegion(prev, region));
+    setSelectedBlurId(region.id);
+    setSelectedId(null);
+  }, [currentSrcMs, sourceDurationMs, pushHistory]);
+
+  const handleDragBlurRect = useCallback((id: string, rect: BlurSampleRect) => {
+    setBlurRegions((prev) => prev.map((r) => (r.id === id ? commitKeyframeAtTime(r, currentSrcMs, rect) : r)));
+  }, [currentSrcMs]);
+
+  const handleCommitBlurRect = useCallback((_id: string) => {
+    pushHistory();
+  }, [pushHistory]);
+
+  const handleUpdateBlur = useCallback((patch: Partial<BlurRegion>) => {
+    if (!selectedBlurId) return;
+    setBlurRegions((prev) => updateBlurRegion(prev, selectedBlurId, patch));
+  }, [selectedBlurId]);
+
+  const handleRemoveBlur = useCallback((id: string) => {
+    pushHistory();
+    setBlurRegions((prev) => removeBlurRegion(prev, id));
+    setSelectedBlurId((cur) => (cur === id ? null : cur));
+  }, [pushHistory]);
+
+  const handleAddBlurKeyframe = useCallback(() => {
+    if (!selectedBlurId) return;
+    pushHistory();
+    setBlurRegions((prev) => prev.map((r) => (r.id === selectedBlurId ? addKeyframeAt(r, currentSrcMs) : r)));
+  }, [selectedBlurId, currentSrcMs, pushHistory]);
+
+  const handleRemoveBlurKeyframe = useCallback((tMs: number) => {
+    if (!selectedBlurId) return;
+    pushHistory();
+    setBlurRegions((prev) => prev.map((r) => (r.id === selectedBlurId ? removeKeyframe(r, tMs) : r)));
+  }, [selectedBlurId, pushHistory]);
 
   const handleBackgroundMusicChange = useCallback((next: BackgroundMusic | null) => {
     setBackgroundMusic((prev) => {
@@ -658,6 +782,13 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           backgroundMusic={backgroundMusic}
           onBackgroundMusicChange={handleBackgroundMusicChange}
           inputEvents={recording.mouse.events}
+          blurRegions={blurRegions}
+          blurMode={blurMode}
+          onBlurModeChange={handleBlurModeChange}
+          selectedBlurId={selectedBlurId}
+          onSelectBlur={handleSelectBlur}
+          onAddBlurAtPlayhead={handleAddBlurAtPlayhead}
+          onRemoveBlur={handleRemoveBlur}
         />
       </div>
       <div className="editor-right">
@@ -688,6 +819,14 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               cursorOptions={cursorOptions}
               frameOptions={frameOptions}
               aspectRatio={aspectOption.value}
+              blurRegions={blurRegions}
+              blurMode={blurMode}
+              selectedBlurId={selectedBlurId}
+              currentSrcMs={currentSrcMs}
+              onSelectBlur={handleSelectBlur}
+              onDragBlurRect={handleDragBlurRect}
+              onCommitBlurRect={handleCommitBlurRect}
+              onCreateBlur={handleCreateBlur}
             />
             <video
               ref={cameraVideoRef}
@@ -708,6 +847,21 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               onApplyToAll={handleApplyToAll}
               onSetDefault={handleSetDefault}
               onClose={() => setSelectedId(null)}
+            />
+          </div>
+        )}
+
+        {!selected && selectedBlur && (
+          <div className="editor-side-right">
+            <BlurInspector
+              region={selectedBlur}
+              currentSrcMs={currentSrcMs}
+              sourceDurationMs={sourceDurationMs}
+              onChange={handleUpdateBlur}
+              onRemove={() => handleRemoveBlur(selectedBlur.id)}
+              onAddKeyframe={handleAddBlurKeyframe}
+              onRemoveKeyframe={handleRemoveBlurKeyframe}
+              onClose={() => setSelectedBlurId(null)}
             />
           </div>
         )}
@@ -867,7 +1021,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             clicks={clicks}
             segments={segments}
             selectedId={selectedId}
-            onSelectSegment={setSelectedId}
+            onSelectSegment={handleSelectZoom}
             onUpdateSegment={handleUpdateSegment}
             fragments={fragments}
             sourceDuration={sourceDuration}
@@ -906,6 +1060,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           frame={frameOptions}
           audioFx={audioFxOptions}
           backgroundMusic={backgroundMusic}
+          blurRegions={blurRegions}
           sourceLabel={recording.name || 'recording'}
           onClose={() => setExportOpen(false)}
         />

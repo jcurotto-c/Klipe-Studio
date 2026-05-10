@@ -4,13 +4,16 @@ import {
   useRef,
   type RefObject,
 } from 'react';
-import { renderFrame, type CursorPlacement } from '../lib/renderer';
+import { renderFrame, computeFramePaddingScale, type CursorPlacement } from '../lib/renderer';
 import { createCursorState, resetCursorState } from '../lib/cursor-engine';
 import { createCursorFollowState, resetCursorFollowState } from '../lib/cursor-follow-camera';
 import { PixiCursorOverlay } from '../lib/cursor-overlay';
 import CropOverlay from './CropOverlay';
+import BlurOverlay from './BlurOverlay';
 import type {
   Background,
+  BlurRegion,
+  BlurSampleRect,
   CameraOptions,
   Crop,
   CursorOptions,
@@ -37,6 +40,17 @@ interface VideoCanvasProps {
   frameOptions?: FrameOptions | null;
   /** Output aspect ratio (w/h). When null/undefined, falls back to source display ratio. */
   aspectRatio?: number | null;
+  /** Blur regions to bake into the preview AND the export. */
+  blurRegions?: BlurRegion[];
+  /** When true, the blur overlay is interactive (draw/move/resize). */
+  blurMode?: boolean;
+  selectedBlurId?: string | null;
+  /** Current playhead position in source-time milliseconds, for overlay sampling. */
+  currentSrcMs?: number;
+  onSelectBlur?: (id: string | null) => void;
+  onDragBlurRect?: (id: string, rect: BlurSampleRect) => void;
+  onCommitBlurRect?: (id: string) => void;
+  onCreateBlur?: (rect: BlurSampleRect) => void;
 }
 
 export default function VideoCanvas({
@@ -53,6 +67,14 @@ export default function VideoCanvas({
   cursorOptions = null,
   frameOptions = null,
   aspectRatio = null,
+  blurRegions,
+  blurMode = false,
+  selectedBlurId = null,
+  currentSrcMs = 0,
+  onSelectBlur,
+  onDragBlurRect,
+  onCommitBlurRect,
+  onCreateBlur,
 }: VideoCanvasProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -66,10 +88,10 @@ export default function VideoCanvas({
     shape: 'arrow', contentTargetHeight: 0,
   });
   const propsRef = useRef({
-    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions, blurRegions,
   });
   propsRef.current = {
-    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions, blurRegions,
   };
 
   useEffect(() => {
@@ -186,6 +208,7 @@ export default function VideoCanvas({
         cursorOutput: cursorOutputRef.current,
         cursorFollowState: followStateRef.current,
         cursorFollowEnabled: true,
+        blurRegions: p.blurRegions,
       });
       if (overlayActive) {
         overlayRef.current!.render(cursorOutputRef.current);
@@ -202,6 +225,10 @@ export default function VideoCanvas({
     aspectRatio && isFinite(aspectRatio) && aspectRatio > 0
       ? `${aspectRatio}`
       : `${sourceW} / ${sourceH}`;
+  // Match the renderer's effective padding so overlay handles land exactly
+  // where the source pixels do (otherwise a region drawn on the overlay
+  // applies to the canvas at a slightly offset y/x).
+  const overlayPaddingScale = computeFramePaddingScale(frameOptions);
 
   return (
     <div
@@ -228,6 +255,26 @@ export default function VideoCanvas({
           sourceHeight={sourceH}
           crop={crop}
           onChange={onCropChange}
+          paddingScale={overlayPaddingScale}
+        />
+      )}
+      {blurMode && blurRegions && onSelectBlur && onDragBlurRect && onCreateBlur && (
+        <BlurOverlay
+          canvasWidth={sourceW}
+          canvasHeight={sourceH}
+          sourceWidth={sourceW}
+          sourceHeight={sourceH}
+          aspectRatio={aspectRatio}
+          crop={crop}
+          paddingScale={overlayPaddingScale}
+          regions={blurRegions}
+          currentSrcMs={currentSrcMs}
+          selectedId={selectedBlurId}
+          enabled={blurMode}
+          onSelect={onSelectBlur}
+          onDragRect={onDragBlurRect}
+          onCommitRect={onCommitBlurRect}
+          onCreate={onCreateBlur}
         />
       )}
     </div>

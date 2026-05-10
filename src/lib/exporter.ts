@@ -26,6 +26,7 @@ import type {
   AudioFxOptions,
   Background,
   BackgroundMusic,
+  BlurRegion,
   Crop,
   CursorOptions,
   Display,
@@ -128,6 +129,7 @@ export interface ExportVideoOptions {
   frame?: Partial<FrameOptions> | null;
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
+  blurRegions?: BlurRegion[] | null;
   signal?: AbortSignal;
   onProgress?: ExportProgressCallback;
   onLog?: ExportLogCallback;
@@ -171,6 +173,7 @@ export async function exportVideo({
   frame = null,
   audioFx = null,
   backgroundMusic = null,
+  blurRegions = null,
   signal,
   onProgress,
   onLog,
@@ -294,6 +297,7 @@ export async function exportVideo({
       frame,
       cursorFollowState,
       cursorFollowEnabled: true,
+      blurRegions,
     });
     if (onProgress) {
       const localOffset = Math.max(0, Math.min(activeFragmentEnd - activeFragmentStart, src - activeFragmentStart));
@@ -365,6 +369,7 @@ export async function exportVideo({
       background,
       crop,
       frame,
+      blurRegions,
     });
 
     if (audioCtx && audioCtx.state === 'suspended') {

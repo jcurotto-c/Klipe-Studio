@@ -186,6 +186,46 @@ export interface BackgroundMusic {
   sourceStartMs: number;
 }
 
+export type BlurStyle = 'gaussian' | 'pixelate';
+export type BlurShape = 'rect' | 'ellipse';
+
+/**
+ * One blur keyframe. Position/size are normalized to the FULL source frame
+ * ([0,1] of source width/height), so regions survive crop and aspect-ratio
+ * changes — the renderer maps them through the active crop at draw time.
+ * `tMs` is source time (same convention as ZoomSegment.tStart/tEnd).
+ */
+export interface BlurKeyframe {
+  tMs: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BlurRegion {
+  id: string;
+  /** Active time window in source time (ms). */
+  tStart: number;
+  tEnd: number;
+  style: BlurStyle;
+  shape: BlurShape;
+  /** 0..100 — controls Gaussian blur radius or pixelation block size. */
+  strength: number;
+  /**
+   * Position/size over time. Always non-empty. One keyframe = static; two or
+   * more = linear interpolation by source time, clamped at the endpoints.
+   */
+  keyframes: BlurKeyframe[];
+}
+
+export interface BlurSampleRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type CursorStyle = 'arrow' | 'arrow-outline' | 'arrow-mini' | 'dot' | 'figma';
 
 export interface CursorOptions {
