@@ -43,7 +43,8 @@ declare global {
     moveToDisplay: (displayId: string | number | null) => Promise<{ ok: boolean }>;
     emit: (payload: HudEvent) => void;
     setIgnoreMouse: (ignore: boolean) => void;
-    setSize: (width: number, height: number) => void;
+    setSize: (width: number, height: number, dy?: number) => void;
+    dragBy: (dx: number, dy: number) => void;
     pushState: (payload: HudState) => void;
     onState: (cb: (state: HudState) => void) => () => void;
     onEvent: (cb: (evt: HudEvent) => void) => () => void;

@@ -89,6 +89,11 @@ export default function FloatingHUD(): JSX.Element {
   const [countdown, setCountdown] = useState<number | null>(null);
   const countdownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Extra padding above the bar inside the shell. Grows when a popover
+  // opens above (bar near screen bottom) so the bar stays at its on-screen
+  // position while the window expands upward to make room.
+  const [shellTopOffset, setShellTopOffset] = useState(0);
+
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
 
@@ -157,19 +162,42 @@ export default function FloatingHUD(): JSX.Element {
       const bar = document.querySelector('.hud-bar');
       const popovers = Array.from(document.querySelectorAll<HTMLElement>('.hud-popover'));
       const barRect = bar?.getBoundingClientRect();
-      let bottom = (barRect?.bottom || 0) + 8;
-      let rightMost = (barRect?.right || 0) + 8;
-      let leftMost = (barRect?.left || 0) - 8;
-      const barBottom = (barRect?.bottom || 0);
+      if (!barRect) return;
+      // Buffer space so the bar's drop shadow can fade out without being
+      // clipped by the Electron window edge.
+      const SHADOW_BOTTOM = 60;
+      const SHADOW_SIDE = 36;
+      let bottom = barRect.bottom + SHADOW_BOTTOM;
+      let rightMost = barRect.right + SHADOW_SIDE;
+      let leftMost = barRect.left - SHADOW_SIDE;
+      // Extra room needed above the bar (in window coords) for popovers
+      // that opened upward because the bar is near the screen bottom.
+      let extraTopNeeded = 0;
       for (const m of popovers) {
         const r = m.getBoundingClientRect();
-        bottom = Math.max(bottom, r.bottom + 8, barBottom + r.height + 16);
+        if (m.dataset.placement === 'above') {
+          // popover.top in current window coords would be: barRect.top - gap - r.height
+          // For the popover to fit inside the window with an 8px buffer at the
+          // top, we need barRect.top >= r.height + gap + 8.
+          const need = r.height + 16 - barRect.top;
+          if (need > extraTopNeeded) extraTopNeeded = need;
+        } else {
+          bottom = Math.max(bottom, r.bottom + 8, barRect.bottom + r.height + 16);
+        }
         rightMost = Math.max(rightMost, r.right + 8);
         leftMost = Math.min(leftMost, r.left - 8);
       }
-      const width = Math.ceil(Math.max(680, rightMost - Math.min(0, leftMost)));
-      const height = Math.ceil(Math.max(88, bottom));
-      window.klipeHud!.setSize(width, height);
+      // Sticky offset: while a popover is open, never shrink (avoids the bar
+      // jumping mid-interaction). Reset to 0 when no popover is open.
+      const anyPopoverOpen = popovers.length > 0;
+      const desiredTop = anyPopoverOpen
+        ? Math.max(shellTopOffset, extraTopNeeded)
+        : 0;
+      const dy = -(desiredTop - shellTopOffset);
+      if (desiredTop !== shellTopOffset) setShellTopOffset(desiredTop);
+      const width = Math.ceil(Math.max(720, rightMost - Math.min(0, leftMost)));
+      const height = Math.ceil(Math.max(140, bottom));
+      window.klipeHud!.setSize(width, height, dy);
     };
     const id = requestAnimationFrame(measure);
     return () => cancelAnimationFrame(id);
@@ -184,6 +212,7 @@ export default function FloatingHUD(): JSX.Element {
     autoZoom,
     recording,
     countdown,
+    shellTopOffset,
   ]);
 
   useEffect(() => {
@@ -330,50 +359,81 @@ export default function FloatingHUD(): JSX.Element {
     { id: 'off', label: "Don’t record camera", selected: !camEnabled },
   ];
 
-  if (recording) {
-    return (
-      <div className="hud-shell" data-recording="1">
-        <div className="hud-bar hud-bar-compact">
-          <div className="hud-drag" title="Drag to move"><span className="hud-drag-grip" /></div>
-          <span className="hud-rec-indicator" aria-hidden />
-          <span className="hud-rec-timer">{formatTime(elapsed)}</span>
-          <button
-            className="hud-stop"
-            onClick={() => {
-              emit({ type: 'stop-recording' });
-              setRecording(false);
-            }}
-            title="Stop recording"
-          >
-            <span className="hud-stop-square" />
-            <span>Stop</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const isCounting = countdown != null;
+  const isLive = recording || isCounting;
+
+  const onBarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // Don't start drag when the user clicked an interactive element.
+    if (target.closest('button, [role="button"], input, a, .hud-popover')) return;
+    if (!window.klipeHud?.dragBy) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    let lastX = e.screenX;
+    let lastY = e.screenY;
+    const onMove = (ev: PointerEvent): void => {
+      const dx = ev.screenX - lastX;
+      const dy = ev.screenY - lastY;
+      if (dx === 0 && dy === 0) return;
+      lastX = ev.screenX;
+      lastY = ev.screenY;
+      window.klipeHud?.dragBy(dx, dy);
+    };
+    const onUp = (ev: PointerEvent): void => {
+      try { el.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+    };
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+  }, []);
 
   return (
-    <div className="hud-shell" data-recording={recording ? '1' : '0'}>
-      <div className="hud-bar">
-        <button
-          className="hud-window-btn hud-window-close"
-          onClick={() => window.klipeHud?.quitApp?.()}
-          title="Close"
-        >
-          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
-        <button
-          className="hud-window-btn hud-window-min"
-          onClick={() => window.klipeHud?.minimize?.()}
-          title="Minimize"
-        >
-          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-            <path d="M5 12h14" />
-          </svg>
-        </button>
+    <div
+      className="hud-shell"
+      data-recording={recording ? '1' : '0'}
+      style={{ paddingTop: 16 + shellTopOffset }}
+    >
+      <div
+        className={`hud-bar ${isLive ? 'is-live' : ''}`}
+        onPointerDown={onBarPointerDown}
+      >
+        <div className="hud-traffic" aria-hidden={false}>
+          <button
+            className="hud-traffic-dot is-close"
+            onClick={() => window.klipeHud?.quitApp?.()}
+            title="Close"
+            aria-label="Close"
+          >
+            <svg viewBox="0 0 12 12" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+              <path d="M3 3l6 6M9 3l-6 6" />
+            </svg>
+          </button>
+          <button
+            className="hud-traffic-dot is-min"
+            onClick={() => window.klipeHud?.minimize?.()}
+            title="Minimize"
+            aria-label="Minimize"
+          >
+            <svg viewBox="0 0 12 12" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+              <path d="M2.5 6h7" />
+            </svg>
+          </button>
+          <button
+            className="hud-traffic-dot is-max"
+            onClick={() => window.klipeHud?.showMain?.()}
+            title="Open editor"
+            aria-label="Open editor"
+          >
+            <svg viewBox="0 0 12 12" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 5V3h2M9 7v2H7M3 7v2h2M9 5V3H7" />
+            </svg>
+          </button>
+        </div>
 
         <div className="hud-drag" title="Drag to move"><span className="hud-drag-grip" /></div>
 
@@ -387,69 +447,77 @@ export default function FloatingHUD(): JSX.Element {
           selectedId={selectedId}
           onSelect={onSelectSource}
           onRefresh={refreshSources}
-          disabled={countdown != null || recording}
+          disabled={isLive}
         />
 
-        <div className="hud-divider" />
+        <div className="hud-divider" aria-hidden />
 
-        <StackedToggle
-          ref={micBtnRef}
-          icon={<MicIcon />}
-          label="Mic"
-          active={micEnabled}
-          onClick={onToggleMic}
-          onContextMenu={(e) => { e.preventDefault(); setMicMenuOpen(true); }}
-          onCaretClick={() => setMicMenuOpen(true)}
-        />
-        {micMenuOpen && (
-          <DeviceMenu
-            anchor={micBtnRef}
-            items={micMenuItems}
-            onSelect={onPickMic}
-            onClose={() => setMicMenuOpen(false)}
+        <div className="hud-controls">
+          <StackedToggle
+            ref={micBtnRef}
+            icon={<MicIcon />}
+            label="Mic"
+            active={micEnabled}
+            recording={recording && micEnabled}
+            onClick={onToggleMic}
+            onContextMenu={(e) => { e.preventDefault(); setMicMenuOpen(true); }}
+            onCaretClick={() => setMicMenuOpen(true)}
           />
-        )}
+          {micMenuOpen && (
+            <DeviceMenu
+              anchor={micBtnRef}
+              items={micMenuItems}
+              onSelect={onPickMic}
+              onClose={() => setMicMenuOpen(false)}
+            />
+          )}
 
-        <StackedToggle
-          ref={camBtnRef}
-          icon={<CamIcon />}
-          label="Camera"
-          active={camEnabled}
-          onClick={onToggleCam}
-          onContextMenu={(e) => { e.preventDefault(); setCamMenuOpen(true); }}
-          onCaretClick={() => setCamMenuOpen(true)}
-        />
-        {camMenuOpen && (
-          <DeviceMenu
-            anchor={camBtnRef}
-            items={camMenuItems}
-            onSelect={onPickCam}
-            onClose={() => setCamMenuOpen(false)}
+          <StackedToggle
+            ref={camBtnRef}
+            icon={<CamIcon />}
+            label="Camera"
+            active={camEnabled}
+            recording={recording && camEnabled}
+            onClick={onToggleCam}
+            onContextMenu={(e) => { e.preventDefault(); setCamMenuOpen(true); }}
+            onCaretClick={() => setCamMenuOpen(true)}
           />
-        )}
+          {camMenuOpen && (
+            <DeviceMenu
+              anchor={camBtnRef}
+              items={camMenuItems}
+              onSelect={onPickCam}
+              onClose={() => setCamMenuOpen(false)}
+            />
+          )}
 
-        <StackedToggle
-          icon={<SparkleIcon />}
-          label="Auto-zoom"
-          active={autoZoom}
-          variant="purple"
-          onClick={onToggleAutoZoom}
-        />
+          <StackedToggle
+            icon={<SparkleIcon />}
+            label="Auto-zoom"
+            active={autoZoom}
+            variant="purple"
+            onClick={onToggleAutoZoom}
+          />
+        </div>
+
+        <div className="hud-divider hud-divider-soft" aria-hidden />
 
         <button
-          className={`hud-record ${countdown != null ? 'is-counting' : ''} ${recording ? 'is-recording' : ''}`}
+          className={`hud-record ${isCounting ? 'is-counting' : ''} ${recording ? 'is-recording' : ''}`}
           onClick={onRecordClick}
-          disabled={!selectedId && !recording && countdown == null}
-          title={countdown != null ? 'Cancel countdown' : recording ? 'Stop recording' : 'Start recording'}
+          disabled={!selectedId && !recording && !isCounting}
+          title={isCounting ? 'Cancel countdown' : recording ? 'Stop recording' : 'Start recording'}
+          aria-label={isCounting ? 'Cancel countdown' : recording ? 'Stop recording' : 'Start recording'}
         >
-          <span className="hud-record-dot" />
-          <span className="hud-record-label">
-            {countdown != null
-              ? `${countdown} Starting`
-              : recording
-                ? formatTime(elapsed)
-                : 'Record'}
+          <span className="hud-record-orb" aria-hidden>
+            <span className="hud-record-halo" />
+            <span className="hud-record-dot" />
           </span>
+          {isLive && (
+            <span className="hud-record-timer">
+              {isCounting ? String(countdown) : formatTime(elapsed)}
+            </span>
+          )}
         </button>
       </div>
     </div>
@@ -531,11 +599,35 @@ interface PopoverPos {
   top: number;
   left: number;
   ready: boolean;
+  placeAbove: boolean;
+}
+
+/** Decide whether a popover should open above or below its trigger,
+ * based on actual screen-space room (not just the Electron window's
+ * inner viewport — which is a moving target as the window resizes). */
+function computePlacement(
+  triggerRect: DOMRect,
+  popoverHeight: number,
+  gap: number,
+  edge: number,
+): { placeAbove: boolean; top: number } {
+  const triggerScreenBottom = window.screenY + triggerRect.bottom;
+  const triggerScreenTop = window.screenY + triggerRect.top;
+  // `availTop` exists in Chromium but isn't in the DOM lib types.
+  const screenAvailTop = (window.screen as { availTop?: number }).availTop ?? 0;
+  const screenAvailBottom = screenAvailTop + window.screen.availHeight;
+  const fitsBelow = triggerScreenBottom + gap + popoverHeight + edge <= screenAvailBottom;
+  const fitsAbove = triggerScreenTop - gap - popoverHeight - edge >= screenAvailTop;
+  const placeAbove = !fitsBelow && fitsAbove;
+  const top = placeAbove
+    ? Math.round(triggerRect.top - gap - popoverHeight)
+    : Math.round(triggerRect.bottom + gap);
+  return { placeAbove, top };
 }
 
 function SourcePicker({ anchor, sources, selectedId, onSelect, onClose }: SourcePickerProps): React.ReactPortal {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState<PopoverPos>({ top: -9999, left: -9999, ready: false });
+  const [pos, setPos] = useState<PopoverPos>({ top: -9999, left: -9999, ready: false, placeAbove: false });
 
   useLayoutEffect(() => {
     const place = (settled: boolean): void => {
@@ -545,14 +637,22 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose }: Source
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const gap = 8;
-      const fits = vh >= t.bottom + gap + m.height + 8;
+      const edge = 12;
+      const { placeAbove, top: rawTop } = computePlacement(t, m.height, gap, edge);
       let left = Math.round(t.left);
       left = Math.max(8, Math.min(left, vw - m.width - 8));
-      let top = Math.round(t.bottom + gap);
-      if (settled || fits) {
-        top = Math.max(8, Math.min(top, vh - m.height - 8));
+      let top = rawTop;
+      // In-window fit check — used to decide whether to fade the popover in
+      // immediately. The parent layout effect grows the window upward when
+      // `placeAbove` is true, so the popover may render off-screen for a
+      // single frame until that resize lands.
+      const fitsInWindow = placeAbove ? top >= 8 : top + m.height + 8 <= vh;
+      if (settled || fitsInWindow) {
+        top = placeAbove
+          ? Math.max(8, top)
+          : Math.min(top, vh - m.height - 8);
       }
-      setPos({ top, left, ready: settled || fits });
+      setPos({ top, left, ready: settled || fitsInWindow, placeAbove });
     };
     place(false);
     let raf = 0;
@@ -633,7 +733,8 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose }: Source
   return createPortal(
     <div
       ref={ref}
-      className={`hud-popover hud-source-picker ${pos.ready ? 'is-ready' : ''}`}
+      className={`hud-popover hud-source-picker ${pos.ready ? 'is-ready' : ''} ${pos.placeAbove ? 'is-above' : ''}`}
+      data-placement={pos.placeAbove ? 'above' : 'below'}
       style={{ top: pos.top, left: pos.left }}
       role="listbox"
     >
@@ -702,6 +803,7 @@ interface StackedToggleProps {
   icon: ReactNode;
   label: string;
   active: boolean;
+  recording?: boolean;
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   onCaretClick?: () => void;
@@ -710,21 +812,35 @@ interface StackedToggleProps {
 
 const StackedToggle = forwardRef<HTMLButtonElement, StackedToggleProps>(
   function StackedToggle(
-    { icon, label, active, onClick, onContextMenu, onCaretClick, variant = 'default' },
+    { icon, label, active, recording = false, onClick, onContextMenu, onCaretClick, variant = 'default' },
     ref,
   ) {
+    const wrapClass = [
+      'hud-stacked-wrap',
+      active ? 'is-on' : '',
+      recording ? 'is-recording' : '',
+      variant === 'purple' ? 'is-purple' : '',
+    ].filter(Boolean).join(' ');
     return (
-      <div className={`hud-stacked-wrap ${active ? 'is-on' : ''} ${variant === 'purple' ? 'is-purple' : ''}`}>
+      <div className={wrapClass}>
         <button
           ref={ref}
           className="hud-stacked"
           onClick={onClick}
           onContextMenu={onContextMenu}
           aria-pressed={active}
+          aria-label={label}
+          title={label}
           type="button"
         >
           <span className="hud-stacked-icon">{icon}</span>
           <span className="hud-stacked-label">{label}</span>
+          {active && (
+            <span
+              className={`hud-stacked-indicator ${recording ? 'is-recording' : ''}`}
+              aria-hidden
+            />
+          )}
         </button>
         {onCaretClick && (
           <button
@@ -753,7 +869,7 @@ interface DeviceMenuProps {
 
 function DeviceMenu({ anchor, items, onSelect, onClose }: DeviceMenuProps): React.ReactPortal {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState<PopoverPos>({ top: -9999, left: -9999, ready: false });
+  const [pos, setPos] = useState<PopoverPos>({ top: -9999, left: -9999, ready: false, placeAbove: false });
 
   useLayoutEffect(() => {
     const place = (settled: boolean): void => {
@@ -763,14 +879,18 @@ function DeviceMenu({ anchor, items, onSelect, onClose }: DeviceMenuProps): Reac
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const gap = 6;
-      const fits = vh >= t.bottom + gap + m.height + 8;
+      const edge = 12;
+      const { placeAbove, top: rawTop } = computePlacement(t, m.height, gap, edge);
       let left = Math.round(t.left + t.width / 2 - m.width / 2);
       left = Math.max(8, Math.min(left, vw - m.width - 8));
-      let top = Math.round(t.bottom + gap);
-      if (settled || fits) {
-        top = Math.max(8, Math.min(top, vh - m.height - 8));
+      let top = rawTop;
+      const fitsInWindow = placeAbove ? top >= 8 : top + m.height + 8 <= vh;
+      if (settled || fitsInWindow) {
+        top = placeAbove
+          ? Math.max(8, top)
+          : Math.min(top, vh - m.height - 8);
       }
-      setPos({ top, left, ready: settled || fits });
+      setPos({ top, left, ready: settled || fitsInWindow, placeAbove });
     };
     place(false);
     let raf = 0;
@@ -806,7 +926,8 @@ function DeviceMenu({ anchor, items, onSelect, onClose }: DeviceMenuProps): Reac
   return createPortal(
     <div
       ref={ref}
-      className={`hud-popover hud-device-menu ${pos.ready ? 'is-ready' : ''}`}
+      className={`hud-popover hud-device-menu ${pos.ready ? 'is-ready' : ''} ${pos.placeAbove ? 'is-above' : ''}`}
+      data-placement={pos.placeAbove ? 'above' : 'below'}
       style={{ top: pos.top, left: pos.left }}
       role="menu"
     >

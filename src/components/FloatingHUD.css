@@ -1,28 +1,52 @@
-/* Floating HUD — Screen Studio-style recording bar
- * Rendered inside a frameless transparent Electron window.
+/* Floating HUD — premium glass recording bar
+ * Cinematic glassmorphism, macOS-native feel.
  */
 
 :root {
-  --hud-bg: rgba(22, 24, 30, 0.78);
-  --hud-bg-hover: rgba(255, 255, 255, 0.07);
-  --hud-border: rgba(255, 255, 255, 0.08);
-  --hud-divider: rgba(255, 255, 255, 0.10);
-  --hud-text: #e9ecf2;
-  --hud-text-dim: #9aa3b3;
-  --hud-active-bg: rgba(255, 255, 255, 0.10);
-  --hud-rec: #ff4d57;
-  --hud-rec-glow: rgba(255, 77, 87, 0.55);
+  /* Glass material — layered for crystal-like depth */
+  --hud-bg: rgba(16, 18, 23, 0.62);
+  --hud-bg-tint: rgba(255, 255, 255, 0.018);
+  --hud-bg-hover: rgba(255, 255, 255, 0.045);
+  --hud-bg-active: rgba(255, 255, 255, 0.075);
 
-  --hud-purple: #a48bff;
-  --hud-purple-bg: rgba(124, 95, 240, 0.18);
-  --hud-purple-bg-strong: rgba(124, 95, 240, 0.28);
+  --hud-border: rgba(255, 255, 255, 0.055);
+  --hud-divider: rgba(255, 255, 255, 0.055);
 
-  --pop-bg: rgba(34, 36, 44, 0.92);
-  --pop-border: rgba(255, 255, 255, 0.10);
+  --hud-text: rgba(236, 239, 245, 0.96);
+  --hud-text-dim: rgba(165, 173, 188, 0.72);
+  --hud-text-faint: rgba(165, 173, 188, 0.46);
+
+  /* Recording — quieter, more atmospheric */
+  --hud-rec: #ff4f5a;
+  --hud-rec-soft: rgba(255, 79, 90, 0.14);
+  --hud-rec-glow: rgba(255, 79, 90, 0.22);
+
+  /* AI / Purple — refined, less saturated */
+  --hud-purple: #b8a5ff;
+  --hud-purple-bg: rgba(139, 110, 255, 0.10);
+  --hud-purple-bg-strong: rgba(139, 110, 255, 0.16);
+  --hud-purple-glow: rgba(139, 110, 255, 0.18);
+
+  /* Traffic lights */
+  --hud-tl-close: #ff5f57;
+  --hud-tl-min:   #febc2e;
+  --hud-tl-max:   #28c840;
+  --hud-tl-rim:   rgba(0, 0, 0, 0.25);
+
+  /* Motion curves */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.45, 1);
+  --ease-press: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Popovers */
+  --pop-bg: rgba(24, 26, 32, 0.78);
+  --pop-border: rgba(255, 255, 255, 0.06);
   --pop-shadow:
-    0 18px 40px rgba(0, 0, 0, 0.55),
-    0 2px 6px rgba(0, 0, 0, 0.35),
-    0 0 0 0.5px rgba(255, 255, 255, 0.06) inset;
+    0 28px 56px -12px rgba(0, 0, 0, 0.55),
+    0 8px 18px -4px rgba(0, 0, 0, 0.32),
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 0 0 0.5px rgba(255, 255, 255, 0.04) inset;
 }
 
 html, body, #hud-root {
@@ -37,9 +61,10 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 .hud-body {
   background: transparent !important;
   background-color: transparent !important;
-  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   color: var(--hud-text);
   -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
   user-select: none;
   cursor: default;
 }
@@ -50,128 +75,218 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 8px;
+  padding: 16px 36px 60px;
   background: transparent;
 }
+
+/* ───────────── Main bar (premium glass material) ───────────── */
 
 .hud-bar {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   height: 64px;
-  padding: 6px 6px 6px 8px;
-  background: var(--hud-bg);
+  padding: 7px 8px 7px 12px;
+  border-radius: 22px;
+  isolation: isolate;
+  cursor: grab;
+
+  /* Layered translucency — base + soft top sheen + bottom darken */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0) 28%),
+    linear-gradient(0deg,   rgba(0, 0, 0, 0.10) 0%,        rgba(0, 0, 0, 0) 36%),
+    var(--hud-bg);
+
   border: 1px solid var(--hud-border);
-  border-radius: 18px;
-  backdrop-filter: blur(28px) saturate(160%);
-  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(40px) saturate(170%);
+  -webkit-backdrop-filter: blur(40px) saturate(170%);
+
+  /* Cinematic depth: ambient cast + tight definition + crystal edges */
   box-shadow:
-    0 14px 38px rgba(0, 0, 0, 0.55),
-    0 1px 0 rgba(255, 255, 255, 0.05) inset;
-  animation: hud-in 220ms cubic-bezier(.2, .8, .2, 1) both;
+    0 32px 64px -16px rgba(0, 0, 0, 0.50),
+    0 12px 24px -8px  rgba(0, 0, 0, 0.32),
+    0 1px 2px         rgba(0, 0, 0, 0.22),
+    0 1px 0 rgba(255, 255, 255, 0.10) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.14)      inset;
+
+  animation: hud-in 460ms var(--ease-soft) both;
+  transition:
+    box-shadow 480ms var(--ease-soft),
+    border-color 320ms var(--ease-out);
   overflow: visible;
 }
 
+/* Subtle radial highlight catching the top of the glass */
+.hud-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    140% 90% at 50% -30%,
+    rgba(255, 255, 255, 0.07) 0%,
+    rgba(255, 255, 255, 0) 55%
+  );
+  z-index: 0;
+}
+.hud-bar > * { position: relative; z-index: 1; }
+.hud-bar:active { cursor: grabbing; }
+
 @keyframes hud-in {
-  from { opacity: 0; transform: translateY(-6px) scale(.98); }
-  to   { opacity: 1; transform: translateY(0)    scale(1); }
+  from { opacity: 0; transform: translateY(-8px) scale(0.985); filter: blur(2px); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    filter: blur(0); }
 }
 
-/* Drag handle */
+/* Live (recording / counting) — quieter atmospheric red rim, no harsh glow */
+.hud-bar.is-live {
+  border-color: rgba(255, 79, 90, 0.22);
+  box-shadow:
+    0 32px 64px -16px rgba(0, 0, 0, 0.50),
+    0 12px 24px -8px  rgba(0, 0, 0, 0.32),
+    0 1px 2px         rgba(0, 0, 0, 0.22),
+    0 0 0 1px rgba(255, 79, 90, 0.10),
+    0 0 36px -6px rgba(255, 79, 90, 0.14),
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.14) inset;
+}
 
+/* Vestigial drag handle slot — kept for layout spacing only.
+   Window dragging is now handled by a JS pointer handler on `.hud-bar`. */
 .hud-drag {
-  -webkit-app-region: drag;
-  height: 100%;
-  width: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: grab;
+  align-self: stretch;
+  width: 6px;
+  flex: 0 0 auto;
 }
-.hud-drag:active { cursor: grabbing; }
 .hud-drag-grip { display: none; }
 
-.hud-bar button,
-.hud-popover,
-.hud-bar [role="button"] {
-  -webkit-app-region: no-drag;
+/* Buttons keep their own pointer cursor — the bar handles drag in JS
+   and skips drag start when the pointer-down target is interactive. */
+.hud-bar button { cursor: pointer; }
+
+/* ───────────── Traffic-light window controls ───────────── */
+
+.hud-traffic {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 2px;
+  flex: 0 0 auto;
 }
 
-/* Window controls (X, –) */
-
-.hud-window-btn {
+.hud-traffic-dot {
   appearance: none;
-  background: rgba(255, 255, 255, 0.08);
   border: 0;
-  width: 22px;
-  height: 22px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.75);
-  cursor: pointer;
+  color: rgba(0, 0, 0, 0); /* icon hidden until hover */
   flex: 0 0 auto;
-  transition: background 120ms ease, color 120ms ease, transform 80ms ease;
+  position: relative;
+  transition:
+    transform 160ms var(--ease-spring),
+    filter 160ms var(--ease-out),
+    color 120ms ease;
+  box-shadow:
+    inset 0 0 0 0.5px var(--hud-tl-rim),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 1px 1px rgba(0, 0, 0, 0.25);
 }
-.hud-window-btn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
-.hud-window-btn:active { transform: scale(0.92); }
-.hud-window-close + .hud-window-min { margin-left: -2px; }
+.hud-traffic-dot.is-close { background: radial-gradient(circle at 35% 30%, #ff8b85 0%, var(--hud-tl-close) 60%, #d83b34 100%); }
+.hud-traffic-dot.is-min   { background: radial-gradient(circle at 35% 30%, #ffd97a 0%, var(--hud-tl-min)   60%, #cc8e0e 100%); }
+.hud-traffic-dot.is-max   { background: radial-gradient(circle at 35% 30%, #7ce880 0%, var(--hud-tl-max)   60%, #1a9e2a 100%); }
 
-/* Divider */
+.hud-traffic:hover .hud-traffic-dot { color: rgba(0, 0, 0, 0.55); }
+.hud-traffic-dot:hover { filter: brightness(1.05); }
+.hud-traffic-dot:active { transform: scale(0.88); }
+
+/* ───────────── Hairline divider ───────────── */
 
 .hud-divider {
   width: 1px;
-  height: 36px;
-  background: var(--hud-divider);
+  height: 28px;
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0) 0%,
+    var(--hud-divider) 28%,
+    var(--hud-divider) 72%,
+    rgba(255, 255, 255, 0) 100%);
   margin: 0 4px;
   flex: 0 0 auto;
 }
+.hud-divider-soft { opacity: 0.55; margin: 0 2px 0 4px; }
 
-/* Source selector pill */
+/* ───────────── Source selector pill ───────────── */
 
 .hud-source-trigger {
   appearance: none;
-  background: var(--hud-active-bg);
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0) 60%),
+    rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   color: var(--hud-text);
   height: 50px;
-  padding: 0 10px 0 10px;
-  border-radius: 12px;
+  padding: 0 14px 0 10px;
+  border-radius: 14px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease, transform 80ms ease;
+  transition:
+    background 220ms var(--ease-out),
+    border-color 220ms var(--ease-out),
+    transform 200ms var(--ease-spring),
+    box-shadow 220ms var(--ease-out);
   flex: 0 1 auto;
-  min-width: 140px;
-  max-width: 260px;
+  min-width: 168px;
+  max-width: 280px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.10) inset;
 }
 .hud-source-trigger:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 60%),
+    rgba(255, 255, 255, 0.055);
   border-color: rgba(255, 255, 255, 0.10);
+  transform: translateY(-0.5px);
 }
-.hud-source-trigger:active { transform: scale(0.98); }
+.hud-source-trigger:active { transform: translateY(0) scale(0.985); }
 .hud-source-trigger.is-open {
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.13);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.07) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.12) inset,
+    0 0 0 3px rgba(255, 255, 255, 0.025);
 }
 .hud-source-trigger:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 
 .hud-source-trigger-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.06);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 100%),
+    rgba(255, 255, 255, 0.04);
   color: var(--hud-text);
   flex: 0 0 auto;
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .hud-source-trigger-text {
@@ -182,48 +297,73 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   min-width: 0;
   flex: 1;
   line-height: 1.15;
+  gap: 2px;
 }
 .hud-source-trigger-app {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--hud-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
+  max-width: 200px;
 }
 .hud-source-trigger-meta {
   font-size: 10.5px;
+  font-weight: 500;
   color: var(--hud-text-dim);
   font-variant-numeric: tabular-nums;
-  margin-top: 2px;
+  letter-spacing: 0.01em;
 }
 .hud-source-trigger-caret {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--hud-text-dim);
+  color: var(--hud-text-faint);
   margin-left: 2px;
+  transition: transform 280ms var(--ease-spring), color 200ms var(--ease-out);
 }
+.hud-source-trigger:hover .hud-source-trigger-caret { color: var(--hud-text-dim); }
+.hud-source-trigger.is-open .hud-source-trigger-caret { transform: rotate(180deg); color: var(--hud-text); }
 
-/* Stacked icon-toggle (Mic, Camera, System audio, Auto-zoom) */
+/* ───────────── Stacked icon-toggle (Mic / Cam / AI) ───────────── */
+
+.hud-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
 
 .hud-stacked-wrap {
   position: relative;
   display: inline-flex;
   align-items: center;
-  height: 50px;
-  border-radius: 12px;
-  padding: 0 4px;
-  transition: background 140ms ease;
+  height: 48px;
+  border-radius: 14px;
+  padding: 0;
+  transition:
+    background 280ms var(--ease-out),
+    box-shadow 280ms var(--ease-out);
 }
 .hud-stacked-wrap.is-on {
-  background: var(--hud-active-bg);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 60%),
+    rgba(255, 255, 255, 0.04);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.12);
 }
 .hud-stacked-wrap.is-on.is-purple {
-  background: var(--hud-purple-bg-strong);
-  box-shadow: 0 0 0 1px rgba(164, 139, 255, 0.18) inset;
+  background:
+    radial-gradient(120% 90% at 50% 0%, var(--hud-purple-bg-strong) 0%, var(--hud-purple-bg) 70%),
+    rgba(139, 110, 255, 0.05);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(184, 165, 255, 0.20),
+    inset 0 1px 0 rgba(184, 165, 255, 0.12),
+    0 0 22px -10px var(--hud-purple-glow);
 }
 
 .hud-stacked {
@@ -231,33 +371,60 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   background: transparent;
   border: 0;
   color: var(--hud-text-dim);
-  height: 50px;
-  min-width: 56px;
-  padding: 0 8px;
-  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   display: inline-flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
   cursor: pointer;
-  transition: background 140ms ease, color 140ms ease, transform 80ms ease;
+  position: relative;
+  transition:
+    color 200ms var(--ease-out),
+    background 200ms var(--ease-out),
+    transform 220ms var(--ease-spring);
 }
-.hud-stacked:hover { background: var(--hud-bg-hover); color: var(--hud-text); }
-.hud-stacked:active { transform: scale(0.97); }
+.hud-stacked::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    100% 80% at 50% 0%,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0) 60%
+  );
+  opacity: 0;
+  transition: opacity 220ms var(--ease-out);
+}
+.hud-stacked:hover {
+  color: var(--hud-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.hud-stacked:hover::before { opacity: 1; }
+.hud-stacked:active { transform: scale(0.92); }
 
 .hud-stacked-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.85;
-  transition: opacity 120ms ease, color 120ms ease;
+  opacity: 0.82;
+  transition: opacity 200ms var(--ease-out), color 200ms var(--ease-out), transform 220ms var(--ease-spring);
 }
+.hud-stacked:hover .hud-stacked-icon { opacity: 1; transform: translateY(-0.5px); }
+
+/* Label is kept for screen readers but never shown */
 .hud-stacked-label {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+  border: 0;
 }
 
 .hud-stacked-wrap.is-on .hud-stacked { color: var(--hud-text); }
@@ -265,165 +432,248 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 .hud-stacked-wrap.is-purple.is-on .hud-stacked,
 .hud-stacked-wrap.is-purple.is-on .hud-stacked-icon { color: var(--hud-purple); }
 
+/* Tiny status indicator dot under the icon */
+.hud-stacked-indicator {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.20);
+  transition: background 220ms var(--ease-out), box-shadow 220ms var(--ease-out);
+  pointer-events: none;
+}
+.hud-stacked-wrap.is-purple .hud-stacked-indicator {
+  background: var(--hud-purple);
+  box-shadow: 0 0 6px rgba(184, 165, 255, 0.55);
+}
+.hud-stacked-indicator.is-recording {
+  background: var(--hud-rec);
+  box-shadow: 0 0 6px rgba(255, 79, 90, 0.65);
+  animation: stack-dot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes stack-dot-pulse {
+  0%, 100% { opacity: 0.6; transform: translateX(-50%) scale(1); }
+  50%      { opacity: 1;   transform: translateX(-50%) scale(1.15); }
+}
+
+/* Caret for device dropdown */
 .hud-stacked-caret {
   appearance: none;
   background: transparent;
   border: 0;
-  width: 12px;
-  height: 50px;
+  width: 10px;
+  height: 48px;
   display: inline-flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  color: var(--hud-text-dim);
+  padding-bottom: 14px;
+  color: var(--hud-text-faint);
   cursor: pointer;
   border-radius: 4px;
-  margin-left: -4px;
-  opacity: 0.6;
-  transition: opacity 120ms ease, background 120ms ease;
+  margin-left: -8px;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition:
+    opacity 220ms var(--ease-out),
+    transform 220ms var(--ease-out),
+    color 160ms ease;
 }
-.hud-stacked-wrap:hover .hud-stacked-caret { opacity: 1; }
-.hud-stacked-caret:hover { background: var(--hud-bg-hover); }
+.hud-stacked-wrap:hover .hud-stacked-caret {
+  opacity: 0.9;
+  transform: translateX(0);
+}
+.hud-stacked-caret:hover { color: var(--hud-text); }
 
-/* Record button */
+/* ───────────── Record button (circular idle, morph to ● 0:12) ───────────── */
 
 .hud-record {
   appearance: none;
   border: 0;
   cursor: pointer;
   height: 50px;
-  padding: 0 18px 0 14px;
-  border-radius: 12px;
+  padding: 0 5px;
+  border-radius: 28px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: white;
-  background: linear-gradient(180deg, #ff5862 0%, #e0394a 100%);
-  box-shadow:
-    0 6px 16px rgba(224, 57, 74, 0.4),
-    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
-  transition: filter 140ms ease, transform 80ms ease, box-shadow 140ms ease, background 140ms ease;
+  background: transparent;
   margin-left: auto;
   flex: 0 0 auto;
+  position: relative;
+  -webkit-app-region: no-drag;
+  transition:
+    padding 520ms var(--ease-soft),
+    background 360ms var(--ease-out),
+    box-shadow 520ms var(--ease-soft),
+    transform 220ms var(--ease-spring);
 }
-.hud-record:hover { filter: brightness(1.08); }
+.hud-record:disabled { opacity: 0.45; cursor: not-allowed; }
 .hud-record:active { transform: scale(0.97); }
-.hud-record:disabled { opacity: 0.55; cursor: not-allowed; filter: none; }
 
-.hud-record-dot {
-  width: 10px;
-  height: 10px;
+.hud-record-orb {
+  position: relative;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: white;
-}
-
-.hud-record.is-counting {
-  background: linear-gradient(180deg, #2a2d35 0%, #1c1e25 100%);
-  box-shadow:
-    0 0 0 1px rgba(255, 77, 87, 0.55) inset,
-    0 0 18px var(--hud-rec-glow);
-  color: #fff;
-}
-.hud-record.is-counting .hud-record-dot {
-  background: var(--hud-rec);
-  animation: rec-pulse 1s ease-in-out infinite;
-}
-
-.hud-record.is-recording {
-  background: linear-gradient(180deg, #2a2d35 0%, #1c1e25 100%);
-  box-shadow:
-    0 0 0 1px rgba(255, 77, 87, 0.55) inset,
-    0 0 18px var(--hud-rec-glow);
-}
-.hud-record.is-recording .hud-record-dot {
-  background: var(--hud-rec);
-  border-radius: 3px;
-  width: 10px;
-  height: 10px;
-  animation: rec-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes rec-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 var(--hud-rec-glow); opacity: 1; }
-  50%      { box-shadow: 0 0 0 6px rgba(255, 77, 87, 0); opacity: 0.85; }
-}
-
-.hud-record-label {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.2px;
-  min-width: 70px;
-  text-align: left;
-}
-
-.hud-shell[data-recording="1"] .hud-bar {
-  box-shadow:
-    0 14px 38px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(255, 77, 87, 0.45) inset,
-    0 0 28px rgba(255, 77, 87, 0.18);
-}
-
-/* Compact recording state */
-
-.hud-bar-compact {
-  height: 44px;
-  padding: 4px 6px 4px 4px;
-  gap: 8px;
-  border-radius: 14px;
-}
-.hud-rec-indicator {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--hud-rec);
-  margin-left: 8px;
-  animation: rec-pulse 1.2s ease-in-out infinite;
-}
-.hud-rec-timer {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--hud-text);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.4px;
-  padding: 0 4px;
-  min-width: 56px;
-  text-align: center;
-}
-.hud-stop {
-  appearance: none;
-  border: 0;
-  cursor: pointer;
-  height: 34px;
-  padding: 0 12px 0 10px;
-  border-radius: 10px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: white;
-  background: linear-gradient(180deg, #ff5862 0%, #e0394a 100%);
-  box-shadow: 0 4px 12px rgba(224, 57, 74, 0.4);
-  transition: filter 140ms ease, transform 80ms ease;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0) 60%),
+    rgba(0, 0, 0, 0.20);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.30),
+    0 1px 2px rgba(0, 0, 0, 0.22);
+  transition:
+    transform 320ms var(--ease-spring),
+    box-shadow 360ms var(--ease-out),
+    background 360ms var(--ease-out);
 }
-.hud-stop:hover { filter: brightness(1.08); }
-.hud-stop:active { transform: scale(0.97); }
-.hud-stop-square {
-  width: 8px;
-  height: 8px;
-  background: #fff;
-  border-radius: 2px;
+.hud-record:hover .hud-record-orb { transform: scale(1.04); }
+.hud-record:active .hud-record-orb { transform: scale(0.94); }
+
+.hud-record-dot {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 28%, #ff9099 0%, #ff4f5a 50%, #cf2935 100%);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.30),
+    0 1px 3px rgba(207, 41, 53, 0.40),
+    inset 0 1px 0 rgba(255, 255, 255, 0.30),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+  transition:
+    transform 380ms var(--ease-spring),
+    border-radius 380ms var(--ease-soft),
+    width 380ms var(--ease-soft),
+    height 380ms var(--ease-soft);
+  z-index: 1;
 }
 
-/* Popovers (rendered into document.body) */
+/* Soft halo ring under the dot (only visible while recording) */
+.hud-record-halo {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle, rgba(255, 79, 90, 0.45) 0%, rgba(255, 79, 90, 0) 70%);
+  transition: opacity 320ms var(--ease-out);
+}
+
+/* Counting state — keeps circular form, dim red dot, soft pulse */
+.hud-record.is-counting {
+  padding: 0 14px 0 5px;
+}
+.hud-record.is-counting .hud-record-orb {
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255, 79, 90, 0.10) 0%, rgba(255, 79, 90, 0) 70%),
+    rgba(0, 0, 0, 0.22);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 79, 90, 0.18),
+    0 0 18px -6px var(--hud-rec-glow);
+}
+.hud-record.is-counting .hud-record-dot {
+  animation: rec-dot-pulse 1.1s ease-in-out infinite;
+}
+
+/* Recording state — orb stays, halo blooms, timer fades in beside it */
+.hud-record.is-recording {
+  padding: 0 16px 0 5px;
+  background:
+    linear-gradient(180deg, rgba(255, 79, 90, 0.05) 0%, rgba(255, 79, 90, 0) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 79, 90, 0.10);
+}
+.hud-record.is-recording .hud-record-orb {
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255, 79, 90, 0.18) 0%, rgba(255, 79, 90, 0.04) 70%),
+    rgba(40, 14, 18, 0.55);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 79, 90, 0.22),
+    0 0 0 3px rgba(255, 79, 90, 0.06),
+    0 0 20px -4px var(--hud-rec-glow);
+  animation: rec-breathe 2.6s ease-in-out infinite;
+}
+.hud-record.is-recording .hud-record-halo {
+  opacity: 1;
+  animation: rec-halo-ring 2.2s ease-out infinite;
+}
+.hud-record.is-recording .hud-record-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: radial-gradient(circle at 40% 30%, #ff8a92 0%, #ff4f5a 50%, #d62b37 100%);
+  animation: rec-dot-soft 2.6s ease-in-out infinite;
+}
+
+/* Timer beside the orb (only visible in live states) */
+.hud-record-timer {
+  font-family: 'SF Mono', 'JetBrains Mono', 'Menlo', 'Roboto Mono', ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-text);
+  min-width: 38px;
+  text-align: center;
+  opacity: 0;
+  transform: translateX(-6px);
+  animation: rec-timer-in 360ms var(--ease-soft) 80ms forwards;
+}
+
+@keyframes rec-timer-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes rec-dot-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(0.86); opacity: 0.78; }
+}
+@keyframes rec-dot-soft {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.85; }
+}
+@keyframes rec-breathe {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 79, 90, 0.22),
+      0 0 0 3px rgba(255, 79, 90, 0.05),
+      0 0 18px -4px rgba(255, 79, 90, 0.18);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 79, 90, 0.30),
+      0 0 0 4px rgba(255, 79, 90, 0.08),
+      0 0 26px -2px rgba(255, 79, 90, 0.28);
+  }
+}
+@keyframes rec-halo-ring {
+  0%   { transform: scale(1);    opacity: 0.55; }
+  80%  { transform: scale(1.55); opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+
+/* ───────────── Popovers ───────────── */
 
 .hud-popover {
   position: fixed;
-  background: var(--pop-bg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025) 0%, rgba(255, 255, 255, 0) 30%),
+    var(--pop-bg);
   border: 1px solid var(--pop-border);
-  border-radius: 14px;
-  backdrop-filter: blur(34px) saturate(170%);
-  -webkit-backdrop-filter: blur(34px) saturate(170%);
+  border-radius: 16px;
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
   box-shadow: var(--pop-shadow);
   z-index: 99999;
   -webkit-app-region: no-drag;
@@ -432,11 +682,11 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   color: var(--hud-text);
   visibility: hidden;
   opacity: 0;
-  transform: translate3d(0, -8px, 0) scale(0.96);
+  transform: translate3d(0, -8px, 0) scale(0.97);
   pointer-events: none;
   transition:
-    opacity 200ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+    opacity 220ms var(--ease-soft),
+    transform 320ms var(--ease-soft);
   transform-origin: top center;
   will-change: opacity, transform;
   backface-visibility: hidden;
@@ -448,13 +698,24 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   pointer-events: auto;
 }
 
+/* Flipped variant — popover opens upward when there isn't room below
+   (e.g. the bar is dragged near the screen bottom). The animation now
+   originates from the bottom edge so it slides up out of the trigger. */
+.hud-popover.is-above {
+  transform-origin: bottom center;
+  transform: translate3d(0, 8px, 0) scale(0.97);
+}
+.hud-popover.is-above.is-ready {
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
 /* Source picker popover */
 
 .hud-source-picker {
   width: 380px;
   max-height: 520px;
   overflow-y: auto;
-  padding: 6px;
+  padding: 8px;
 }
 .hud-popover-empty {
   padding: 16px;
@@ -476,11 +737,11 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   gap: 10px;
   cursor: pointer;
   color: var(--hud-text);
-  transition: background 120ms ease;
+  transition: background 160ms var(--ease-out);
 }
-.hud-source-item:hover { background: rgba(255, 255, 255, 0.06); }
-.hud-source-item.is-selected { background: rgba(124, 95, 240, 0.16); }
-.hud-source-item.is-selected:hover { background: rgba(124, 95, 240, 0.22); }
+.hud-source-item:hover { background: rgba(255, 255, 255, 0.045); }
+.hud-source-item.is-selected { background: rgba(139, 110, 255, 0.14); }
+.hud-source-item.is-selected:hover { background: rgba(139, 110, 255, 0.20); }
 
 .hud-source-icon {
   width: 36px;
@@ -490,6 +751,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.05);
 }
 
 .hud-source-info {
@@ -534,7 +796,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--hud-text-dim);
+  color: var(--hud-text-faint);
   padding: 8px 10px 4px;
 }
 
@@ -553,8 +815,8 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 
 .hud-source-screen-tile {
   appearance: none;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 10px;
   padding: 6px;
   display: flex;
@@ -563,18 +825,22 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   cursor: pointer;
   color: var(--hud-text);
   text-align: left;
-  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  transition:
+    background 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    transform 200ms var(--ease-spring);
   min-width: 0;
 }
 .hud-source-screen-tile:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+  transform: translateY(-1px);
 }
-.hud-source-screen-tile:active { transform: scale(0.98); }
+.hud-source-screen-tile:active { transform: translateY(0) scale(0.98); }
 .hud-source-screen-tile.is-selected {
-  background: rgba(124, 95, 240, 0.16);
-  border-color: rgba(164, 139, 255, 0.45);
-  box-shadow: 0 0 0 1px rgba(164, 139, 255, 0.35) inset;
+  background: rgba(139, 110, 255, 0.14);
+  border-color: rgba(184, 165, 255, 0.40);
+  box-shadow: 0 0 0 1px rgba(184, 165, 255, 0.30) inset;
 }
 
 .hud-source-screen-thumb {
@@ -606,7 +872,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   text-transform: uppercase;
   color: #fff;
   background: rgba(0, 0, 0, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   padding: 1px 6px;
   border-radius: 999px;
   backdrop-filter: blur(6px);
@@ -625,7 +891,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(124, 95, 240, 0.45);
+  box-shadow: 0 2px 8px rgba(139, 110, 255, 0.40);
 }
 
 .hud-source-screen-info {
@@ -651,14 +917,14 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 
 .hud-source-picker::-webkit-scrollbar { width: 8px; }
 .hud-source-picker::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.10);
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 .hud-source-picker::-webkit-scrollbar-track { background: transparent; }
 
-/* Device menu (mic / camera options) */
+/* Device menu */
 
 .hud-device-menu {
   min-width: 220px;
@@ -675,8 +941,8 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   border: 0;
   color: var(--hud-text);
   padding: 0 10px 0 8px;
-  height: 28px;
-  border-radius: 7px;
+  height: 30px;
+  border-radius: 8px;
   font: inherit;
   font-weight: 400;
   cursor: pointer;
@@ -686,9 +952,10 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   display: flex;
   align-items: center;
   gap: 6px;
+  transition: background 160ms var(--ease-out), color 160ms ease;
 }
 .hud-device-item:hover {
-  background: rgba(124, 95, 240, 0.32);
+  background: rgba(139, 110, 255, 0.28);
   color: #fff;
 }
 .hud-device-check {
@@ -713,12 +980,12 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   font-size: 10.5px;
   font-weight: 500;
   color: var(--hud-text-dim);
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 4px;
   letter-spacing: 0.02em;
   text-transform: lowercase;
 }
 .hud-device-item:hover .hud-device-tag {
   color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.16);
 }

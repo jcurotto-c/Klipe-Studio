@@ -39,7 +39,8 @@ electron_1.contextBridge.exposeInMainWorld('klipeHud', {
     moveToDisplay: (displayId) => electron_1.ipcRenderer.invoke('hud:move-to-display', displayId),
     emit: (payload) => electron_1.ipcRenderer.send('hud:event', payload),
     setIgnoreMouse: (ignore) => electron_1.ipcRenderer.send('hud:set-ignore-mouse', ignore),
-    setSize: (width, height) => electron_1.ipcRenderer.send('hud:set-size', { width, height }),
+    setSize: (width, height, dy) => electron_1.ipcRenderer.send('hud:set-size', { width, height, dy }),
+    dragBy: (dx, dy) => electron_1.ipcRenderer.send('hud:drag-by', { dx, dy }),
     pushState: (payload) => electron_1.ipcRenderer.send('hud:push-state', payload),
     onState: (cb) => {
         const listener = (_evt, payload) => cb(payload);

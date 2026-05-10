@@ -22,10 +22,10 @@ interface MouseTrackerHandle {
 
 let mouseTracker: MouseTrackerHandle | null = null;
 
-const HUD_WIDTH = 680;
-const HUD_BAR_HEIGHT = 88;
+const HUD_WIDTH = 720;
+const HUD_BAR_HEIGHT = 140;
 const HUD_HEIGHT = HUD_BAR_HEIGHT;
-const HUD_TOP_OFFSET = 18;
+const HUD_TOP_OFFSET = 12;
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -89,7 +89,7 @@ function createHudWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    hasShadow: true,
+    hasShadow: false,
     alwaysOnTop: true,
     show: false,
     backgroundColor: '#00000000',
@@ -708,6 +708,9 @@ ipcMain.on('hud:set-ignore-mouse', (_evt, ignore: unknown) => {
 interface HudSizePayload {
   width?: number;
   height?: number;
+  // Optional vertical delta — used when a popover needs to expand the
+  // window upward (e.g. when the bar is near the screen bottom).
+  dy?: number;
 }
 
 ipcMain.handle('hud:minimize', () => {
@@ -746,19 +749,27 @@ ipcMain.on('hud:set-size', (_evt, payload: HudSizePayload | undefined) => {
   if (!hudWindow || hudWindow.isDestroyed()) return;
   const w = Math.max(420, Math.round(payload?.width || HUD_WIDTH));
   const h = Math.max(HUD_BAR_HEIGHT, Math.round(payload?.height || HUD_BAR_HEIGHT));
+  const dy = Math.round(payload?.dy || 0);
   const current = hudWindow.getBounds();
-  const center = {
-    x: Math.round(current.x + current.width / 2),
-    y: Math.round(current.y + current.height / 2),
-  };
-  const display = screen.getDisplayNearestPoint(center) || screen.getPrimaryDisplay();
-  const newX = Math.round(display.workArea.x + (display.workArea.width - w) / 2);
+  // Anchor on the bar's horizontal center so growing/shrinking doesn't visually
+  // jerk the bar — but preserve the user's dragged position otherwise.
+  const centerX = current.x + current.width / 2;
+  const newX = Math.round(centerX - w / 2);
   hudWindow.setBounds({
     x: newX,
-    y: display.workArea.y + HUD_TOP_OFFSET,
+    y: current.y + dy,
     width: w,
     height: h,
   }, false);
+});
+
+ipcMain.on('hud:drag-by', (_evt, payload: { dx: number; dy: number } | undefined) => {
+  if (!hudWindow || hudWindow.isDestroyed() || !payload) return;
+  const dx = Math.round(payload.dx);
+  const dy = Math.round(payload.dy);
+  if (dx === 0 && dy === 0) return;
+  const b = hudWindow.getBounds();
+  hudWindow.setBounds({ x: b.x + dx, y: b.y + dy, width: b.width, height: b.height }, false);
 });
 
 ipcMain.handle('hud:move-to-display', (_evt, displayId: string | number | null | undefined) => {

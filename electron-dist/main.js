@@ -16,10 +16,10 @@ let cursorPreviewWindow = null;
 let cursorPreviewOrigin = { x: 0, y: 0 };
 let cursorPreviewInterval = null;
 let mouseTracker = null;
-const HUD_WIDTH = 680;
-const HUD_BAR_HEIGHT = 88;
+const HUD_WIDTH = 720;
+const HUD_BAR_HEIGHT = 140;
 const HUD_HEIGHT = HUD_BAR_HEIGHT;
-const HUD_TOP_OFFSET = 18;
+const HUD_TOP_OFFSET = 12;
 function createWindow() {
     mainWindow = new electron_1.BrowserWindow({
         width: 1280,
@@ -78,7 +78,7 @@ function createHudWindow() {
         maximizable: false,
         fullscreenable: false,
         skipTaskbar: true,
-        hasShadow: true,
+        hasShadow: false,
         alwaysOnTop: true,
         show: false,
         backgroundColor: '#00000000',
@@ -696,19 +696,28 @@ electron_1.ipcMain.on('hud:set-size', (_evt, payload) => {
         return;
     const w = Math.max(420, Math.round(payload?.width || HUD_WIDTH));
     const h = Math.max(HUD_BAR_HEIGHT, Math.round(payload?.height || HUD_BAR_HEIGHT));
+    const dy = Math.round(payload?.dy || 0);
     const current = hudWindow.getBounds();
-    const center = {
-        x: Math.round(current.x + current.width / 2),
-        y: Math.round(current.y + current.height / 2),
-    };
-    const display = electron_1.screen.getDisplayNearestPoint(center) || electron_1.screen.getPrimaryDisplay();
-    const newX = Math.round(display.workArea.x + (display.workArea.width - w) / 2);
+    // Anchor on the bar's horizontal center so growing/shrinking doesn't visually
+    // jerk the bar — but preserve the user's dragged position otherwise.
+    const centerX = current.x + current.width / 2;
+    const newX = Math.round(centerX - w / 2);
     hudWindow.setBounds({
         x: newX,
-        y: display.workArea.y + HUD_TOP_OFFSET,
+        y: current.y + dy,
         width: w,
         height: h,
     }, false);
+});
+electron_1.ipcMain.on('hud:drag-by', (_evt, payload) => {
+    if (!hudWindow || hudWindow.isDestroyed() || !payload)
+        return;
+    const dx = Math.round(payload.dx);
+    const dy = Math.round(payload.dy);
+    if (dx === 0 && dy === 0)
+        return;
+    const b = hudWindow.getBounds();
+    hudWindow.setBounds({ x: b.x + dx, y: b.y + dy, width: b.width, height: b.height }, false);
 });
 electron_1.ipcMain.handle('hud:move-to-display', (_evt, displayId) => {
     if (!hudWindow || hudWindow.isDestroyed())

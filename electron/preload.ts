@@ -51,8 +51,11 @@ contextBridge.exposeInMainWorld('klipeHud', {
 
   setIgnoreMouse: (ignore: boolean) => ipcRenderer.send('hud:set-ignore-mouse', ignore),
 
-  setSize: (width: number, height: number) =>
-    ipcRenderer.send('hud:set-size', { width, height }),
+  setSize: (width: number, height: number, dy?: number) =>
+    ipcRenderer.send('hud:set-size', { width, height, dy }),
+
+  dragBy: (dx: number, dy: number) =>
+    ipcRenderer.send('hud:drag-by', { dx, dy }),
 
   pushState: (payload: unknown) => ipcRenderer.send('hud:push-state', payload),
 
