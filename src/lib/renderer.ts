@@ -383,8 +383,14 @@ export function renderFrame(
   // (e.g. a 16:9 PC capture rendered into a 9:16 reels frame). Letterboxing
   // would shrink the source into a tiny strip; instead, switch to cover-fit
   // so the source fills the frame and the long axis is center-cropped.
+  //
+  // We compare against the RAW source aspect (sw/sh), not the cropped aspect
+  // (swEff/shEff). Cropping is a "zoom into a sub-region" operation, not an
+  // output-shape change — so a 4:3 crop of a 16:9 recording into a 16:9
+  // canvas should still render the cropped region inset within the frame
+  // with the background visible, not balloon it to fill the canvas.
   const canvasAspect = cw / ch;
-  const sourceAspect = swEff / shEff;
+  const sourceAspect = sw / sh;
   const fillFrame = Math.abs(canvasAspect - sourceAspect) > 0.005;
 
   let baseX: number;
