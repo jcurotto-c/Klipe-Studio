@@ -12,6 +12,7 @@
 
 import { renderFrame } from './renderer';
 import { createCursorState } from './cursor-engine';
+import { createCursorFollowState } from './cursor-follow-camera';
 import { fragmentDuration, totalOutputDuration } from './fragments';
 import {
   createSoundFxBus,
@@ -175,6 +176,11 @@ export async function exportVideo({
   onLog,
 }: ExportVideoOptions): Promise<ExportVideoResult> {
   const cursorState = createCursorState();
+  // Same cursor-follow state shape the live preview uses — without this the
+  // exporter would produce videos that ignore the safe-zone follow camera
+  // (cursor stays off-frame during zooms because we'd render at the static
+  // segment focus instead of tracking the cursor).
+  const cursorFollowState = createCursorFollowState();
   const { w, h } = getResolution(resolution);
   const qMult = QUALITY_PRESETS[quality]?.multiplier ?? 1.0;
   const throwIfAborted = (): void => {
@@ -286,6 +292,8 @@ export async function exportVideo({
       cursorState,
       cursorOptions,
       frame,
+      cursorFollowState,
+      cursorFollowEnabled: true,
     });
     if (onProgress) {
       const localOffset = Math.max(0, Math.min(activeFragmentEnd - activeFragmentStart, src - activeFragmentStart));
