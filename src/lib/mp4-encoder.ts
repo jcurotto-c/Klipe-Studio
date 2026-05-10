@@ -1,33 +1,44 @@
 /**
- * MP4 encoder built on Mediabunny.
+ * Format-agnostic export encoder built on Mediabunny.
  *
- * Replaces our previous mp4-muxer + manual VideoEncoder/AudioEncoder pipeline.
- * Mediabunny is the actively-maintained successor to mp4-muxer (same author),
- * recommended explicitly by mp4-muxer's deprecation notice. It bundles a
- * WebCodecs-aware encoder, a muxer, faststart, and back-pressure-aware
- * pipelines for both canvas frames and AudioBuffer audio.
+ * Both the MP4 and WebM export paths share this pipeline: we demux source
+ * frames via Mediabunny's `Input`, render with effects onto a 2D canvas,
+ * then push canvas snapshots through `CanvasSource` (which wraps a
+ * hardware-accelerated WebCodecs `VideoEncoder` and a muxer for the chosen
+ * container). Audio is mixed offline into an `AudioBuffer` and fed in one
+ * shot through `AudioBufferSource`.
+ *
+ * Container/codec selection:
+ *   - `'mp4'`:  Mp4OutputFormat (faststart) + AVC video + AAC audio.
+ *   - `'webm'`: WebMOutputFormat + VP9 video + Opus audio.
  *
  * Why Mediabunny instead of bare WebCodecs:
  *   - CanvasSource.add(timestamp, duration) handles VideoFrame creation,
- *     encoder back-pressure, and submission ordering for us. We can't
- *     accidentally race encode() calls (the bug that produced non-monotonic
- *     DTS in our hand-rolled wrapper).
+ *     encoder back-pressure, and submission ordering. Submissions can't race
+ *     past each other (the bug that produced non-monotonic DTS in our
+ *     hand-rolled wrapper).
  *   - AudioBufferSource.add(audioBuffer) takes a Web Audio AudioBuffer
- *     directly (which is what OfflineAudioContext returns) and handles AAC
- *     encoding internally — no manual chunking or PCM marshaling.
- *   - faststart='in-memory' rewrites the moov atom to the front of the file
- *     so the result is streamable.
+ *     directly (which is what OfflineAudioContext returns) and encodes to
+ *     AAC/Opus internally — no manual chunking or PCM marshaling.
+ *   - The MP4 muxer uses `fastStart: 'in-memory'` so moov sits at the front
+ *     of the file (streamable from byte 0). WebM's Matroska container is
+ *     streamable by design, so no equivalent option is needed there.
  */
 
 import {
   Output,
   Mp4OutputFormat,
+  WebMOutputFormat,
   BufferTarget,
   CanvasSource,
   AudioBufferSource,
 } from 'mediabunny';
 
+export type ExportContainerFormat = 'mp4' | 'webm';
+
 export interface Mp4EncoderConfig {
+  /** Container/codec selection. */
+  format: ExportContainerFormat;
   width: number;
   height: number;
   fps: number;
@@ -65,19 +76,22 @@ export async function createMp4Encoder(
   config: Mp4EncoderConfig,
 ): Promise<Mp4EncoderHandle> {
   if (!isMp4ExportSupported()) {
-    throw new Error('WebCodecs is not available in this build; cannot export MP4.');
+    throw new Error('WebCodecs is not available in this build; cannot export video.');
   }
 
+  const isMp4 = config.format === 'mp4';
+
   const output = new Output({
-    format: new Mp4OutputFormat({
+    format: isMp4
       // Rewrites moov to the front so the file is streamable from byte 0.
-      fastStart: 'in-memory',
-    }),
+      ? new Mp4OutputFormat({ fastStart: 'in-memory' })
+      // Matroska/WebM is intrinsically streamable; no faststart equivalent.
+      : new WebMOutputFormat(),
     target: new BufferTarget(),
   });
 
   const videoSource = new CanvasSource(config.canvas, {
-    codec: 'avc',
+    codec: isMp4 ? 'avc' : 'vp9',
     bitrate: config.videoBitrate,
     keyFrameInterval: KEYFRAME_INTERVAL_SEC,
   });
@@ -91,7 +105,7 @@ export async function createMp4Encoder(
   let audioSource: AudioBufferSource | null = null;
   if (config.hasAudio) {
     audioSource = new AudioBufferSource({
-      codec: 'aac',
+      codec: isMp4 ? 'aac' : 'opus',
       bitrate: config.audioBitrate ?? 192_000,
     });
     output.addAudioTrack(audioSource);
