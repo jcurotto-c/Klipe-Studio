@@ -156,6 +156,23 @@ export default function FloatingHUD(): JSX.Element {
     return () => navigator.mediaDevices?.removeEventListener?.('devicechange', onChange);
   }, [refreshDevices]);
 
+  // Drive the floating camera-preview window — a separate Electron window
+  // pinned to the bottom-left of the primary display. The disc is a
+  // recording-time element: it appears with the countdown so the user can
+  // frame themselves, stays through the recording, and goes away the
+  // instant it stops. The editor takes over from there with its own
+  // camera composition baked into the recorded video.
+  useEffect(() => {
+    const hud = window.klipeHud;
+    if (!hud) return;
+    const shouldShow = camEnabled && !!camId && (recording || countdown != null);
+    if (shouldShow) {
+      hud.cameraPreviewActivate(camId);
+    } else {
+      hud.cameraPreviewDeactivate();
+    }
+  }, [camEnabled, camId, recording, countdown]);
+
   useLayoutEffect(() => {
     if (!window.klipeHud?.setSize) return;
     const measure = (): void => {

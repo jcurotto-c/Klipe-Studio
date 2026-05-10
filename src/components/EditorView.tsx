@@ -725,15 +725,45 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     currentTime,
   });
 
+  // Camera source for the editor preview. If the recording has baked-in
+  // camera footage, play it back from the blob URL — that's what was
+  // actually captured while the user was recording. Otherwise fall back
+  // to a live stream so legacy recordings (or recordings made with the
+  // camera disabled) still get a camera in the editor if the user wants
+  // one composited at render time.
+  const recordedCamera = recording.camera ?? null;
   useEffect(() => {
+    const v = cameraVideoRef.current;
+    if (!v) return undefined;
+
+    if (recordedCamera) {
+      v.srcObject = null;
+      v.src = recordedCamera.url;
+      v.muted = true;
+      v.loop = false;
+      v.preload = 'auto';
+      v.load();
+      // Mirror playback state from the main video so the camera frame
+      // always matches the screen frame the canvas is currently drawing.
+      const main = videoRef.current;
+      if (main) {
+        v.currentTime = main.currentTime || 0;
+        if (!main.paused) v.play().catch(() => { /* will retry on next play */ });
+      }
+      setCameraAvailable(true);
+      return () => {
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+      };
+    }
+
     let cancelled = false;
     let stream: MediaStream | null = null;
-
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraAvailable(false);
       return undefined;
     }
-
     navigator.mediaDevices
       .getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false })
       .then((s) => {
@@ -742,24 +772,77 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           return;
         }
         stream = s;
-        const v = cameraVideoRef.current;
-        if (v) {
-          v.srcObject = s;
-          v.play().catch(() => { /* ignore */ });
-        }
+        v.src = '';
+        v.srcObject = s;
+        v.play().catch(() => { /* ignore */ });
         setCameraAvailable(true);
       })
       .catch(() => {
         if (!cancelled) setCameraAvailable(false);
       });
-
     return () => {
       cancelled = true;
       if (stream) stream.getTracks().forEach((t) => t.stop());
-      const v = cameraVideoRef.current;
-      if (v) v.srcObject = null;
+      v.srcObject = null;
     };
-  }, []);
+  }, [recordedCamera]);
+
+  // Keep the recorded camera video in lockstep with the main video. We
+  // mirror play/pause/seek/rate; nothing else can drift the two playheads
+  // because both videos started recording at the same wall-clock instant.
+  useEffect(() => {
+    if (!recordedCamera) return undefined;
+    const main = videoRef.current;
+    const cam = cameraVideoRef.current;
+    if (!main || !cam) return undefined;
+
+    const SYNC_THRESHOLD_S = 0.06;
+
+    const syncTime = (): void => {
+      const drift = Math.abs(cam.currentTime - main.currentTime);
+      if (drift > SYNC_THRESHOLD_S) cam.currentTime = main.currentTime;
+    };
+    const onPlay = (): void => {
+      syncTime();
+      cam.playbackRate = main.playbackRate;
+      cam.play().catch(() => { /* ignored — next play will retry */ });
+    };
+    const onPause = (): void => {
+      cam.pause();
+      syncTime();
+    };
+    const onSeeking = (): void => { cam.currentTime = main.currentTime; };
+    const onSeeked = (): void => { cam.currentTime = main.currentTime; };
+    const onRate = (): void => { cam.playbackRate = main.playbackRate; };
+    const onTime = (): void => { syncTime(); };
+
+    main.addEventListener('play', onPlay);
+    main.addEventListener('pause', onPause);
+    main.addEventListener('seeking', onSeeking);
+    main.addEventListener('seeked', onSeeked);
+    main.addEventListener('ratechange', onRate);
+    main.addEventListener('timeupdate', onTime);
+
+    // If the main video is already playing when this effect runs (e.g.,
+    // after a hot reload), sync immediately.
+    if (!main.paused) onPlay();
+    else syncTime();
+
+    return () => {
+      main.removeEventListener('play', onPlay);
+      main.removeEventListener('pause', onPause);
+      main.removeEventListener('seeking', onSeeking);
+      main.removeEventListener('seeked', onSeeked);
+      main.removeEventListener('ratechange', onRate);
+      main.removeEventListener('timeupdate', onTime);
+    };
+  }, [recordedCamera]);
+
+  // Release the recorded camera blob URL when this recording is replaced.
+  useEffect(() => {
+    if (!recordedCamera) return undefined;
+    return () => { URL.revokeObjectURL(recordedCamera.url); };
+  }, [recordedCamera]);
 
   return (
     <div className="editor pro">

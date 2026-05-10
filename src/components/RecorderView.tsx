@@ -44,12 +44,13 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
   const beginRecording = useCallback(async (
     sourceId: string,
     withMic: boolean,
+    camDeviceId: string | null,
     autoZoom: boolean,
     display: Display,
   ) => {
     setError(null);
     try {
-      const capture = await buildScreenStream(sourceId, { withMic });
+      const capture = await buildScreenStream(sourceId, { withMic, camDeviceId });
       const track = capture.screen.getVideoTracks()[0];
       const settings = track?.getSettings?.() ?? {};
       const realW = typeof settings.width === 'number' && settings.width > 0
@@ -83,6 +84,13 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
     window.klipeHud?.pushState?.({ recording: false });
     recorderRef.current = null;
     const url = URL.createObjectURL(result.blob);
+    const camera = result.cameraBlob
+      ? {
+          blob: result.cameraBlob,
+          url: URL.createObjectURL(result.cameraBlob),
+          mimeType: result.cameraMimeType ?? 'video/webm',
+        }
+      : null;
     onRecordingDone({
       blob: result.blob,
       url,
@@ -91,6 +99,7 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
       display,
       autoZoom,
       name: generateRecordingName(),
+      camera,
     });
   }, [onRecordingDone]);
 
@@ -101,7 +110,7 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
       switch (evt.type) {
         case 'start-recording':
           autoZoomRef.current = evt.autoZoom;
-          beginRecording(evt.sourceId, !!evt.micId, evt.autoZoom, evt.display);
+          beginRecording(evt.sourceId, !!evt.micId, evt.camId, evt.autoZoom, evt.display);
           break;
         case 'stop-recording':
           stopRecording();

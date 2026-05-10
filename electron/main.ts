@@ -13,6 +13,14 @@ let hudWindow: BrowserWindow | null = null;
 let cursorPreviewWindow: BrowserWindow | null = null;
 let cursorPreviewOrigin: { x: number; y: number } = { x: 0, y: 0 };
 let cursorPreviewInterval: NodeJS.Timeout | null = null;
+let cameraPreviewWindow: BrowserWindow | null = null;
+let cameraPreviewReady = false;
+let cameraPreviewQueue: CameraPreviewCommand[] = [];
+
+interface CameraPreviewCommand {
+  type: 'activate' | 'deactivate' | 'set-device';
+  deviceId?: string;
+}
 
 interface MouseTrackerHandle {
   startTime: number;
@@ -115,6 +123,7 @@ function createHudWindow(): BrowserWindow {
 
   hudWindow.on('closed', () => {
     hudWindow = null;
+    destroyCameraPreviewWindow();
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('hud:closed');
     }
@@ -239,6 +248,117 @@ function stopCursorPreview(): void {
 function sendCursorPreviewType(cursorType: string): void {
   if (!cursorPreviewWindow || cursorPreviewWindow.isDestroyed()) return;
   cursorPreviewWindow.webContents.send('cursor-preview:type', { cursorType });
+}
+
+// Camera preview is a small, transparent, always-on-top window pinned to the
+// bottom-left of the primary display. It hosts the floating circular webcam
+// preview (see src/camera-preview.tsx). The window is created lazily on first
+// activate, then kept alive across toggles — show/hide flicker is avoided by
+// fading the disc *inside* the renderer rather than at the window level.
+const CAMERA_PREVIEW_SIZE = 220;
+const CAMERA_PREVIEW_MARGIN = 24;
+
+function createCameraPreviewWindow(): BrowserWindow {
+  if (cameraPreviewWindow && !cameraPreviewWindow.isDestroyed()) {
+    return cameraPreviewWindow;
+  }
+
+  const display = screen.getPrimaryDisplay();
+  const { workArea } = display;
+  const x = workArea.x + CAMERA_PREVIEW_MARGIN;
+  const y = workArea.y + workArea.height - CAMERA_PREVIEW_SIZE - CAMERA_PREVIEW_MARGIN;
+
+  const win = new BrowserWindow({
+    width: CAMERA_PREVIEW_SIZE,
+    height: CAMERA_PREVIEW_SIZE,
+    x,
+    y,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    focusable: false,
+    show: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // Click-through for now — the disc is purely visual. Future drag/resize
+  // work will toggle this dynamically when the cursor is over the disc.
+  win.setIgnoreMouseEvents(true, { forward: true });
+  // Exclude from desktopCapturer so the preview never bleeds into the
+  // recorded video.
+  try { win.setContentProtection(true); } catch { /* ignore */ }
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173/camera-preview.html');
+  } else {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'camera-preview.html'));
+  }
+
+  cameraPreviewReady = false;
+  cameraPreviewQueue = [];
+
+  win.webContents.on('did-finish-load', () => {
+    cameraPreviewReady = true;
+    const queued = cameraPreviewQueue;
+    cameraPreviewQueue = [];
+    for (const cmd of queued) win.webContents.send('camera-preview:command', cmd);
+  });
+
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.showInactive();
+  });
+
+  win.on('closed', () => {
+    if (cameraPreviewWindow === win) cameraPreviewWindow = null;
+    cameraPreviewReady = false;
+    cameraPreviewQueue = [];
+  });
+
+  cameraPreviewWindow = win;
+  return win;
+}
+
+function sendCameraPreviewCommand(cmd: CameraPreviewCommand): void {
+  const win = createCameraPreviewWindow();
+  if (!cameraPreviewReady) {
+    // Coalesce repeated set-device + collapse activate/deactivate pairs so
+    // fast toggling doesn't queue contradictory commands.
+    if (cmd.type === 'set-device') {
+      cameraPreviewQueue = cameraPreviewQueue.filter((c) => c.type !== 'set-device');
+    } else if (cmd.type === 'activate' || cmd.type === 'deactivate') {
+      cameraPreviewQueue = cameraPreviewQueue.filter(
+        (c) => c.type !== 'activate' && c.type !== 'deactivate',
+      );
+    }
+    cameraPreviewQueue.push(cmd);
+    return;
+  }
+  win.webContents.send('camera-preview:command', cmd);
+}
+
+function destroyCameraPreviewWindow(): void {
+  if (cameraPreviewWindow && !cameraPreviewWindow.isDestroyed()) {
+    cameraPreviewWindow.close();
+  }
+  cameraPreviewWindow = null;
+  cameraPreviewReady = false;
+  cameraPreviewQueue = [];
 }
 
 // Renderer sets this via `prepare-display-media` right before calling
@@ -782,4 +902,16 @@ ipcMain.handle('hud:move-to-display', (_evt, displayId: string | number | null |
   const y = target.workArea.y + HUD_TOP_OFFSET;
   hudWindow.setBounds({ x, y, width: bounds.width, height: bounds.height }, false);
   return { ok: true as const };
+});
+
+ipcMain.on('camera-preview:activate', (_evt, payload: { deviceId?: string } | undefined) => {
+  sendCameraPreviewCommand({ type: 'activate', deviceId: payload?.deviceId ?? '' });
+});
+
+ipcMain.on('camera-preview:deactivate', () => {
+  sendCameraPreviewCommand({ type: 'deactivate' });
+});
+
+ipcMain.on('camera-preview:set-device', (_evt, payload: { deviceId?: string } | undefined) => {
+  sendCameraPreviewCommand({ type: 'set-device', deviceId: payload?.deviceId ?? '' });
 });

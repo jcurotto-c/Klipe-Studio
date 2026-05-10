@@ -18,6 +18,13 @@ export interface ScreenCapture {
   combined: MediaStream;
   screen: MediaStream;
   mic: MediaStream | null;
+  camera: MediaStream | null;
+}
+
+export interface BuildScreenStreamOptions {
+  withMic?: boolean;
+  /** Camera device id to record alongside the screen, or null/empty for none. */
+  camDeviceId?: string | null;
 }
 
 interface DesktopMediaTrackConstraints extends MediaTrackConstraints {
@@ -77,9 +84,29 @@ async function captureWithLegacyGetUserMedia(sourceId: string): Promise<MediaStr
   );
 }
 
+async function acquireCameraStream(deviceId: string): Promise<MediaStream | null> {
+  // Recording resolution is higher than the live preview disc — the user can
+  // upscale it freely in the editor without softening. Bitrate is tuned for
+  // a face/upper-body shot, not a full screen.
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      video: {
+        deviceId: { exact: deviceId },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30 },
+      },
+      audio: false,
+    });
+  } catch (err) {
+    console.warn('[capture] camera unavailable for recording:', err);
+    return null;
+  }
+}
+
 export async function buildScreenStream(
   sourceId: string,
-  { withMic = false }: { withMic?: boolean } = {},
+  { withMic = false, camDeviceId = null }: BuildScreenStreamOptions = {},
 ): Promise<ScreenCapture> {
   // Prefer getDisplayMedia + cursor: 'never' so the OS cursor is excluded
   // from captured frames. If anything in that path fails, fall back to the
@@ -93,30 +120,35 @@ export async function buildScreenStream(
     screenStream = await captureWithLegacyGetUserMedia(sourceId);
   }
 
-  if (!withMic) {
-    return { combined: screenStream, screen: screenStream, mic: null };
-  }
-
   let micStream: MediaStream | null = null;
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: true,
-        autoGainControl: false,
-      },
-      video: false,
-    });
-  } catch (err) {
-    console.warn('Microphone unavailable:', err);
-    return { combined: screenStream, screen: screenStream, mic: null };
+  if (withMic) {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: true,
+          autoGainControl: false,
+        },
+        video: false,
+      });
+    } catch (err) {
+      console.warn('Microphone unavailable:', err);
+    }
   }
 
-  const combined = new MediaStream();
-  screenStream.getVideoTracks().forEach((t) => combined.addTrack(t));
-  micStream.getAudioTracks().forEach((t) => combined.addTrack(t));
+  const cameraStream = camDeviceId ? await acquireCameraStream(camDeviceId) : null;
 
-  return { combined, screen: screenStream, mic: micStream };
+  // The "combined" stream is what the screen+mic recorder consumes. The
+  // camera goes to its own recorder so the editor can move/resize/restyle
+  // it freely without reflowing what's baked into the screen capture.
+  let combined: MediaStream = screenStream;
+  if (micStream) {
+    combined = new MediaStream();
+    screenStream.getVideoTracks().forEach((t) => combined.addTrack(t));
+    micStream.getAudioTracks().forEach((t) => combined.addTrack(t));
+  }
+
+  return { combined, screen: screenStream, mic: micStream, camera: cameraStream };
 }
 
 export function pickBestMimeType(): string {
@@ -141,12 +173,34 @@ export interface RecordingResult {
   blob: Blob;
   mimeType: string;
   mouse: MouseTrack;
+  /** Recorded camera footage, if a camera was attached at start. */
+  cameraBlob: Blob | null;
+  cameraMimeType: string | null;
 }
 
 export interface RecorderController {
   mimeType: string;
   start(): Promise<void>;
   stop(): Promise<RecordingResult>;
+}
+
+interface VideoOnlyMimeChoice {
+  mimeType: string;
+}
+function pickCameraMimeType(): VideoOnlyMimeChoice {
+  // Camera has no audio track — pick a video-only WebM codec to avoid the
+  // recorder trying to allocate an audio encoder it'll never use.
+  const candidates = [
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ];
+  for (const m of candidates) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) {
+      return { mimeType: m };
+    }
+  }
+  return { mimeType: 'video/webm' };
 }
 
 export function createRecorder(
@@ -164,6 +218,24 @@ export function createRecorder(
     if (e.data && e.data.size > 0) chunks.push(e.data);
   };
 
+  // Camera is a parallel stream — its own MediaRecorder, started/stopped
+  // alongside the screen recorder. Two-recorder sync is good enough at this
+  // granularity (sub-frame drift is invisible at typical playback speeds).
+  let cameraRecorder: MediaRecorder | null = null;
+  const cameraChunks: Blob[] = [];
+  let cameraMimeType: string | null = null;
+  if (capture.camera) {
+    const cam = pickCameraMimeType();
+    cameraMimeType = cam.mimeType;
+    cameraRecorder = new MediaRecorder(capture.camera, {
+      mimeType: cam.mimeType,
+      videoBitsPerSecond: 4_000_000,
+    });
+    cameraRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) cameraChunks.push(e.data);
+    };
+  }
+
   let mouseStartTime = 0;
   const events: KlipeMouseEvent[] = [];
   let removeListener: (() => void) | null = null;
@@ -178,24 +250,41 @@ export function createRecorder(
         events.push(evt);
         onMouseEvent?.(evt);
       });
+      // Kick off both recorders back-to-back so they share a near-identical
+      // wall-clock start. A few ms of drift is below human perception once
+      // the editor seeks/plays them together.
       recorder.start(250);
+      cameraRecorder?.start(250);
     },
     stop() {
-      return new Promise<RecordingResult>((resolve) => {
-        recorder.onstop = async () => {
-          await bridge().stopMouseTracking();
-          if (removeListener) removeListener();
-          capture.combined.getTracks().forEach((t) => t.stop());
-          capture.screen.getTracks().forEach((t) => t.stop());
-          capture.mic?.getTracks().forEach((t) => t.stop());
-          const blob = new Blob(chunks, { type: mimeType });
-          resolve({
-            blob,
-            mimeType,
-            mouse: { startTime: mouseStartTime, events },
-          });
-        };
+      const screenStop = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
         recorder.stop();
+      });
+      const cameraStop: Promise<Blob | null> = cameraRecorder
+        ? new Promise((resolve) => {
+            cameraRecorder!.onstop = () => {
+              const type = cameraMimeType ?? 'video/webm';
+              resolve(new Blob(cameraChunks, { type }));
+            };
+            cameraRecorder!.stop();
+          })
+        : Promise.resolve(null);
+
+      return Promise.all([screenStop, cameraStop]).then(async ([screenBlob, cameraBlob]) => {
+        await bridge().stopMouseTracking();
+        if (removeListener) removeListener();
+        capture.combined.getTracks().forEach((t) => t.stop());
+        capture.screen.getTracks().forEach((t) => t.stop());
+        capture.mic?.getTracks().forEach((t) => t.stop());
+        capture.camera?.getTracks().forEach((t) => t.stop());
+        return {
+          blob: screenBlob,
+          mimeType,
+          mouse: { startTime: mouseStartTime, events },
+          cameraBlob,
+          cameraMimeType: cameraBlob ? cameraMimeType : null,
+        };
       });
     },
   };

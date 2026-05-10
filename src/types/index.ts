@@ -85,6 +85,12 @@ export interface ZoomSample {
   p: number;
 }
 
+export interface RecordingCamera {
+  blob: Blob;
+  url: string;
+  mimeType: string;
+}
+
 export interface Recording {
   blob: Blob;
   url: string;
@@ -93,6 +99,13 @@ export interface Recording {
   display: Display;
   autoZoom?: boolean;
   name?: string;
+  /**
+   * Recorded camera footage captured alongside the screen. The editor plays
+   * this back through cameraVideoRef instead of opening a live stream, so
+   * the in-editor camera matches what was actually recorded — and the user
+   * can still move/resize/restyle it via cameraOptions.
+   */
+  camera?: RecordingCamera | null;
 }
 
 export interface Fragment {

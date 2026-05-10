@@ -35,6 +35,14 @@ contextBridge.exposeInMainWorld('klipeCursorPreview', {
   },
 });
 
+contextBridge.exposeInMainWorld('klipeCameraPreview', {
+  onCommand: (cb: (payload: unknown) => void) => {
+    const listener = (_evt: IpcRendererEvent, payload: unknown): void => cb(payload);
+    ipcRenderer.on('camera-preview:command', listener);
+    return () => ipcRenderer.removeListener('camera-preview:command', listener);
+  },
+});
+
 contextBridge.exposeInMainWorld('klipeHud', {
   open: () => ipcRenderer.invoke('hud:open'),
   close: () => ipcRenderer.invoke('hud:close'),
@@ -76,4 +84,10 @@ contextBridge.exposeInMainWorld('klipeHud', {
     ipcRenderer.on('hud:closed', listener);
     return () => ipcRenderer.removeListener('hud:closed', listener);
   },
+
+  cameraPreviewActivate: (deviceId: string) =>
+    ipcRenderer.send('camera-preview:activate', { deviceId }),
+  cameraPreviewDeactivate: () => ipcRenderer.send('camera-preview:deactivate'),
+  cameraPreviewSetDevice: (deviceId: string) =>
+    ipcRenderer.send('camera-preview:set-device', { deviceId }),
 });

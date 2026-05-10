@@ -989,3 +989,150 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   color: rgba(255, 255, 255, 0.85);
   background: rgba(255, 255, 255, 0.16);
 }
+
+/* ───────────── Floating circular camera preview ───────────── */
+
+/* The preview lives in its own transparent Electron window, pinned to the
+   bottom-left of the primary display. The host wrapper centers the disc
+   within that window and gives the drop shadow room to breathe. */
+.camera-preview-body {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  background-color: transparent !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: var(--hud-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+.camera-preview-host {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.hud-camera-preview {
+  width: 156px;
+  height: 156px;
+  pointer-events: none;
+  /* The wrapper itself stays at fixed dimensions; the disc inside it
+     handles the entrance/exit transform so layout stays stable. */
+}
+
+.hud-camera-disc {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 60%),
+    rgba(16, 18, 23, 0.72);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  /* Layered shadows: soft ambient cast, tight contact shadow, crystal rim,
+     inner top sheen, inner bottom darken. Mirrors the bar's depth language. */
+  box-shadow:
+    0 24px 56px -14px rgba(0, 0, 0, 0.55),
+    0 8px 18px -4px rgba(0, 0, 0, 0.32),
+    0 1px 2px rgba(0, 0, 0, 0.22),
+    0 0 0 0.5px rgba(255, 255, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+  opacity: 0;
+  transform: translate3d(0, -8px, 0) scale(0.82);
+  transform-origin: top right;
+  transition:
+    opacity 380ms var(--ease-soft),
+    transform 520ms var(--ease-soft),
+    box-shadow 480ms var(--ease-soft);
+  will-change: opacity, transform;
+  backface-visibility: hidden;
+}
+
+.hud-camera-preview.is-visible .hud-camera-disc {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+/* Soft top highlight catching the upper edge — same trick as the bar */
+.hud-camera-rim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 3;
+  background:
+    radial-gradient(140% 100% at 50% -20%, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0) 50%),
+    radial-gradient(100% 60% at 50% 110%, rgba(0, 0, 0, 0.30) 0%, rgba(0, 0, 0, 0) 60%);
+}
+
+.hud-camera-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Mirror naturally — feels like a mirror, not a camera staring back. */
+  transform: scaleX(-1);
+  background: rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transition: opacity 320ms var(--ease-out);
+}
+.hud-camera-preview.is-ready .hud-camera-video {
+  opacity: 1;
+}
+
+/* Loading spinner shown while waiting for the first frame */
+.hud-camera-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  color: rgba(255, 255, 255, 0.5);
+}
+.hud-camera-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: rgba(255, 255, 255, 0.55);
+  animation: hud-camera-spin 0.9s linear infinite;
+}
+@keyframes hud-camera-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Error state — quiet message, no harsh icons */
+.hud-camera-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--hud-text-dim);
+  z-index: 4;
+}
+.hud-camera-preview.is-error .hud-camera-disc {
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0) 60%),
+    rgba(20, 22, 28, 0.78);
+}
+

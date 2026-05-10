@@ -13,7 +13,12 @@ declare global {
   interface Window {
     klipe?: KlipeBridge;
     klipeHud?: KlipeHudBridge;
+    klipeCameraPreview?: KlipeCameraPreviewBridge;
     webkitAudioContext?: typeof AudioContext;
+  }
+
+  interface KlipeCameraPreviewBridge {
+    onCommand: (cb: (payload: unknown) => void) => () => void;
   }
 
   interface KlipeBridge {
@@ -49,6 +54,10 @@ declare global {
     onState: (cb: (state: HudState) => void) => () => void;
     onEvent: (cb: (evt: HudEvent) => void) => () => void;
     onClosed: (cb: () => void) => () => void;
+
+    cameraPreviewActivate: (deviceId: string) => void;
+    cameraPreviewDeactivate: () => void;
+    cameraPreviewSetDevice: (deviceId: string) => void;
   }
 }
 

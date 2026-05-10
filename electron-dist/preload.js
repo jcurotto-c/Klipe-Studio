@@ -27,6 +27,13 @@ electron_1.contextBridge.exposeInMainWorld('klipeCursorPreview', {
         return () => electron_1.ipcRenderer.removeListener('cursor-preview:type', listener);
     },
 });
+electron_1.contextBridge.exposeInMainWorld('klipeCameraPreview', {
+    onCommand: (cb) => {
+        const listener = (_evt, payload) => cb(payload);
+        electron_1.ipcRenderer.on('camera-preview:command', listener);
+        return () => electron_1.ipcRenderer.removeListener('camera-preview:command', listener);
+    },
+});
 electron_1.contextBridge.exposeInMainWorld('klipeHud', {
     open: () => electron_1.ipcRenderer.invoke('hud:open'),
     close: () => electron_1.ipcRenderer.invoke('hud:close'),
@@ -57,5 +64,8 @@ electron_1.contextBridge.exposeInMainWorld('klipeHud', {
         electron_1.ipcRenderer.on('hud:closed', listener);
         return () => electron_1.ipcRenderer.removeListener('hud:closed', listener);
     },
+    cameraPreviewActivate: (deviceId) => electron_1.ipcRenderer.send('camera-preview:activate', { deviceId }),
+    cameraPreviewDeactivate: () => electron_1.ipcRenderer.send('camera-preview:deactivate'),
+    cameraPreviewSetDevice: (deviceId) => electron_1.ipcRenderer.send('camera-preview:set-device', { deviceId }),
 });
 //# sourceMappingURL=preload.js.map
