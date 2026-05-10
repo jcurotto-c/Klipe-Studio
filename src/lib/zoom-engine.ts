@@ -20,12 +20,16 @@ export const DEFAULT_ZOOM: ZoomDefaults = {
 };
 
 interface AutoZoomOptions extends ZoomDefaults {
-  /** Two clicks within this gap belong to the same cluster (one zoom region). */
+  /** Two interactions within this gap belong to the same cluster. */
   mergeGap: number;
-  /** Padding added before the first click of a cluster. */
+  /** Padding added before the first interaction of a cluster. */
   padBefore: number;
-  /** Padding added after the last click of a cluster. */
+  /** Padding added after the last interaction of a cluster. */
   padAfter: number;
+  /** Minimum keystrokes for a typing burst to count as an interaction. */
+  typingMinKeys: number;
+  /** Minimum dwell-time on a UI-focus cursor type before it triggers a zoom (ms). */
+  uiFocusMinMs: number;
 }
 
 const AUTO_OPTS: AutoZoomOptions = {
@@ -33,6 +37,8 @@ const AUTO_OPTS: AutoZoomOptions = {
   mergeGap: 2500,
   padBefore: 500,
   padAfter: 500,
+  typingMinKeys: 2,
+  uiFocusMinMs: 600,
 };
 
 let _idCounter = 0;
@@ -44,18 +50,51 @@ function sortInPlace(segs: ZoomSegment[]): ZoomSegment[] {
 }
 
 /**
- * Heuristic strength score for an individual click.
- *  - Right/middle clicks rate higher: they're rare and almost always intentional.
- *  - Double-clicks (two left clicks ≤350ms apart, ≤30px apart) score even higher
- *    because they signal a strong "look here" intent.
- * Strength is used to choose a cluster's focus point.
+ * Unified "interaction" — anything that signals user intent worth zooming in
+ * for: a click, a typing burst, or a sustained UI-focus cursor type
+ * (text-field hover, button hover). Each carries a position (looked up from
+ * the nearest move/click sample), a time span, and a strength score so
+ * clusters choose the most authoritative focus point.
  */
-function scoreClicks(events: readonly KlipeMouseEvent[]): Map<MouseClickEvent, number> {
-  const scores = new Map<MouseClickEvent, number>();
+type InteractionKind = 'click' | 'type' | 'focus';
+
+interface Interaction {
+  kind: InteractionKind;
+  startT: number;
+  endT: number;
+  x: number;
+  y: number;
+  /** Higher = more authoritative when this interaction wins a cluster's focus. */
+  strength: number;
+}
+
+function lookupCursorPos(
+  events: readonly KlipeMouseEvent[],
+  t: number,
+): { x: number; y: number } | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const e = events[i]!;
+    if (e.t > t) continue;
+    if (e.type === 'move' || e.type === 'click') return { x: e.x, y: e.y };
+  }
+  for (let i = 0; i < events.length; i += 1) {
+    const e = events[i]!;
+    if (e.type === 'move' || e.type === 'click') return { x: e.x, y: e.y };
+  }
+  return null;
+}
+
+/**
+ * Walk the click stream and emit one interaction per click, scoring
+ * double-clicks and right/middle clicks higher. Mirrors the prior behavior so
+ * legacy single-click zooms land on the same focus.
+ */
+function buildClickInteractions(events: readonly KlipeMouseEvent[]): Interaction[] {
   const clicks = events.filter((e): e is MouseClickEvent => e.type === 'click');
+  const out: Interaction[] = [];
   for (let i = 0; i < clicks.length; i += 1) {
     const c = clicks[i]!;
-    let s = c.button === 'left' ? 1 : 1.5;
+    let strength = c.button === 'left' ? 1 : 1.5;
     const next = clicks[i + 1];
     if (
       next &&
@@ -64,46 +103,140 @@ function scoreClicks(events: readonly KlipeMouseEvent[]): Map<MouseClickEvent, n
       next.t - c.t <= 350 &&
       Math.hypot(next.x - c.x, next.y - c.y) <= 30
     ) {
-      s = 2;
+      strength = 2;
     }
-    scores.set(c, s);
+    out.push({ kind: 'click', startT: c.t, endT: c.t, x: c.x, y: c.y, strength });
   }
-  return scores;
+  return out;
 }
 
-interface ClickCluster {
-  clicks: MouseClickEvent[];
+/**
+ * Group runs of key events (≤ mergeGap apart) into typing bursts. A burst
+ * counts only once it has at least `typingMinKeys` keys — single keypresses
+ * are usually keyboard shortcuts, not "the user is writing here." Burst
+ * focus is the cursor position at burst start (text caret usually doesn't
+ * move much during a burst).
+ */
+function buildTypingInteractions(
+  events: readonly KlipeMouseEvent[],
+  mergeGap: number,
+  minKeys: number,
+): Interaction[] {
+  const keys = events.filter((e) => e.type === 'key') as Array<Extract<KlipeMouseEvent, { type: 'key' }>>;
+  if (!keys.length) return [];
+  const out: Interaction[] = [];
+  let burst: Array<Extract<KlipeMouseEvent, { type: 'key' }>> = [keys[0]!];
+  const flush = (): void => {
+    if (burst.length < minKeys) return;
+    const first = burst[0]!;
+    const last = burst[burst.length - 1]!;
+    const pos = lookupCursorPos(events, first.t);
+    if (!pos) return;
+    out.push({
+      kind: 'type',
+      startT: first.t,
+      endT: last.t,
+      x: pos.x,
+      y: pos.y,
+      // Typing dwells longer than a click but is less of a precise "look at this
+      // exact pixel" — score 1.2 so a colocated click still wins the focus.
+      strength: 1.2,
+    });
+  };
+  for (let i = 1; i < keys.length; i += 1) {
+    const k = keys[i]!;
+    const prev = burst[burst.length - 1]!;
+    if (k.t - prev.t <= mergeGap) {
+      burst.push(k);
+    } else {
+      flush();
+      burst = [k];
+    }
+  }
+  flush();
+  return out;
+}
+
+/**
+ * Sustained `text` (typing field) and `pointer` (clickable hover) cursor
+ * types signal that the user is focusing on a UI element. Each window where
+ * the type stays in {text, pointer} for ≥ uiFocusMinMs becomes a focus
+ * interaction. Position is the cursor position at the focus midpoint.
+ */
+function buildFocusInteractions(
+  events: readonly KlipeMouseEvent[],
+  minMs: number,
+): Interaction[] {
+  const out: Interaction[] = [];
+  let focusStart: number | null = null;
+  let focusKind: 'text' | 'pointer' | null = null;
+  for (const e of events) {
+    if (e.type !== 'cursorType') continue;
+    const isFocus = e.cursorType === 'text' || e.cursorType === 'pointer';
+    if (isFocus) {
+      if (focusStart == null) {
+        focusStart = e.t;
+        focusKind = e.cursorType as 'text' | 'pointer';
+      }
+    } else if (focusStart != null) {
+      const dur = e.t - focusStart;
+      if (dur >= minMs) {
+        const mid = focusStart + dur / 2;
+        const pos = lookupCursorPos(events, mid);
+        if (pos) {
+          out.push({
+            kind: 'focus',
+            startT: focusStart,
+            endT: e.t,
+            x: pos.x,
+            y: pos.y,
+            // Hover/text-cursor dwell is the weakest signal — it loses to any
+            // colocated click or typing burst when both are in the cluster.
+            strength: focusKind === 'text' ? 1.0 : 0.9,
+          });
+        }
+      }
+      focusStart = null;
+      focusKind = null;
+    }
+  }
+  return out;
+}
+
+interface InteractionCluster {
+  items: Interaction[];
   firstT: number;
   lastT: number;
-  /** Click with the highest strength — its position becomes the cluster focus. */
-  dominant: MouseClickEvent;
+  /** Highest-strength interaction in the cluster — its (x, y) wins the focus. */
+  dominant: Interaction;
 }
 
-function clusterClicks(
-  clicks: readonly MouseClickEvent[],
-  scores: Map<MouseClickEvent, number>,
+function clusterInteractions(
+  items: readonly Interaction[],
   mergeGap: number,
-): ClickCluster[] {
-  if (clicks.length === 0) return [];
-  const sorted = [...clicks].sort((a, b) => a.t - b.t);
-  const clusters: ClickCluster[] = [];
-  let current: ClickCluster = {
-    clicks: [sorted[0]!],
-    firstT: sorted[0]!.t,
-    lastT: sorted[0]!.t,
+): InteractionCluster[] {
+  if (items.length === 0) return [];
+  const sorted = [...items].sort((a, b) => a.startT - b.startT);
+  const clusters: InteractionCluster[] = [];
+  let current: InteractionCluster = {
+    items: [sorted[0]!],
+    firstT: sorted[0]!.startT,
+    lastT: sorted[0]!.endT,
     dominant: sorted[0]!,
   };
   for (let i = 1; i < sorted.length; i += 1) {
-    const c = sorted[i]!;
-    if (c.t - current.lastT <= mergeGap) {
-      current.clicks.push(c);
-      current.lastT = c.t;
-      if ((scores.get(c) ?? 1) > (scores.get(current.dominant) ?? 1)) {
-        current.dominant = c;
+    const it = sorted[i]!;
+    // Cluster on (item.start - cluster.lastEnd) so a long typing burst doesn't
+    // accidentally end the cluster simply because its end stretches the window.
+    if (it.startT - current.lastT <= mergeGap) {
+      current.items.push(it);
+      current.lastT = Math.max(current.lastT, it.endT);
+      if (it.strength > current.dominant.strength) {
+        current.dominant = it;
       }
     } else {
       clusters.push(current);
-      current = { clicks: [c], firstT: c.t, lastT: c.t, dominant: c };
+      current = { items: [it], firstT: it.startT, lastT: it.endT, dominant: it };
     }
   }
   clusters.push(current);
@@ -116,15 +249,20 @@ export function generateZoomSegments(
 ): ZoomSegment[] {
   const o: AutoZoomOptions = { ...AUTO_OPTS, ...opts };
   if (!mouse || !mouse.events) return [];
-  const clicks = mouse.events.filter((e): e is MouseClickEvent => e.type === 'click');
-  if (!clicks.length) return [];
 
-  const scores = scoreClicks(mouse.events);
-  const clusters = clusterClicks(clicks, scores, o.mergeGap);
+  const interactions: Interaction[] = [
+    ...buildClickInteractions(mouse.events),
+    ...buildTypingInteractions(mouse.events, o.mergeGap, o.typingMinKeys),
+    ...buildFocusInteractions(mouse.events, o.uiFocusMinMs),
+  ];
+  if (!interactions.length) return [];
+
+  const clusters = clusterInteractions(interactions, o.mergeGap);
 
   // Sustain time at full zoom is whatever is left of `duration` after we've
-  // accounted for ease-in + ease-out. Keeps single-click zooms feeling the same
-  // length as before, while multi-click clusters naturally dwell longer.
+  // accounted for ease-in + ease-out. Single-click clusters feel the same
+  // length as before; typing/UI-focus clusters naturally dwell longer because
+  // their `lastT` extends to the end of the burst.
   const sustain = Math.max(0, o.duration - o.easeIn - o.easeOut);
 
   return clusters.map((cluster) => ({

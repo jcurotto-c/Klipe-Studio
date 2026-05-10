@@ -534,6 +534,7 @@ export function renderFrame(
   drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP || 0);
 }
 
+
 function staticCursorSample(
   mouse: MouseTrack | null | undefined,
   tMs: number,

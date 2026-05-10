@@ -34,6 +34,9 @@ export interface CursorFollowState {
   prevCursorY: number;
   /** Smoothed cursor speed in px/s — drives adaptive zoom. */
   speedSpring: CursorSpringValue;
+  /** Smoothed cursor velocity components — drive look-ahead bias. */
+  velSpringX: CursorSpringValue;
+  velSpringY: CursorSpringValue;
 }
 
 export interface CursorFollowConfig {
@@ -53,6 +56,28 @@ export interface CursorFollowConfig {
   speedReferencePxs: number;
   /** Lower bound for zoom scale when cursor is moving fast. 1 = no easing. */
   minScaleFactor: number;
+  /**
+   * Look-ahead window in seconds. The camera leads the cursor by
+   * `velocity * lookAheadSec`, capped at `maxLookAheadFraction` of the
+   * visible window. Gives the cursor empty space in the direction of motion
+   * — the "movement room" that turns rigid centering into cinematic framing.
+   * Set to 0 to disable.
+   */
+  lookAheadSec: number;
+  /**
+   * Cap on look-ahead bias as a fraction of the visible (zoomed) window.
+   * 0.18 means the camera can lead the anchor by up to 18% of the visible
+   * width/height — enough to feel intentional, small enough to never hide
+   * the cursor.
+   */
+  maxLookAheadFraction: number;
+  /**
+   * Extra zoom-in multiplier applied while the cursor is at rest. When the
+   * cursor stops moving, the camera tightens by this factor over what the
+   * configured zoom asks for. 1 = no extra dwell-zoom; 1.08 = up to 8% closer
+   * when fully idle. The boost smoothly retracts as the cursor accelerates.
+   */
+  restScaleFactor: number;
 }
 
 export const DEFAULT_CURSOR_FOLLOW: CursorFollowConfig = {
@@ -69,6 +94,9 @@ export const DEFAULT_CURSOR_FOLLOW: CursorFollowConfig = {
   // minScaleFactor to 1 to disable adaptive zoom.
   speedReferencePxs: 2400,
   minScaleFactor: 0.85,
+  lookAheadSec: 0.22,
+  maxLookAheadFraction: 0.18,
+  restScaleFactor: 1.06,
 };
 
 function makeSpring(cfg: CursorFollowConfig): CursorSpringValue {
@@ -85,6 +113,13 @@ function makeSpeedSpring(): CursorSpringValue {
   return new CursorSpringValue({ stiffness: 80, damping: 30, mass: 1 });
 }
 
+function makeVelSpring(): CursorSpringValue {
+  // Velocity components feed look-ahead bias. Tuned to react quickly on
+  // sustained motion but smooth out single-frame velocity spikes from
+  // sample noise — otherwise the lead jitters with cursor jitter.
+  return new CursorSpringValue({ stiffness: 60, damping: 22, mass: 1 });
+}
+
 export function createCursorFollowState(): CursorFollowState {
   return {
     initialized: false,
@@ -99,6 +134,8 @@ export function createCursorFollowState(): CursorFollowState {
     prevCursorX: 0,
     prevCursorY: 0,
     speedSpring: makeSpeedSpring(),
+    velSpringX: makeVelSpring(),
+    velSpringY: makeVelSpring(),
   };
 }
 
@@ -115,6 +152,8 @@ export function resetCursorFollowState(state: CursorFollowState): void {
   state.prevCursorX = 0;
   state.prevCursorY = 0;
   state.speedSpring.reset();
+  state.velSpringX.reset();
+  state.velSpringY.reset();
 }
 
 interface ApplyArgs {
@@ -138,7 +177,11 @@ interface ApplyArgs {
 interface FollowResult {
   cx: number;
   cy: number;
-  /** Multiplier applied to the configured zoom scale (≤ 1). */
+  /**
+   * Multiplier applied to the configured zoom scale. Ranges from
+   * `restScaleFactor` (≥ 1, slight zoom-in at rest) down to `minScaleFactor`
+   * (≤ 1, zoom-out at full speed) — see CursorFollowConfig.
+   */
   scaleFactor: number;
 }
 
@@ -175,11 +218,21 @@ export function applyCursorFollow({
   const rawSpeed = state.lastTms == null
     ? 0
     : Math.hypot(dxC, dyC) / dtSec;
+  const rawVelX = state.lastTms == null ? 0 : dxC / dtSec;
+  const rawVelY = state.lastTms == null ? 0 : dyC / dtSec;
   state.prevCursorX = cursorX;
   state.prevCursorY = cursorY;
   const speed = state.speedSpring.step(rawSpeed, dtMs);
+  const velX = state.velSpringX.step(rawVelX, dtMs);
+  const velY = state.velSpringY.step(rawVelY, dtMs);
   const speedNorm = clamp(speed / Math.max(1, config.speedReferencePxs), 0, 1);
-  const scaleFactor = 1 - speedNorm * (1 - clamp(config.minScaleFactor, 0.5, 1));
+  // Adaptive zoom: at rest, multiply UP to restScaleFactor (tighter framing
+  // on idle) and at full speed, multiply DOWN to minScaleFactor (back off so
+  // the user sees what they're flying past). The two ends interpolate
+  // linearly through speedNorm.
+  const restMul = Math.max(1, config.restScaleFactor);
+  const minMul = clamp(config.minScaleFactor, 0.5, 1);
+  const scaleFactor = restMul + (minMul - restMul) * speedNorm;
 
   // Not zoomed → return base focus and reset focus state for the next cycle.
   if (zoomP < 0.01 || scale <= 1) {
@@ -240,22 +293,34 @@ export function applyCursorFollow({
   const safeHalfW = (visW / 2) * (1 - 2 * safeRatio);
   const safeHalfH = (visH / 2) * (1 - 2 * safeRatio);
 
+  // Cinematic look-ahead. When the cursor is moving, push the safe-zone
+  // anchor in the same direction so the cursor sits off-center, with empty
+  // space ahead of it. Capped to a fraction of the visible window so the
+  // cursor never disappears from frame even at full sprint.
+  const lookAheadSec = Math.max(0, config.lookAheadSec);
+  const leadCap = Math.max(0, config.maxLookAheadFraction);
+  const maxLeadX = visW * leadCap;
+  const maxLeadY = visH * leadCap;
+  const leadX = clamp(velX * lookAheadSec, -maxLeadX, maxLeadX);
+  const leadY = clamp(velY * lookAheadSec, -maxLeadY, maxLeadY);
+
   // Anchor the camera at the user's configured focus and shift only when the
   // cursor leaves the safe zone *around the anchor*. This keeps manual focus
   // authoritative — dragging the inspector's Focus slider moves the camera —
   // while still auto-panning to keep the cursor on screen during recording
-  // playback.
-  let nextX = baseFocusX;
-  let nextY = baseFocusY;
-  if (cursorX > baseFocusX + safeHalfW) {
-    nextX = cursorX - safeHalfW;
-  } else if (cursorX < baseFocusX - safeHalfW) {
-    nextX = cursorX + safeHalfW;
+  // playback. The look-ahead lead is added on top of the anchor so motion
+  // direction biases the framing without breaking the dead-zone behavior.
+  let nextX = baseFocusX + leadX;
+  let nextY = baseFocusY + leadY;
+  if (cursorX > nextX + safeHalfW) {
+    nextX = cursorX - safeHalfW + leadX;
+  } else if (cursorX < nextX - safeHalfW) {
+    nextX = cursorX + safeHalfW + leadX;
   }
-  if (cursorY > baseFocusY + safeHalfH) {
-    nextY = cursorY - safeHalfH;
-  } else if (cursorY < baseFocusY - safeHalfH) {
-    nextY = cursorY + safeHalfH;
+  if (cursorY > nextY + safeHalfH) {
+    nextY = cursorY - safeHalfH + leadY;
+  } else if (cursorY < nextY - safeHalfH) {
+    nextY = cursorY + safeHalfH + leadY;
   }
 
   // Keep the focus point inside the source's coordinate space, but allow it
