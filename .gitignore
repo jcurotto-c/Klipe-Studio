@@ -6,3 +6,5 @@ release/
 .vscode/
 .idea/
 recordings/
+binaries/
+electron-dist/

@@ -11,8 +11,19 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { HudEvent, HudState, ScreenSource } from '../types';
+import MobileConnectModal from './MobileConnectModal';
+import { onMobileDisconnect as subscribeMobileDisconnect } from '../lib/scrcpy-backend';
 
 const AUTO_ZOOM_KEY = 'klipe.autoZoom';
+const MOBILE_DEVICE_KEY = 'klipe.mobileDeviceId';
+const MOBILE_ENABLED_KEY = 'klipe.mobileEnabled';
+
+function loadMobileEnabled(): boolean {
+  try { return localStorage.getItem(MOBILE_ENABLED_KEY) === 'true'; } catch { return false; }
+}
+function loadMobileDeviceId(): string | null {
+  try { return localStorage.getItem(MOBILE_DEVICE_KEY); } catch { return null; }
+}
 
 interface SourceCategory {
   label: string;
@@ -83,6 +94,14 @@ export default function FloatingHUD(): JSX.Element {
   const [camId, setCamId] = useState('');
   const [autoZoom, setAutoZoom] = useState<boolean>(loadAutoZoom);
 
+  // Mobile (phone) recording state. Persisted across sessions so the
+  // toolbar wakes up reflecting the previously-paired device. We restore
+  // silently — if the saved id no longer matches an enumerated device,
+  // we clear it and the user re-pairs via the modal.
+  const [mobileEnabled, setMobileEnabled] = useState<boolean>(loadMobileEnabled);
+  const [mobileDeviceId, setMobileDeviceId] = useState<string | null>(loadMobileDeviceId);
+  const [mobileModalOpen, setMobileModalOpen] = useState(false);
+
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
 
@@ -101,6 +120,7 @@ export default function FloatingHUD(): JSX.Element {
   const [camMenuOpen, setCamMenuOpen] = useState(false);
   const micBtnRef = useRef<HTMLButtonElement | null>(null);
   const camBtnRef = useRef<HTMLButtonElement | null>(null);
+  const mobileBtnRef = useRef<HTMLDivElement | null>(null);
 
   const emit = useCallback(<E extends HudEvent>(event: E): void => {
     window.klipeHud?.emit(event);
@@ -216,8 +236,26 @@ export default function FloatingHUD(): JSX.Element {
       const height = Math.ceil(Math.max(140, bottom));
       window.klipeHud!.setSize(width, height, dy);
     };
-    const id = requestAnimationFrame(measure);
-    return () => cancelAnimationFrame(id);
+    let raf = requestAnimationFrame(measure);
+    const schedule = (): void => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+    // Re-measure whenever any popover changes size after it appears. The QR
+    // popover in particular fills in its content asynchronously (waiting on
+    // `pair:start` + QR generation) — without this, the Electron window
+    // would stay at the small initial size and the QR would be clipped.
+    const popoverEls = document.querySelectorAll<HTMLElement>('.hud-popover');
+    const observers: ResizeObserver[] = [];
+    popoverEls.forEach((el) => {
+      const ro = new ResizeObserver(schedule);
+      ro.observe(el);
+      observers.push(ro);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      observers.forEach((o) => o.disconnect());
+    };
   }, [
     sourcePickerOpen,
     micMenuOpen,
@@ -226,6 +264,8 @@ export default function FloatingHUD(): JSX.Element {
     sources.length,
     micEnabled,
     camEnabled,
+    mobileEnabled,
+    mobileModalOpen,
     autoZoom,
     recording,
     countdown,
@@ -301,6 +341,91 @@ export default function FloatingHUD(): JSX.Element {
     });
   };
 
+  const onMobileClick = useCallback((): void => {
+    // Idle button → open modal. Connected button → also open modal (lets the
+    // user disconnect or change device). The caret carries the secondary
+    // re-pair action, mirroring how mic/camera dropdowns work.
+    setMobileModalOpen(true);
+  }, []);
+
+  const onMobileConnect = useCallback((deviceId: string): void => {
+    setMobileDeviceId(deviceId);
+    setMobileEnabled(true);
+    try {
+      localStorage.setItem(MOBILE_DEVICE_KEY, deviceId);
+      localStorage.setItem(MOBILE_ENABLED_KEY, 'true');
+    } catch { /* ignore */ }
+    emit({ type: 'mobile-change', deviceId });
+    setMobileModalOpen(false);
+  }, [emit]);
+
+  const onMobileDisconnect = useCallback((): void => {
+    setMobileEnabled(false);
+    setMobileDeviceId(null);
+    try {
+      localStorage.setItem(MOBILE_ENABLED_KEY, 'false');
+      localStorage.removeItem(MOBILE_DEVICE_KEY);
+    } catch { /* ignore */ }
+    emit({ type: 'mobile-change', deviceId: null });
+  }, [emit]);
+
+  // On startup (and whenever the device list changes), validate the saved
+  // mobile device id against the actual sources of truth:
+  //
+  //  - `adb:<serial>` ids → re-query the bundled adb to confirm the phone
+  //    is still plugged in. If gone, clear the stored state.
+  //  - everything else → match against `cams` (OS videoinputs) the way we
+  //    always have.
+  useEffect(() => {
+    if (!mobileEnabled || !mobileDeviceId) return;
+    let cancelled = false;
+    const clear = (): void => {
+      if (cancelled) return;
+      setMobileEnabled(false);
+      setMobileDeviceId(null);
+      try {
+        localStorage.setItem(MOBILE_ENABLED_KEY, 'false');
+        localStorage.removeItem(MOBILE_DEVICE_KEY);
+      } catch { /* ignore */ }
+    };
+
+    if (mobileDeviceId.startsWith('adb:')) {
+      const serial = mobileDeviceId.slice('adb:'.length);
+      (async () => {
+        if (!window.klipe?.adb?.listDevices) { clear(); return; }
+        try {
+          const list = await window.klipe.adb.listDevices();
+          const found = list.find((d) => d.serial === serial);
+          if (!found || found.state !== 'device') clear();
+        } catch {
+          clear();
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+
+    if (cams.length === 0) return undefined;
+    if (!cams.some((d) => d.deviceId === mobileDeviceId)) clear();
+    return undefined;
+  }, [cams, mobileEnabled, mobileDeviceId]);
+
+  // Subscribe to WebRTC backend disconnect events. When a paired phone
+  // drops (track ended, ICE failed, recording cleanup), the HUD's
+  // mobile state must clear so the toolbar reflects reality.
+  useEffect(() => {
+    const off = subscribeMobileDisconnect((deviceId) => {
+      if (mobileDeviceId !== deviceId) return;
+      setMobileEnabled(false);
+      setMobileDeviceId(null);
+      try {
+        localStorage.setItem(MOBILE_ENABLED_KEY, 'false');
+        localStorage.removeItem(MOBILE_DEVICE_KEY);
+      } catch { /* ignore */ }
+      emit({ type: 'mobile-change', deviceId: null });
+    });
+    return off;
+  }, [mobileDeviceId, emit]);
+
   const startCountdown = useCallback(() => {
     if (!selectedId) return;
     const source = sources.find((s) => s.id === selectedId);
@@ -323,6 +448,7 @@ export default function FloatingHUD(): JSX.Element {
           sourceId: selectedId,
           micId: micEnabled ? micId : '',
           camId: camEnabled ? camId : null,
+          mobileId: mobileEnabled ? mobileDeviceId : null,
           autoZoom,
           display: {
             width: source.width,
@@ -338,7 +464,8 @@ export default function FloatingHUD(): JSX.Element {
     };
     countdownTimer.current = setTimeout(tick, 1000);
   }, [
-    selectedId, sources, micEnabled, micId, camEnabled, camId, autoZoom, emit,
+    selectedId, sources, micEnabled, micId, camEnabled, camId,
+    mobileEnabled, mobileDeviceId, autoZoom, emit,
   ]);
 
   const onRecordClick = (): void => {
@@ -417,6 +544,7 @@ export default function FloatingHUD(): JSX.Element {
     >
       <div
         className={`hud-bar ${isLive ? 'is-live' : ''}`}
+        data-mobile-active={mobileEnabled && mobileDeviceId ? '1' : '0'}
         onPointerDown={onBarPointerDown}
       >
         <div className="hud-traffic" aria-hidden={false}>
@@ -507,6 +635,23 @@ export default function FloatingHUD(): JSX.Element {
               onClose={() => setCamMenuOpen(false)}
             />
           )}
+
+          <MobileToolbarButton
+            ref={mobileBtnRef}
+            connected={mobileEnabled && mobileDeviceId != null}
+            recording={recording && mobileEnabled}
+            onClick={onMobileClick}
+            onDisconnect={onMobileDisconnect}
+          />
+          <MobileConnectModal
+            anchor={mobileBtnRef}
+            open={mobileModalOpen}
+            initialDeviceId={mobileDeviceId}
+            onConnect={onMobileConnect}
+            onClose={() => setMobileModalOpen(false)}
+          />
+
+          <span className="hud-mini-divider" aria-hidden />
 
           <StackedToggle
             icon={<SparkleIcon />}
@@ -1019,3 +1164,65 @@ function SparkleIcon(): JSX.Element {
     </svg>
   );
 }
+
+function PhoneIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+      <path d="M11 18.5h2" />
+    </svg>
+  );
+}
+
+interface MobileToolbarButtonProps {
+  connected: boolean;
+  recording: boolean;
+  onClick: () => void;
+  onDisconnect: () => void;
+}
+
+const MobileToolbarButton = forwardRef<HTMLDivElement, MobileToolbarButtonProps>(
+  function MobileToolbarButton(
+    { connected, recording, onClick, onDisconnect },
+    ref,
+  ) {
+    const title = recording
+      ? 'Phone recording live'
+      : connected
+        ? 'Phone connected — click to manage'
+        : 'Connect a phone';
+    return (
+      <div
+        ref={ref}
+        className={`hud-mobile-wrap ${connected ? 'is-connected' : ''} ${recording ? 'is-recording' : ''}`}
+      >
+        <button
+          type="button"
+          className="hud-mobile-btn"
+          onClick={onClick}
+          aria-label={title}
+          title={title}
+        >
+          <span className="hud-mobile-btn-ring" aria-hidden />
+          <span className="hud-mobile-btn-icon"><PhoneIcon /></span>
+          {connected && <span className="hud-mobile-live-dot" aria-hidden />}
+        </button>
+        {connected && (
+          <button
+            type="button"
+            className="hud-mobile-caret"
+            onClick={(e) => { e.stopPropagation(); onDisconnect(); }}
+            tabIndex={-1}
+            title="Disconnect phone"
+            aria-label="Disconnect phone"
+          >
+            <svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor"
+              strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 6l12 12M18 6l-12 12" />
+            </svg>
+          </button>
+        )}
+      </div>
+    );
+  },
+);

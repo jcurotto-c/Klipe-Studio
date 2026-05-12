@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import BackgroundPanel from './panels/BackgroundPanel';
 import CameraPanel from './panels/CameraPanel';
+import MobilePanel from './panels/MobilePanel';
 import CursorPanel from './panels/CursorPanel';
 import AudioPanel from './panels/AudioPanel';
 import PlaceholderPanel from './panels/PlaceholderPanel';
@@ -14,12 +15,14 @@ import type {
   CursorOptions,
   FrameOptions,
   KlipeMouseEvent,
+  MobileOptions,
 } from '../types';
 
 type CategoryId =
   | 'scene'
   | 'cursor'
   | 'camera'
+  | 'mobile'
   | 'captions'
   | 'audio'
   | 'shortcuts'
@@ -34,6 +37,7 @@ const CATEGORIES: Category[] = [
   { id: 'scene',       label: 'Scene' },
   { id: 'cursor',      label: 'Cursor' },
   { id: 'camera',      label: 'Camera' },
+  { id: 'mobile',      label: 'Phone' },
   { id: 'captions',    label: 'Captions' },
   { id: 'audio',       label: 'Audio' },
   { id: 'shortcuts',   label: 'Shortcuts' },
@@ -52,6 +56,9 @@ interface SidebarPanelProps {
   cameraOptions: CameraOptions;
   onCameraOptionsChange: (next: CameraOptions) => void;
   cameraAvailable: boolean;
+  mobileOptions: MobileOptions;
+  onMobileOptionsChange: (next: MobileOptions) => void;
+  mobileAvailable: boolean;
   cursorOptions: CursorOptions;
   onCursorOptionsChange: (next: CursorOptions) => void;
   audioFxOptions: AudioFxOptions;
@@ -78,6 +85,9 @@ export default function SidebarPanel({
   cameraOptions,
   onCameraOptionsChange,
   cameraAvailable,
+  mobileOptions,
+  onMobileOptionsChange,
+  mobileAvailable,
   cursorOptions,
   onCursorOptionsChange,
   audioFxOptions,
@@ -162,6 +172,14 @@ export default function SidebarPanel({
             value={cameraOptions}
             onChange={onCameraOptionsChange}
             available={cameraAvailable}
+          />
+        );
+      case 'mobile':
+        return (
+          <MobilePanel
+            value={mobileOptions}
+            onChange={onMobileOptionsChange}
+            available={mobileAvailable}
           />
         );
       case 'captions':

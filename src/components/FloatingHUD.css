@@ -489,6 +489,150 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 }
 .hud-stacked-caret:hover { color: var(--hud-text); }
 
+/* ───────────── Mobile (Phone) toolbar button — premium accent ───────── */
+
+.hud-mini-divider {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: var(--hud-divider);
+  margin: 0 4px;
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.hud-mobile-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 48px;
+  border-radius: 14px;
+}
+
+.hud-mobile-btn {
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--hud-text-dim);
+  cursor: pointer;
+  overflow: visible;
+  transition:
+    color 200ms var(--ease-out),
+    background 200ms var(--ease-out),
+    transform 220ms var(--ease-spring);
+}
+
+/* Premium gold→violet hairline ring. Uses mask-composite to render only
+ * the 1px border without filling the interior. */
+.hud-mobile-btn-ring {
+  position: absolute;
+  inset: -1px;
+  border-radius: 13px;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 205, 135, 0.55) 0%, rgba(184, 165, 255, 0.55) 100%);
+  -webkit-mask: linear-gradient(#000, #000) content-box, linear-gradient(#000, #000);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  opacity: 0.55;
+  transition: opacity 220ms var(--ease-out);
+}
+
+.hud-mobile-btn:hover {
+  color: var(--hud-text);
+  background: rgba(255, 255, 255, 0.045);
+  transform: translateY(-1px);
+}
+.hud-mobile-btn:hover .hud-mobile-btn-ring { opacity: 1; }
+.hud-mobile-btn:active {
+  transform: translateY(0) scale(0.97);
+  transition-duration: 90ms;
+}
+
+.hud-mobile-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.88;
+  transition: opacity 200ms var(--ease-out), transform 220ms var(--ease-spring);
+}
+.hud-mobile-btn:hover .hud-mobile-btn-icon { opacity: 1; transform: translateY(-0.5px); }
+
+.hud-mobile-wrap.is-connected .hud-mobile-btn { color: var(--hud-text); }
+.hud-mobile-wrap.is-connected .hud-mobile-btn-ring { opacity: 0.85; }
+
+/* Live dot — green when connected & idle; red & pulsing while recording. */
+.hud-mobile-live-dot {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4dd99c;
+  box-shadow: 0 0 6px rgba(77, 217, 156, 0.8);
+  pointer-events: none;
+}
+.hud-mobile-wrap.is-recording .hud-mobile-live-dot {
+  background: var(--hud-rec);
+  box-shadow: 0 0 8px var(--hud-rec-glow);
+  animation: hud-mobile-pulse 1.4s ease-in-out infinite;
+}
+@keyframes hud-mobile-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+/* Disconnect caret — appears on hover when a phone is connected. */
+.hud-mobile-caret {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 14px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hud-text-faint);
+  cursor: pointer;
+  border-radius: 4px;
+  margin-left: -2px;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition:
+    opacity 220ms var(--ease-out),
+    transform 220ms var(--ease-out),
+    color 160ms ease;
+}
+.hud-mobile-wrap:hover .hud-mobile-caret {
+  opacity: 0.85;
+  transform: translateX(0);
+}
+.hud-mobile-caret:hover { color: var(--hud-rec); }
+
+/* Bar-level signal that a mobile session is live in this recording.
+ * Augments — does NOT compete with — the red recording orb pulse. */
+.hud-bar[data-mobile-active="1"] .hud-record-orb::after {
+  content: "";
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffcd87, #b8a5ff);
+  box-shadow: 0 0 4px rgba(184, 165, 255, 0.6);
+  pointer-events: none;
+}
+
 /* ───────────── Record button (circular idle, morph to ● 0:12) ───────────── */
 
 .hud-record {

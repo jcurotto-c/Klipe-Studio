@@ -19,6 +19,7 @@ import type {
   Display,
   FrameOptions,
   Fragment,
+  MobileOptions,
   MouseTrack,
   ZoomSegment,
 } from '../types';
@@ -70,6 +71,13 @@ interface ExportModalProps {
   crop: Crop | null;
   cursorOptions: CursorOptions;
   frame?: FrameOptions | null;
+  /** Phone-frame styling when in phone-primary mode. */
+  mobileOptions?: MobileOptions | null;
+  /**
+   * When true, the source video IS the phone capture; the exporter
+   * renders it centered inside an iPhone frame using `mobileOptions`.
+   */
+  mobilePrimary?: boolean;
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
   blurRegions?: BlurRegion[] | null;
@@ -88,6 +96,8 @@ export default function ExportModal({
   crop,
   cursorOptions,
   frame,
+  mobileOptions,
+  mobilePrimary,
   audioFx,
   backgroundMusic,
   blurRegions,
@@ -168,6 +178,8 @@ export default function ExportModal({
         quality,
         cursorOptions,
         frame,
+        mobileOptions,
+        mobilePrimary,
         audioFx,
         backgroundMusic,
         blurRegions,
@@ -202,8 +214,8 @@ export default function ExportModal({
     }
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
-    fragments, size, fps, format, quality, cursorOptions, frame, audioFx, backgroundMusic,
-    blurRegions, onClose,
+    fragments, size, fps, format, quality, cursorOptions, frame, mobileOptions, mobilePrimary,
+    audioFx, backgroundMusic, blurRegions, onClose,
   ]);
 
   const handleStop = useCallback(() => {

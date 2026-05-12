@@ -35,6 +35,7 @@ import {
   totalOutputDuration,
 } from '../lib/fragments';
 import { DEFAULT_CAMERA_OPTIONS } from './panels/CameraPanel';
+import { DEFAULT_MOBILE_OPTIONS } from './panels/MobilePanel';
 import { DEFAULT_CURSOR_OPTIONS } from '../lib/cursor-engine';
 import { DEFAULT_FRAME_OPTIONS, WALLPAPER_PRESETS } from '../lib/renderer';
 import { DEFAULT_AUDIO_FX } from '../lib/sound-fx';
@@ -51,6 +52,7 @@ import type {
   FrameOptions,
   Fragment,
   KlipeMouseEvent,
+  MobileOptions,
   Recording,
   ZoomDefaults,
   ZoomSegment,
@@ -58,6 +60,7 @@ import type {
 
 const DEFAULTS_KEY = 'klipe.zoomDefaults';
 const CAMERA_OPTIONS_KEY = 'klipe.cameraOptions';
+const MOBILE_OPTIONS_KEY = 'klipe.mobileOptions';
 const CURSOR_OPTIONS_KEY = 'klipe.cursorOptions';
 const FRAME_OPTIONS_KEY = 'klipe.frameOptions';
 const AUDIO_FX_OPTIONS_KEY = 'klipe.audioFxOptions';
@@ -81,6 +84,17 @@ function loadCameraOptions(): CameraOptions {
     return { ...DEFAULT_CAMERA_OPTIONS, ...parsed };
   } catch {
     return DEFAULT_CAMERA_OPTIONS;
+  }
+}
+
+function loadMobileOptions(): MobileOptions {
+  try {
+    const raw = localStorage.getItem(MOBILE_OPTIONS_KEY);
+    if (!raw) return DEFAULT_MOBILE_OPTIONS;
+    const parsed = JSON.parse(raw) as Partial<MobileOptions>;
+    return { ...DEFAULT_MOBILE_OPTIONS, ...parsed };
+  } catch {
+    return DEFAULT_MOBILE_OPTIONS;
   }
 }
 
@@ -171,11 +185,18 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(loadAudioFxOptions);
   const [backgroundMusic, setBackgroundMusic] = useState<BackgroundMusic | null>(null);
   const bgMusicAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [aspectRatioId, setAspectRatioId] = useState<string>('auto');
+  // A phone clip is portrait by nature, so default the canvas to 9:16 when
+  // the recording's primary subject is a phone. The user can still change it.
+  const [aspectRatioId, setAspectRatioId] = useState<string>(
+    recording.mobile ? '9:16' : 'auto',
+  );
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
   const aspectMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [mobileOptions, setMobileOptions] = useState<MobileOptions>(loadMobileOptions);
+  const [mobileAvailable, setMobileAvailable] = useState(false);
+  const mobileVideoRef = useRef<HTMLVideoElement | null>(null);
   const [blurRegions, setBlurRegions] = useState<BlurRegion[]>([]);
   const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
   const [blurMode, setBlurMode] = useState<boolean>(false);
@@ -516,6 +537,11 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     try { localStorage.setItem(CAMERA_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   }, []);
 
+  const handleMobileOptionsChange = useCallback((next: MobileOptions) => {
+    setMobileOptions(next);
+    try { localStorage.setItem(MOBILE_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  }, []);
+
   const handleCursorOptionsChange = useCallback((next: CursorOptions) => {
     setCursorOptions(next);
     try { localStorage.setItem(CURSOR_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
@@ -844,6 +870,89 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     return () => { URL.revokeObjectURL(recordedCamera.url); };
   }, [recordedCamera]);
 
+  // Mobile (phone) playback. Mirrors the camera path verbatim: load the
+  // recorded blob, sync to the main video, revoke the URL on unmount.
+  // Unlike camera, there is NO live fallback — the phone stream only exists
+  // during recording, so if the user didn't record with a phone connected,
+  // the overlay simply doesn't render.
+  const recordedMobile = recording.mobile ?? null;
+  useEffect(() => {
+    const v = mobileVideoRef.current;
+    if (!v) return undefined;
+    if (recordedMobile) {
+      v.srcObject = null;
+      v.src = recordedMobile.url;
+      v.muted = true;
+      v.loop = false;
+      v.preload = 'auto';
+      v.load();
+      const main = videoRef.current;
+      if (main) {
+        v.currentTime = main.currentTime || 0;
+        if (!main.paused) v.play().catch(() => { /* will retry on next play */ });
+      }
+      setMobileAvailable(true);
+      return () => {
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+      };
+    }
+    setMobileAvailable(false);
+    return undefined;
+  }, [recordedMobile]);
+
+  useEffect(() => {
+    if (!recordedMobile) return undefined;
+    const main = videoRef.current;
+    const mob = mobileVideoRef.current;
+    if (!main || !mob) return undefined;
+
+    const SYNC_THRESHOLD_S = 0.06;
+
+    const syncTime = (): void => {
+      const drift = Math.abs(mob.currentTime - main.currentTime);
+      if (drift > SYNC_THRESHOLD_S) mob.currentTime = main.currentTime;
+    };
+    const onPlay = (): void => {
+      syncTime();
+      mob.playbackRate = main.playbackRate;
+      mob.play().catch(() => { /* retry on next play */ });
+    };
+    const onPause = (): void => {
+      mob.pause();
+      syncTime();
+    };
+    const onSeeking = (): void => { mob.currentTime = main.currentTime; };
+    const onSeeked  = (): void => { mob.currentTime = main.currentTime; };
+    const onRate    = (): void => { mob.playbackRate = main.playbackRate; };
+    const onTime    = (): void => { syncTime(); };
+
+    main.addEventListener('play', onPlay);
+    main.addEventListener('pause', onPause);
+    main.addEventListener('seeking', onSeeking);
+    main.addEventListener('seeked', onSeeked);
+    main.addEventListener('ratechange', onRate);
+    main.addEventListener('timeupdate', onTime);
+
+    if (!main.paused) onPlay();
+    else syncTime();
+
+    return () => {
+      main.removeEventListener('play', onPlay);
+      main.removeEventListener('pause', onPause);
+      main.removeEventListener('seeking', onSeeking);
+      main.removeEventListener('seeked', onSeeked);
+      main.removeEventListener('ratechange', onRate);
+      main.removeEventListener('timeupdate', onTime);
+    };
+  }, [recordedMobile]);
+
+  useEffect(() => {
+    if (!recordedMobile) return undefined;
+    return () => { URL.revokeObjectURL(recordedMobile.url); };
+  }, [recordedMobile]);
+
   return (
     <div className="editor pro">
       <div className="editor-top">
@@ -858,6 +967,9 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           cameraOptions={cameraOptions}
           onCameraOptionsChange={handleCameraOptionsChange}
           cameraAvailable={cameraAvailable}
+          mobileOptions={mobileOptions}
+          onMobileOptionsChange={handleMobileOptionsChange}
+          mobileAvailable={mobileAvailable}
           cursorOptions={cursorOptions}
           onCursorOptionsChange={handleCursorOptionsChange}
           audioFxOptions={audioFxOptions}
@@ -899,6 +1011,9 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               onCropChange={setCrop}
               cameraVideoRef={cameraVideoRef}
               cameraOptions={cameraOptions}
+              mobileVideoRef={mobileVideoRef}
+              mobileOptions={recordedMobile ? mobileOptions : null}
+              mobilePrimary={!!recordedMobile}
               cursorOptions={cursorOptions}
               frameOptions={frameOptions}
               aspectRatio={aspectOption.value}
@@ -913,6 +1028,13 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             />
             <video
               ref={cameraVideoRef}
+              style={{ display: 'none' }}
+              muted
+              playsInline
+              autoPlay
+            />
+            <video
+              ref={mobileVideoRef}
               style={{ display: 'none' }}
               muted
               playsInline
@@ -1131,7 +1253,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
 
       {exportOpen && (
         <ExportModal
-          sourceBlob={recording.blob}
+          sourceBlob={recordedMobile ? recordedMobile.blob : recording.blob}
           mouse={recording.mouse}
           segments={segments}
           display={recording.display}
@@ -1141,6 +1263,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           crop={exportCrop}
           cursorOptions={cursorOptions}
           frame={frameOptions}
+          mobileOptions={recordedMobile ? mobileOptions : null}
+          mobilePrimary={!!recordedMobile}
           audioFx={audioFxOptions}
           backgroundMusic={backgroundMusic}
           blurRegions={blurRegions}

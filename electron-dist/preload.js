@@ -14,6 +14,21 @@ electron_1.contextBridge.exposeInMainWorld('klipe', {
         electron_1.ipcRenderer.on('mouse-event', listener);
         return () => electron_1.ipcRenderer.removeListener('mouse-event', listener);
     },
+    adb: {
+        listDevices: () => electron_1.ipcRenderer.invoke('adb:list-devices'),
+    },
+    scrcpy: {
+        available: () => electron_1.ipcRenderer.invoke('scrcpy:available'),
+        tempPath: () => electron_1.ipcRenderer.invoke('scrcpy:temp-path'),
+        start: (args) => electron_1.ipcRenderer.invoke('scrcpy:start', args),
+        stop: () => electron_1.ipcRenderer.invoke('scrcpy:stop'),
+        read: (filePath) => electron_1.ipcRenderer.invoke('scrcpy:read', filePath),
+        onDisconnect: (cb) => {
+            const listener = (_evt, serial) => cb(serial);
+            electron_1.ipcRenderer.on('scrcpy:disconnect', listener);
+            return () => electron_1.ipcRenderer.removeListener('scrcpy:disconnect', listener);
+        },
+    },
 });
 electron_1.contextBridge.exposeInMainWorld('klipeCursorPreview', {
     onPos: (cb) => {

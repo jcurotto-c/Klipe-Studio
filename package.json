@@ -14,7 +14,9 @@
     "dev": "concurrently -k -n VITE,ELECTRON -c blue,magenta \"npm:dev:vite\" \"npm:dev:electron\"",
     "build:vite": "vite build",
     "build": "npm run typecheck && npm run build:vite && npm run build:electron && electron-builder --win --x64",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "setup:scrcpy": "node scripts/download-scrcpy.cjs",
+    "postinstall": "node scripts/download-scrcpy.cjs"
   },
   "dependencies": {
     "framer-motion": "^12.38.0",
@@ -33,6 +35,7 @@
     "cross-env": "^7.0.3",
     "electron": "^31.3.0",
     "electron-builder": "^24.13.3",
+    "extract-zip": "^2.0.1",
     "typescript": "^5.6.2",
     "vite": "^5.4.0",
     "wait-on": "^7.2.0"
@@ -44,6 +47,18 @@
       "dist/**/*",
       "electron-dist/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "binaries",
+        "to": "binaries",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "scripts",
+        "to": "scripts",
+        "filter": ["scrcpy-stop.ps1"]
+      }
     ],
     "directories": {
       "output": "release"

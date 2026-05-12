@@ -3,6 +3,16 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { hideCursor, showCursor, isCursorHidden } from './cursorHider';
+import {
+  listAdbDevices,
+  spawnScrcpy,
+  stopScrcpy,
+  readScrcpyFile,
+  cleanupAllScrcpy,
+  makeTempMobilePath,
+  onScrcpyDisconnect,
+  binariesAvailable,
+} from './scrcpy-bridge';
 
 const isDev = process.env['NODE_ENV'] === 'development';
 
@@ -409,6 +419,25 @@ ipcMain.handle('prepare-display-media', (_evt: IpcMainInvokeEvent, sourceId: unk
   return { ok: true as const };
 });
 
+// Android phone screen recording via bundled scrcpy + adb. The renderer
+// calls these IPCs to enumerate phones and to start/stop the actual
+// scrcpy child process that writes the phone's screen to a temp MP4
+// during a recording.
+ipcMain.handle('adb:list-devices', () => listAdbDevices());
+ipcMain.handle('scrcpy:temp-path', () => makeTempMobilePath());
+ipcMain.handle('scrcpy:start', (_e, args: { serial: string; filePath: string }) => spawnScrcpy(args));
+ipcMain.handle('scrcpy:stop', () => stopScrcpy());
+ipcMain.handle('scrcpy:read', (_e, p: string) => readScrcpyFile(p));
+ipcMain.handle('scrcpy:available', () => binariesAvailable());
+
+// When scrcpy exits without us asking (phone unplugged, scrcpy crashed),
+// notify the HUD window so its mobile button can return to idle.
+onScrcpyDisconnect((serial) => {
+  if (hudWindow && !hudWindow.isDestroyed()) {
+    hudWindow.webContents.send('scrcpy:disconnect', serial);
+  }
+});
+
 app.on('window-all-closed', () => {
   app.quit();
 });
@@ -425,6 +454,7 @@ function ensureCursorRestored(): void {
   }
 }
 app.on('before-quit', ensureCursorRestored);
+app.on('before-quit', () => { try { cleanupAllScrcpy(); } catch { /* never throw from teardown */ } });
 app.on('will-quit', ensureCursorRestored);
 process.on('exit', ensureCursorRestored);
 process.on('SIGINT', () => { ensureCursorRestored(); process.exit(0); });

@@ -20,6 +20,21 @@ contextBridge.exposeInMainWorld('klipe', {
     ipcRenderer.on('mouse-event', listener);
     return () => ipcRenderer.removeListener('mouse-event', listener);
   },
+  adb: {
+    listDevices: () => ipcRenderer.invoke('adb:list-devices'),
+  },
+  scrcpy: {
+    available: () => ipcRenderer.invoke('scrcpy:available'),
+    tempPath: () => ipcRenderer.invoke('scrcpy:temp-path'),
+    start: (args: { serial: string; filePath: string }) => ipcRenderer.invoke('scrcpy:start', args),
+    stop: () => ipcRenderer.invoke('scrcpy:stop'),
+    read: (filePath: string) => ipcRenderer.invoke('scrcpy:read', filePath),
+    onDisconnect: (cb: (serial: string) => void) => {
+      const listener = (_evt: IpcRendererEvent, serial: string): void => cb(serial);
+      ipcRenderer.on('scrcpy:disconnect', listener);
+      return () => ipcRenderer.removeListener('scrcpy:disconnect', listener);
+    },
+  },
 });
 
 contextBridge.exposeInMainWorld('klipeCursorPreview', {

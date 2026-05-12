@@ -19,6 +19,7 @@ import type {
   CursorOptions,
   Display,
   FrameOptions,
+  MobileOptions,
   MouseTrack,
   ZoomSegment,
 } from '../types';
@@ -36,6 +37,13 @@ interface VideoCanvasProps {
   onCropChange?: (next: Crop) => void;
   cameraVideoRef?: RefObject<HTMLVideoElement> | null;
   cameraOptions?: CameraOptions | null;
+  mobileVideoRef?: RefObject<HTMLVideoElement> | null;
+  mobileOptions?: MobileOptions | null;
+  /**
+   * When true, the phone is the recording's primary subject — the renderer
+   * skips the screen source and draws the phone centered + large.
+   */
+  mobilePrimary?: boolean;
   cursorOptions?: CursorOptions | null;
   frameOptions?: FrameOptions | null;
   /** Output aspect ratio (w/h). When null/undefined, falls back to source display ratio. */
@@ -64,6 +72,9 @@ export default function VideoCanvas({
   onCropChange,
   cameraVideoRef = null,
   cameraOptions = null,
+  mobileVideoRef = null,
+  mobileOptions = null,
+  mobilePrimary = false,
   cursorOptions = null,
   frameOptions = null,
   aspectRatio = null,
@@ -88,10 +99,10 @@ export default function VideoCanvas({
     shape: 'arrow', contentTargetHeight: 0,
   });
   const propsRef = useRef({
-    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions, blurRegions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, frameOptions, blurRegions,
   });
   propsRef.current = {
-    segments, mouse, display, background, crop, cropMode, cameraOptions, cursorOptions, frameOptions, blurRegions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, frameOptions, blurRegions,
   };
 
   useEffect(() => {
@@ -201,6 +212,9 @@ export default function VideoCanvas({
         crop: p.cropMode ? null : p.crop,
         cameraSource: cameraVideoRef?.current ?? null,
         cameraOptions: p.cameraOptions,
+        mobileSource: mobileVideoRef?.current ?? null,
+        mobileOptions: p.mobileOptions,
+        mobilePrimary: p.mobilePrimary,
         cursorState: cursorStateRef.current,
         cursorOptions: p.cursorOptions,
         frame: p.frameOptions,
@@ -217,7 +231,7 @@ export default function VideoCanvas({
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [videoRef, cameraVideoRef]);
+  }, [videoRef, cameraVideoRef, mobileVideoRef]);
 
   const sourceW = display?.width || 1920;
   const sourceH = display?.height || 1080;

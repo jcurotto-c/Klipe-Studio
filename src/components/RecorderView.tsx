@@ -25,6 +25,36 @@ function generateRecordingName(date: Date = new Date()): string {
   return `Klipe ${datePart} ${timePart}`;
 }
 
+/**
+ * Quick MP4 atom-walker: returns true if the buffer contains a top-level
+ * `moov` atom (the metadata box without which a player can't decode the
+ * file). Used as a defensive check on scrcpy's output, which can be
+ * truncated if the muxer fails to flush on Windows.
+ */
+function hasMp4Moov(buf: ArrayBuffer): boolean {
+  const view = new DataView(buf);
+  let off = 0;
+  while (off + 8 <= view.byteLength) {
+    const size = view.getUint32(off);
+    const t1 = String.fromCharCode(view.getUint8(off + 4));
+    const t2 = String.fromCharCode(view.getUint8(off + 5));
+    const t3 = String.fromCharCode(view.getUint8(off + 6));
+    const t4 = String.fromCharCode(view.getUint8(off + 7));
+    const type = t1 + t2 + t3 + t4;
+    if (type === 'moov') return true;
+    if (size === 0) break;            // atom extends to EOF
+    if (size === 1) {                 // 64-bit size follows
+      if (off + 16 > view.byteLength) break;
+      const high = view.getUint32(off + 8);
+      const low = view.getUint32(off + 12);
+      off += high * 0x100000000 + low;
+    } else {
+      off += size;
+    }
+  }
+  return false;
+}
+
 interface RecorderViewProps {
   onRecordingDone: (rec: Recording) => void;
 }
@@ -33,6 +63,8 @@ interface ActiveRecorder {
   rec: RecorderController;
   display: Display;
   autoZoom: boolean;
+  /** Set when scrcpy is recording the phone screen in parallel. */
+  scrcpy: { filePath: string; serial: string } | null;
 }
 
 export default function RecorderView({ onRecordingDone }: RecorderViewProps): JSX.Element {
@@ -41,16 +73,51 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
   const recorderRef = useRef<ActiveRecorder | null>(null);
   const autoZoomRef = useRef<boolean>(loadAutoZoom());
 
+  // Tracks whether a recording is currently being set up. The Electron
+  // HUD can in rare cases emit the start-recording event twice (a
+  // user double-click during countdown, an HMR-induced effect re-run);
+  // without this guard, the second call races into spawnScrcpy and gets
+  // the dreaded `already-recording` error while the first call is still
+  // mid-setup. Plain `recording` state isn't enough — it only flips to
+  // true *after* `await rec.start()`, which is many ms in.
+  const settingUpRef = useRef(false);
+
   const beginRecording = useCallback(async (
     sourceId: string,
     withMic: boolean,
     camDeviceId: string | null,
+    mobileDeviceId: string | null,
     autoZoom: boolean,
     display: Display,
   ) => {
+    if (settingUpRef.current || recorderRef.current) {
+      // A previous beginRecording is already in flight or completed —
+      // drop this re-entry quietly.
+      return;
+    }
+    settingUpRef.current = true;
     setError(null);
     try {
-      const capture = await buildScreenStream(sourceId, { withMic, camDeviceId });
+      // If the user picked a phone via the scrcpy backend, spawn scrcpy
+      // BEFORE we kick off the screen/camera MediaRecorders so the streams
+      // start as close to simultaneous as possible. scrcpy writes the
+      // phone's screen straight to a temp MP4; we ingest the file at stop.
+      let scrcpy: ActiveRecorder['scrcpy'] = null;
+      if (mobileDeviceId?.startsWith('adb:') && window.klipe?.scrcpy?.start) {
+        const serial = mobileDeviceId.slice('adb:'.length);
+        const filePath = await window.klipe.scrcpy.tempPath();
+        const result = await window.klipe.scrcpy.start({ serial, filePath });
+        if (result.ok) {
+          scrcpy = { filePath, serial };
+        } else {
+          // Don't block the rest of the recording — surface a warning and
+          // continue without phone capture.
+          console.warn('[recorder] scrcpy start failed:', result.error);
+          setError(`Phone recording failed: ${result.error ?? 'unknown error'}`);
+        }
+      }
+
+      const capture = await buildScreenStream(sourceId, { withMic, camDeviceId, mobileDeviceId });
       const track = capture.screen.getVideoTracks()[0];
       const settings = track?.getSettings?.() ?? {};
       const realW = typeof settings.width === 'number' && settings.width > 0
@@ -65,7 +132,7 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
         scaleFactor: display.scaleFactor,
       };
       const rec = createRecorder(capture);
-      recorderRef.current = { rec, display: realDisplay, autoZoom };
+      recorderRef.current = { rec, display: realDisplay, autoZoom, scrcpy };
       await rec.start();
       setRecording(true);
       window.klipeHud?.pushState?.({ recording: true });
@@ -73,16 +140,31 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
       console.error(e);
       setError(String(e));
       window.klipeHud?.show?.();
+      // Best-effort: if we started scrcpy before the error, stop it.
+      if (recorderRef.current?.scrcpy && window.klipe?.scrcpy?.stop) {
+        try { await window.klipe.scrcpy.stop(); } catch { /* ignore */ }
+      }
+    } finally {
+      settingUpRef.current = false;
     }
   }, []);
 
   const stopRecording = useCallback(async () => {
     if (!recorderRef.current) return;
-    const { rec, display, autoZoom } = recorderRef.current;
-    const result = await rec.stop();
+    const { rec, display, autoZoom, scrcpy } = recorderRef.current;
+    // Stop the screen+camera MediaRecorders and the scrcpy child in
+    // parallel so the resulting MP4 is finalized while we're already
+    // awaiting the MediaRecorder blobs.
+    const [result, scrcpyStop] = await Promise.all([
+      rec.stop(),
+      scrcpy && window.klipe?.scrcpy?.stop
+        ? window.klipe.scrcpy.stop()
+        : Promise.resolve(null),
+    ]);
     setRecording(false);
     window.klipeHud?.pushState?.({ recording: false });
     recorderRef.current = null;
+
     const url = URL.createObjectURL(result.blob);
     const camera = result.cameraBlob
       ? {
@@ -91,6 +173,43 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
           mimeType: result.cameraMimeType ?? 'video/webm',
         }
       : null;
+
+    // Mobile: either from the legacy MediaRecorder path (LocalDeviceBackend
+    // virtual cam) or from the scrcpy temp file. Both produce a Blob.
+    let mobile: Recording['mobile'] = null;
+    if (result.mobileBlob) {
+      mobile = {
+        blob: result.mobileBlob,
+        url: URL.createObjectURL(result.mobileBlob),
+        mimeType: result.mobileMimeType ?? 'video/webm',
+      };
+    } else if (scrcpy && scrcpyStop?.filePath && window.klipe?.scrcpy?.read) {
+      try {
+        const buf = await window.klipe.scrcpy.read(scrcpyStop.filePath);
+        // Validate before trusting the file. scrcpy on Windows occasionally
+        // fails to flush its libavformat MP4 muxer when killed mid-record;
+        // the file ends up with header bytes but no `moov` atom and the
+        // editor would show an empty Phone placeholder. If we can't find a
+        // moov atom, treat the recording as failed.
+        if (buf.byteLength > 1024 && hasMp4Moov(buf)) {
+          const blob = new Blob([buf], { type: 'video/mp4' });
+          mobile = {
+            blob,
+            url: URL.createObjectURL(blob),
+            mimeType: 'video/mp4',
+          };
+        } else {
+          console.warn(
+            `[recorder] phone recording invalid (${buf.byteLength} bytes, ` +
+            `moov=${hasMp4Moov(buf)}); editor will skip phone-primary mode.`,
+          );
+          setError('Phone recording was not finalized correctly — opening editor with screen recording only.');
+        }
+      } catch (err) {
+        console.warn('[recorder] failed to read scrcpy output:', err);
+      }
+    }
+
     onRecordingDone({
       blob: result.blob,
       url,
@@ -100,6 +219,7 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
       autoZoom,
       name: generateRecordingName(),
       camera,
+      mobile,
     });
   }, [onRecordingDone]);
 
@@ -110,7 +230,14 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
       switch (evt.type) {
         case 'start-recording':
           autoZoomRef.current = evt.autoZoom;
-          beginRecording(evt.sourceId, !!evt.micId, evt.camId, evt.autoZoom, evt.display);
+          beginRecording(
+            evt.sourceId,
+            !!evt.micId,
+            evt.camId,
+            evt.mobileId,
+            evt.autoZoom,
+            evt.display,
+          );
           break;
         case 'stop-recording':
           stopRecording();

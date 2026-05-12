@@ -33,6 +33,7 @@ import type {
   Display,
   FrameOptions,
   Fragment,
+  MobileOptions,
   MouseTrack,
   ZoomSegment,
 } from '../types';
@@ -106,6 +107,13 @@ export interface ExportVideoOptions {
   quality?: QualityName;
   cursorOptions?: Partial<CursorOptions> | null;
   frame?: Partial<FrameOptions> | null;
+  /** Phone frame styling, only consulted when `mobilePrimary` is true. */
+  mobileOptions?: MobileOptions | null;
+  /**
+   * When true, `sourceBlob` IS the phone capture; the exporter renders it
+   * inside an iPhone frame centered on the canvas (no PC screen drawn).
+   */
+  mobilePrimary?: boolean;
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
   blurRegions?: BlurRegion[] | null;
@@ -171,6 +179,8 @@ async function exportVideoMp4({
   quality = 'social',
   cursorOptions = null,
   frame = null,
+  mobileOptions = null,
+  mobilePrimary = false,
   audioFx = null,
   backgroundMusic = null,
   blurRegions = null,
@@ -185,7 +195,13 @@ async function exportVideoMp4({
   };
   throwIfAborted();
 
-  const { w, h } = getResolution(resolution);
+  const baseRes = getResolution(resolution);
+  // Phone-primary recordings are portrait; swap landscape dimensions so
+  // the iPhone frame fills the export. Without this, the phone would be
+  // a tiny stripe centered in a wide canvas.
+  const { w, h } = mobilePrimary && baseRes.w > baseRes.h
+    ? { w: baseRes.h, h: baseRes.w }
+    : baseRes;
   const qMult = QUALITY_PRESETS[quality]?.multiplier ?? 1.0;
   const baseBitrate =
     resolution === '4K' ? 24_000_000 : resolution === '1080p' ? 12_000_000 : 6_000_000;
@@ -296,6 +312,12 @@ async function exportVideoMp4({
           cursorFollowState,
           cursorFollowEnabled: true,
           blurRegions,
+          // Phone-primary export: the source IS the phone capture. Feed
+          // the decoded VideoFrame as mobileSource and tell renderFrame
+          // to draw the iPhone-centered layout instead of the screen.
+          mobilePrimary,
+          mobileSource: mobilePrimary ? videoFrame : null,
+          mobileOptions,
         });
 
         let outSec = fragOutStart + Math.max(0, mediaTimeSec - frag.srcStart);

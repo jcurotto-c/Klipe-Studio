@@ -91,6 +91,12 @@ export interface RecordingCamera {
   mimeType: string;
 }
 
+export interface RecordingMobile {
+  blob: Blob;
+  url: string;
+  mimeType: string;
+}
+
 export interface Recording {
   blob: Blob;
   url: string;
@@ -106,6 +112,14 @@ export interface Recording {
    * can still move/resize/restyle it via cameraOptions.
    */
   camera?: RecordingCamera | null;
+  /**
+   * Recorded mobile (phone) footage captured alongside the screen. Same
+   * pattern as `camera`, but rendered inside a virtual iPhone frame at
+   * draw time. The phone source is acquired through the MobileSessionBackend
+   * abstraction so future QR/WebRTC pairing can replace the v1 local-device
+   * picker without touching the recording pipeline.
+   */
+  mobile?: RecordingMobile | null;
 }
 
 export interface Fragment {
@@ -169,6 +183,26 @@ export interface CameraOptions {
   size: number;
   zoomDifferent: boolean;
   sizeDuringZoom: number;
+}
+
+export type MobilePosition = CameraPosition;
+
+export type MobileFinish = 'graphite' | 'silver' | 'gold' | 'black';
+
+export interface MobileOptions {
+  hide: boolean;
+  position: MobilePosition;
+  /** Width of the phone overlay as % of canvas width (5..35). */
+  size: number;
+  /** Width % while a zoom is active (mirrors CameraOptions.sizeDuringZoom). */
+  sizeDuringZoom: number;
+  zoomDifferent: boolean;
+  /** Tilt in degrees (-10..+10). Side buttons are skipped when tilt !== 0. */
+  tilt: number;
+  /** When false, draws a classic notch instead of a dynamic-island ellipse. */
+  showIsland: boolean;
+  /** Bezel color treatment. */
+  finish: MobileFinish;
 }
 
 export type AudioFxMode = 'auto' | 'on' | 'off';
@@ -326,6 +360,7 @@ export type HudEvent =
       sourceId: string;
       micId: string;
       camId: string | null;
+      mobileId: string | null;
       autoZoom: boolean;
       display: Display;
     }
@@ -333,4 +368,5 @@ export type HudEvent =
   | { type: 'source-change'; sourceId: string }
   | { type: 'mic-change'; deviceId: string }
   | { type: 'camera-change'; deviceId: string }
+  | { type: 'mobile-change'; deviceId: string | null }
   | { type: 'auto-zoom-change'; enabled: boolean };

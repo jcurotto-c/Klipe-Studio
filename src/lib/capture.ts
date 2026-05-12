@@ -1,4 +1,5 @@
 import type { Display, KlipeMouseEvent, MouseTrack, ScreenSource } from '../types';
+import { acquireMobileStream } from './mobile-session';
 
 function bridge(): KlipeBridge {
   const k = window.klipe;
@@ -19,12 +20,15 @@ export interface ScreenCapture {
   screen: MediaStream;
   mic: MediaStream | null;
   camera: MediaStream | null;
+  mobile: MediaStream | null;
 }
 
 export interface BuildScreenStreamOptions {
   withMic?: boolean;
   /** Camera device id to record alongside the screen, or null/empty for none. */
   camDeviceId?: string | null;
+  /** Mobile (phone-as-video-device) id, or null/empty for none. */
+  mobileDeviceId?: string | null;
 }
 
 interface DesktopMediaTrackConstraints extends MediaTrackConstraints {
@@ -106,7 +110,11 @@ async function acquireCameraStream(deviceId: string): Promise<MediaStream | null
 
 export async function buildScreenStream(
   sourceId: string,
-  { withMic = false, camDeviceId = null }: BuildScreenStreamOptions = {},
+  {
+    withMic = false,
+    camDeviceId = null,
+    mobileDeviceId = null,
+  }: BuildScreenStreamOptions = {},
 ): Promise<ScreenCapture> {
   // Prefer getDisplayMedia + cursor: 'never' so the OS cursor is excluded
   // from captured frames. If anything in that path fails, fall back to the
@@ -137,10 +145,12 @@ export async function buildScreenStream(
   }
 
   const cameraStream = camDeviceId ? await acquireCameraStream(camDeviceId) : null;
+  const mobileStream = mobileDeviceId ? await acquireMobileStream(mobileDeviceId) : null;
 
   // The "combined" stream is what the screen+mic recorder consumes. The
-  // camera goes to its own recorder so the editor can move/resize/restyle
-  // it freely without reflowing what's baked into the screen capture.
+  // camera and mobile each go to their own recorder so the editor can
+  // move/resize/restyle them freely without reflowing what's baked into
+  // the screen capture.
   let combined: MediaStream = screenStream;
   if (micStream) {
     combined = new MediaStream();
@@ -148,7 +158,13 @@ export async function buildScreenStream(
     micStream.getAudioTracks().forEach((t) => combined.addTrack(t));
   }
 
-  return { combined, screen: screenStream, mic: micStream, camera: cameraStream };
+  return {
+    combined,
+    screen: screenStream,
+    mic: micStream,
+    camera: cameraStream,
+    mobile: mobileStream,
+  };
 }
 
 export function pickBestMimeType(): string {
@@ -176,6 +192,9 @@ export interface RecordingResult {
   /** Recorded camera footage, if a camera was attached at start. */
   cameraBlob: Blob | null;
   cameraMimeType: string | null;
+  /** Recorded mobile (phone) footage, if a mobile session was attached. */
+  mobileBlob: Blob | null;
+  mobileMimeType: string | null;
 }
 
 export interface RecorderController {
@@ -236,6 +255,35 @@ export function createRecorder(
     };
   }
 
+  // Mobile is a third parallel stream — same pattern as camera, slightly
+  // higher bitrate since phones are typically ~1080×1920 vs. the camera's
+  // 1280×720. If the device disconnects mid-recording, the track's `ended`
+  // event stops the recorder cleanly so we still get a usable shorter blob.
+  let mobileRecorder: MediaRecorder | null = null;
+  const mobileChunks: Blob[] = [];
+  let mobileMimeType: string | null = null;
+  if (capture.mobile) {
+    const mob = pickCameraMimeType();
+    mobileMimeType = mob.mimeType;
+    mobileRecorder = new MediaRecorder(capture.mobile, {
+      mimeType: mob.mimeType,
+      videoBitsPerSecond: 5_000_000,
+    });
+    mobileRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) mobileChunks.push(e.data);
+    };
+    const mobileVideoTrack = capture.mobile.getVideoTracks()[0];
+    if (mobileVideoTrack) {
+      mobileVideoTrack.addEventListener('ended', () => {
+        try {
+          if (mobileRecorder && mobileRecorder.state !== 'inactive') {
+            mobileRecorder.stop();
+          }
+        } catch { /* ignore */ }
+      });
+    }
+  }
+
   let mouseStartTime = 0;
   const events: KlipeMouseEvent[] = [];
   let removeListener: (() => void) | null = null;
@@ -250,11 +298,13 @@ export function createRecorder(
         events.push(evt);
         onMouseEvent?.(evt);
       });
-      // Kick off both recorders back-to-back so they share a near-identical
-      // wall-clock start. A few ms of drift is below human perception once
-      // the editor seeks/plays them together.
+      // Kick off all parallel recorders back-to-back so they share a
+      // near-identical wall-clock start. A few ms of drift is below human
+      // perception once the editor seeks/plays them together (sub-60ms
+      // sync threshold handles it).
       recorder.start(250);
       cameraRecorder?.start(250);
+      mobileRecorder?.start(250);
     },
     stop() {
       const screenStop = new Promise<Blob>((resolve) => {
@@ -267,25 +317,44 @@ export function createRecorder(
               const type = cameraMimeType ?? 'video/webm';
               resolve(new Blob(cameraChunks, { type }));
             };
-            cameraRecorder!.stop();
+            // The mobile track's `ended` handler may have already stopped this
+            // recorder; in that case calling stop() again throws — guard it.
+            if (cameraRecorder!.state !== 'inactive') cameraRecorder!.stop();
+            else cameraRecorder!.onstop?.(new Event('stop'));
+          })
+        : Promise.resolve(null);
+      const mobileStop: Promise<Blob | null> = mobileRecorder
+        ? new Promise((resolve) => {
+            const finalize = (): void => {
+              const type = mobileMimeType ?? 'video/webm';
+              resolve(new Blob(mobileChunks, { type }));
+            };
+            mobileRecorder!.onstop = finalize;
+            if (mobileRecorder!.state !== 'inactive') mobileRecorder!.stop();
+            else finalize();
           })
         : Promise.resolve(null);
 
-      return Promise.all([screenStop, cameraStop]).then(async ([screenBlob, cameraBlob]) => {
-        await bridge().stopMouseTracking();
-        if (removeListener) removeListener();
-        capture.combined.getTracks().forEach((t) => t.stop());
-        capture.screen.getTracks().forEach((t) => t.stop());
-        capture.mic?.getTracks().forEach((t) => t.stop());
-        capture.camera?.getTracks().forEach((t) => t.stop());
-        return {
-          blob: screenBlob,
-          mimeType,
-          mouse: { startTime: mouseStartTime, events },
-          cameraBlob,
-          cameraMimeType: cameraBlob ? cameraMimeType : null,
-        };
-      });
+      return Promise.all([screenStop, cameraStop, mobileStop]).then(
+        async ([screenBlob, cameraBlob, mobileBlob]) => {
+          await bridge().stopMouseTracking();
+          if (removeListener) removeListener();
+          capture.combined.getTracks().forEach((t) => t.stop());
+          capture.screen.getTracks().forEach((t) => t.stop());
+          capture.mic?.getTracks().forEach((t) => t.stop());
+          capture.camera?.getTracks().forEach((t) => t.stop());
+          capture.mobile?.getTracks().forEach((t) => t.stop());
+          return {
+            blob: screenBlob,
+            mimeType,
+            mouse: { startTime: mouseStartTime, events },
+            cameraBlob,
+            cameraMimeType: cameraBlob ? cameraMimeType : null,
+            mobileBlob: mobileBlob && mobileBlob.size > 0 ? mobileBlob : null,
+            mobileMimeType: mobileBlob && mobileBlob.size > 0 ? mobileMimeType : null,
+          };
+        },
+      );
     },
   };
 }

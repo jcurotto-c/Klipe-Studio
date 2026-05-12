@@ -8,6 +8,7 @@ const node_path_1 = __importDefault(require("node:path"));
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_child_process_1 = require("node:child_process");
 const cursorHider_1 = require("./cursorHider");
+const scrcpy_bridge_1 = require("./scrcpy-bridge");
 const isDev = process.env['NODE_ENV'] === 'development';
 electron_1.Menu.setApplicationMenu(null);
 let mainWindow = null;
@@ -386,6 +387,23 @@ electron_1.ipcMain.handle('prepare-display-media', (_evt, sourceId) => {
     pendingDisplayMediaSourceId = sourceId;
     return { ok: true };
 });
+// Android phone screen recording via bundled scrcpy + adb. The renderer
+// calls these IPCs to enumerate phones and to start/stop the actual
+// scrcpy child process that writes the phone's screen to a temp MP4
+// during a recording.
+electron_1.ipcMain.handle('adb:list-devices', () => (0, scrcpy_bridge_1.listAdbDevices)());
+electron_1.ipcMain.handle('scrcpy:temp-path', () => (0, scrcpy_bridge_1.makeTempMobilePath)());
+electron_1.ipcMain.handle('scrcpy:start', (_e, args) => (0, scrcpy_bridge_1.spawnScrcpy)(args));
+electron_1.ipcMain.handle('scrcpy:stop', () => (0, scrcpy_bridge_1.stopScrcpy)());
+electron_1.ipcMain.handle('scrcpy:read', (_e, p) => (0, scrcpy_bridge_1.readScrcpyFile)(p));
+electron_1.ipcMain.handle('scrcpy:available', () => (0, scrcpy_bridge_1.binariesAvailable)());
+// When scrcpy exits without us asking (phone unplugged, scrcpy crashed),
+// notify the HUD window so its mobile button can return to idle.
+(0, scrcpy_bridge_1.onScrcpyDisconnect)((serial) => {
+    if (hudWindow && !hudWindow.isDestroyed()) {
+        hudWindow.webContents.send('scrcpy:disconnect', serial);
+    }
+});
 electron_1.app.on('window-all-closed', () => {
     electron_1.app.quit();
 });
@@ -403,6 +421,10 @@ function ensureCursorRestored() {
     }
 }
 electron_1.app.on('before-quit', ensureCursorRestored);
+electron_1.app.on('before-quit', () => { try {
+    (0, scrcpy_bridge_1.cleanupAllScrcpy)();
+}
+catch { /* never throw from teardown */ } });
 electron_1.app.on('will-quit', ensureCursorRestored);
 process.on('exit', ensureCursorRestored);
 process.on('SIGINT', () => { ensureCursorRestored(); process.exit(0); });

@@ -7,3 +7,7 @@ declare module 'virtual:wallpapers' {
   const presets: WallpaperManifestEntry[];
   export default presets;
 }
+
+// Allow `import './foo.css'` side-effect imports from components without
+// needing vite/client types loaded (the project sets `types: []`).
+declare module '*.css';

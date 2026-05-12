@@ -28,12 +28,23 @@ import type {
   CursorState,
   CursorType,
   FrameOptions,
+  MobileOptions,
   MouseTrack,
   ZoomSegment,
 } from '../types';
 import boneSvgUrl from '../assets/cartoon-bone.svg';
 import handSvgUrl from '../assets/pointinghand.svg';
 import type { CursorShape } from './cursor-sprites';
+import {
+  MOBILE_ASPECT,
+  drawDynamicIsland,
+  drawIPhoneBody,
+  drawNotch,
+  drawScreen,
+  drawScreenHighlight,
+  drawSideButtons,
+  drawTopSpecular,
+} from './mobile-frame';
 
 export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
   shadow: 50,
@@ -203,6 +214,20 @@ export interface RenderFrameOptions {
   crop?: Crop | null;
   cameraSource?: HTMLVideoElement | null;
   cameraOptions?: CameraOptions | null;
+  /**
+   * Phone-screen image source. `HTMLVideoElement` in the live editor;
+   * `VideoFrame` in the export pipeline (which decodes the recorded MP4
+   * directly via WebCodecs).
+   */
+  mobileSource?: HTMLVideoElement | VideoFrame | null;
+  mobileOptions?: MobileOptions | null;
+  /**
+   * When true, the phone is the recording's primary subject. The renderer
+   * ignores the screen source entirely and draws the phone frame centered
+   * and large, with no camera/cursor/zoom overlays. Set this from the
+   * editor when `recording.mobile` exists.
+   */
+  mobilePrimary?: boolean;
   cursorState?: CursorState | null;
   cursorOptions?: Partial<CursorOptions> | null;
   frame?: Partial<FrameOptions> | null;
@@ -330,6 +355,9 @@ export function renderFrame(
     crop = null,
     cameraSource = null,
     cameraOptions = null,
+    mobileSource = null,
+    mobileOptions = null,
+    mobilePrimary = false,
     cursorState = null,
     cursorOptions = null,
     frame = null,
@@ -367,6 +395,15 @@ export function renderFrame(
     drawBackground(ctx, cw, ch, normalizeBackground(background));
   } else {
     ctx.clearRect(0, 0, cw, ch);
+  }
+
+  // Phone-primary mode: the phone is the recording's main subject. Render
+  // the phone frame centered, large, on the background; skip the screen
+  // source, cursor, camera, zoom, and blur entirely (none of those apply
+  // when there's no screen behind the phone).
+  if (mobilePrimary) {
+    drawMobilePrimary(ctx, mobileSource, mobileOptions, cw, ch);
+    return;
   }
 
   const sw = source.videoWidth || source.displayWidth || displayWidth;
@@ -528,6 +565,9 @@ export function renderFrame(
 
   if (!cursorEnabled) {
     drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP || 0);
+    // Mobile draws AFTER camera so that when both share a slot the phone
+    // stacks on top — an arbitrary but consistent choice.
+    drawMobileOverlay(ctx, mobileSource, mobileOptions, cw, ch, zoomP || 0);
     return;
   }
 
@@ -566,6 +606,7 @@ export function renderFrame(
   }
 
   drawCameraOverlay(ctx, cameraSource, cameraOptions, cw, ch, zoomP || 0);
+  drawMobileOverlay(ctx, mobileSource, mobileOptions, cw, ch, zoomP || 0);
 }
 
 
@@ -1079,4 +1120,287 @@ function drawCameraOverlay(
   ctx.lineWidth = 1;
   ctx.stroke();
   ctx.restore();
+}
+
+/* ── Mobile overlay (premium iPhone-style frame) ─────────────────────── */
+
+const MOBILE_PADDING_RATIO = 0.025;
+
+function mobileSlot(
+  position: CameraPosition,
+  cw: number,
+  ch: number,
+  w: number,
+  h: number,
+  pad: number,
+): { x: number; y: number } {
+  const left = pad;
+  const right = cw - w - pad;
+  const cx = (cw - w) / 2;
+  const top = pad;
+  const bottom = ch - h - pad;
+  const cy = (ch - h) / 2;
+  switch (position) {
+    case 'top-left':      return { x: left,  y: top };
+    case 'top-center':    return { x: cx,    y: top };
+    case 'top-right':     return { x: right, y: top };
+    case 'middle-left':   return { x: left,  y: cy };
+    case 'middle-right':  return { x: right, y: cy };
+    case 'bottom-left':   return { x: left,  y: bottom };
+    case 'bottom-center': return { x: cx,    y: bottom };
+    case 'bottom-right':
+    default:              return { x: right, y: bottom };
+  }
+}
+
+/**
+ * Pure phone-frame drawing primitive — takes explicit geometry so callers
+ * decide where and how big. Both the (PiP) overlay and the (centered)
+ * primary mode use this; they only differ in geometry.
+ */
+/**
+ * Read the source's dimensions in a way that works for both
+ * HTMLVideoElement (live editor) and VideoFrame (export pipeline).
+ *
+ * For HTMLVideoElement we deliberately do NOT gate on `readyState >= 2`:
+ * during a seek (which fires whenever the editor's sync effect snaps the
+ * mobile track to the main video's time) readyState briefly drops to 1.
+ * If we returned null there, the editor would flash the placeholder
+ * every time the user paused. Once `videoWidth > 0` (i.e. metadata
+ * loaded) the dimensions are stable, and `drawImage` on a seeking
+ * video draws the last decoded frame — better than a blank placeholder.
+ */
+function mobileSourceDims(src: HTMLVideoElement | VideoFrame | null): { w: number; h: number } | null {
+  if (!src) return null;
+  if (src instanceof HTMLVideoElement) {
+    if (src.videoWidth <= 0 || src.videoHeight <= 0) return null;
+    return { w: src.videoWidth, h: src.videoHeight };
+  }
+  if (src.displayWidth > 0 && src.displayHeight > 0) {
+    return { w: src.displayWidth, h: src.displayHeight };
+  }
+  return null;
+}
+
+// ── Cached static phone-chrome layer ───────────────────────────────────
+//
+// The drop shadow uses a blur radius of w * 0.32 (~250 px at export
+// resolutions). Canvas2D shadow blur is CPU-bound in Chromium — redrawing
+// the same chrome 60×/sec is what was making mobile-primary exports take
+// 20 minutes for 30 seconds of video. We render the shadow + body + rim
+// + side buttons ONCE per unique geometry into an offscreen canvas, then
+// `drawImage` that bitmap each frame. The per-frame cost drops from
+// hundreds of ms to sub-millisecond.
+
+interface PhoneChromeBack {
+  /** Offscreen canvas containing shadow + body + rim + side buttons. */
+  canvas: HTMLCanvasElement;
+  /** Pixels of padding around the phone-body rect inside the cache canvas. */
+  pad: number;
+}
+
+const phoneChromeCache = new Map<string, PhoneChromeBack>();
+const PHONE_CHROME_CACHE_MAX = 4;
+
+function getPhoneChromeBack(
+  w: number,
+  h: number,
+  finish: MobileOptions['finish'],
+): PhoneChromeBack {
+  const key = `${Math.round(w)}|${Math.round(h)}|${finish}`;
+  const cached = phoneChromeCache.get(key);
+  if (cached) return cached;
+  if (typeof document === 'undefined') {
+    // Should never happen in renderer/exporter, but defensive.
+    throw new Error('phone-chrome cache requires document');
+  }
+  const pad = Math.ceil(w * 0.5);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(w) + pad * 2;
+  canvas.height = Math.ceil(h) + pad * 2;
+  const cctx = canvas.getContext('2d');
+  if (!cctx) throw new Error('phone-chrome offscreen 2d context unavailable');
+  const bx = pad;
+  const by = pad;
+  const bodyRadius = w * 0.16;
+
+  // Drop shadow.
+  cctx.save();
+  cctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+  cctx.shadowBlur = w * 0.32;
+  cctx.shadowOffsetY = w * 0.10;
+  cctx.fillStyle = '#000';
+  cctx.beginPath();
+  cctx.roundRect(bx, by, w, h, bodyRadius);
+  cctx.fill();
+  cctx.restore();
+
+  // Side buttons + body fill + rim.
+  drawSideButtons(cctx, bx, by, w, h, finish);
+  drawIPhoneBody(cctx, bx, by, w, h, bodyRadius, finish);
+
+  // LRU-ish eviction: drop the oldest entry when at capacity.
+  if (phoneChromeCache.size >= PHONE_CHROME_CACHE_MAX) {
+    const firstKey = phoneChromeCache.keys().next().value;
+    if (firstKey !== undefined) phoneChromeCache.delete(firstKey);
+  }
+  const entry: PhoneChromeBack = { canvas, pad };
+  phoneChromeCache.set(key, entry);
+  return entry;
+}
+
+function drawPhoneFrame(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  mobileSource: HTMLVideoElement | VideoFrame | null,
+  finish: MobileOptions['finish'],
+  showIsland: boolean,
+  tilt: number,
+): void {
+  const bodyRadius = w * 0.16;
+  const bezelThickness = w * 0.038;
+  const tilted = tilt !== 0;
+
+  ctx.save();
+  if (tilted) {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate((tilt * Math.PI) / 180);
+    ctx.translate(-cx, -cy);
+  }
+
+  // 1-5. Drop shadow + side buttons + body + rim. All static — pulled
+  // from a per-geometry offscreen cache. The huge perf saving here is on
+  // the shadow blur, which would otherwise run on every export frame.
+  // (Tilt is uncommon and skips cache — rotating the cached bitmap is
+  // possible but not worth it until users actually use the tilt slider.)
+  if (tilted) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    ctx.shadowBlur = w * 0.32;
+    ctx.shadowOffsetY = w * 0.10;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, bodyRadius);
+    ctx.fill();
+    ctx.restore();
+    drawSideButtons(ctx, x, y, w, h, finish);
+    drawIPhoneBody(ctx, x, y, w, h, bodyRadius, finish);
+  } else {
+    const back = getPhoneChromeBack(w, h, finish);
+    ctx.drawImage(back.canvas, x - back.pad, y - back.pad);
+  }
+
+  // 6. Screen content — clipped to rounded screen rect. Cover-fit the source
+  // video; otherwise paint a dark placeholder.
+  drawScreen(ctx, x, y, w, h, bodyRadius, bezelThickness,
+    (screenX, screenY, screenW, screenH) => {
+      const dims = mobileSourceDims(mobileSource);
+      if (dims && mobileSource) {
+        const cover = Math.max(screenW / dims.w, screenH / dims.h);
+        const dw = dims.w * cover;
+        const dh = dims.h * cover;
+        const dx = screenX + (screenW - dw) / 2;
+        const dy = screenY + (screenH - dh) / 2;
+        ctx.drawImage(mobileSource, dx, dy, dw, dh);
+      } else {
+        const grad = ctx.createLinearGradient(screenX, screenY, screenX, screenY + screenH);
+        grad.addColorStop(0, '#1a2030');
+        grad.addColorStop(1, '#080a10');
+        ctx.fillStyle = grad;
+        ctx.fillRect(screenX, screenY, screenW, screenH);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.font = `${Math.round(w * 0.06)}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Phone', screenX + screenW / 2, screenY + screenH / 2);
+      }
+    });
+
+  // 7. Screen highlight (subtle gloss).
+  const screenX = x + bezelThickness;
+  const screenY = y + bezelThickness;
+  const screenW = w - bezelThickness * 2;
+  const screenH = h - bezelThickness * 2;
+  drawScreenHighlight(ctx, screenX, screenY, screenW, screenH, bodyRadius, bezelThickness);
+
+  // 8. Dynamic island OR classic notch — sits on top of screen content.
+  if (showIsland) {
+    drawDynamicIsland(ctx, x, y, w, bezelThickness);
+  } else {
+    drawNotch(ctx, x, y, w, bezelThickness);
+  }
+
+  // 9. Top specular highlight.
+  drawTopSpecular(ctx, x, y, w, h, bodyRadius);
+
+  ctx.restore();
+}
+
+function drawMobileOverlay(
+  ctx: CanvasRenderingContext2D,
+  mobileSource: HTMLVideoElement | VideoFrame | null,
+  mobileOptions: MobileOptions | null,
+  cw: number,
+  ch: number,
+  zoomP: number,
+): void {
+  if (!mobileOptions || mobileOptions.hide) return;
+
+  const baseSize = Number(mobileOptions.size) || 18;
+  const zoomSize = Number(mobileOptions.sizeDuringZoom) || baseSize;
+  const blend = mobileOptions.zoomDifferent ? Math.max(0, Math.min(1, zoomP)) : 0;
+  const sizePct = baseSize + (zoomSize - baseSize) * blend;
+
+  // Phone width is the user-facing size; height is locked to the modern
+  // iPhone 19.5:9 aspect.
+  const W = Math.max(40, (sizePct / 100) * cw);
+  const H = W * MOBILE_ASPECT;
+  // If the height would exceed the canvas, scale both down proportionally.
+  const scale = H > ch * 0.95 ? (ch * 0.95) / H : 1;
+  const w = W * scale;
+  const h = H * scale;
+  const pad = Math.max(8, cw * MOBILE_PADDING_RATIO);
+  const { x, y } = mobileSlot(mobileOptions.position, cw, ch, w, h, pad);
+
+  const tilt = Math.max(-10, Math.min(10, Number(mobileOptions.tilt) || 0));
+  drawPhoneFrame(ctx, x, y, w, h, mobileSource, mobileOptions.finish, mobileOptions.showIsland, tilt);
+}
+
+/**
+ * Centered, large phone for "phone is the recording subject" mode. Ignores
+ * the position/size options from `MobileOptions` (position is forced to
+ * center, size is computed to fit); finish/showIsland/tilt still apply.
+ */
+function drawMobilePrimary(
+  ctx: CanvasRenderingContext2D,
+  mobileSource: HTMLVideoElement | VideoFrame | null,
+  mobileOptions: MobileOptions | null,
+  cw: number,
+  ch: number,
+): void {
+  // Aim for the phone to fill ~92% of the canvas height. In wide canvases
+  // (16:9) the phone naturally takes a thin vertical strip in the center —
+  // that's the intended cinematic look. In tall canvases (9:16) the phone
+  // fills nearly the whole screen, which is what the user wants.
+  let h = ch * 0.92;
+  let w = h / MOBILE_ASPECT;
+  // Don't let the phone exceed 70% of canvas width; in extreme portrait
+  // canvases this caps the phone and adds breathing room either side.
+  if (w > cw * 0.7) {
+    w = cw * 0.7;
+    h = w * MOBILE_ASPECT;
+  }
+  const x = (cw - w) / 2;
+  const y = (ch - h) / 2;
+
+  const finish: MobileOptions['finish'] = mobileOptions?.finish ?? 'graphite';
+  const showIsland = mobileOptions?.showIsland ?? true;
+  const tilt = Math.max(-10, Math.min(10, Number(mobileOptions?.tilt) || 0));
+
+  drawPhoneFrame(ctx, x, y, w, h, mobileSource, finish, showIsland, tilt);
 }

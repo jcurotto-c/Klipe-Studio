@@ -21,6 +21,12 @@ declare global {
     onCommand: (cb: (payload: unknown) => void) => () => void;
   }
 
+  interface AdbDevice {
+    serial: string;
+    model: string;
+    state: 'device' | 'unauthorized' | 'offline' | 'recovery' | 'unknown';
+  }
+
   interface KlipeBridge {
     getScreenSources: () => Promise<ScreenSource[]>;
     prepareDisplayMedia?: (sourceId: string) => Promise<{ ok: boolean }>;
@@ -34,6 +40,19 @@ declare global {
     getPrimaryDisplaySize: () => Promise<Display>;
     focusWindowSource: (sourceId: string) => Promise<{ ok: boolean }>;
     onMouseEvent: (cb: (evt: KlipeMouseEvent) => void) => () => void;
+    /** ADB device enumeration via the bundled adb.exe. */
+    adb: {
+      listDevices: () => Promise<AdbDevice[]>;
+    };
+    /** Bundled scrcpy lifecycle for Android phone screen recording. */
+    scrcpy: {
+      available: () => Promise<boolean>;
+      tempPath: () => Promise<string>;
+      start: (args: { serial: string; filePath: string }) => Promise<{ ok: boolean; error?: string }>;
+      stop: () => Promise<{ filePath: string | null; exitCode: number | null; alreadyExited?: boolean }>;
+      read: (filePath: string) => Promise<ArrayBuffer>;
+      onDisconnect: (cb: (serial: string) => void) => () => void;
+    };
   }
 
   interface KlipeHudBridge {

@@ -1,0 +1,304 @@
+/* Mobile Connect — anchored popover.
+ * Builds on the `.hud-popover` glass base in FloatingHUD.css (position,
+ * border, shadow, backdrop-filter, fade/scale entry, is-above flip).
+ * Everything below is the popover's own structure. */
+
+.hud-mobile-popover {
+  width: 340px;
+  padding: 14px 14px 10px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+
+.hud-mobile-pop-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 2px 12px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+}
+.hud-mobile-pop-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
+  letter-spacing: 1.4px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+}
+.hud-mobile-pop-eyebrow-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffcd87, #b8a5ff);
+  box-shadow: 0 0 5px rgba(184, 165, 255, 0.6);
+}
+.hud-mobile-pop-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--hud-text);
+}
+.hud-mobile-pop-sub {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: rgba(225, 230, 240, 0.55);
+}
+
+/* ── Device list ────────────────────────────────────────────────────── */
+
+.hud-mobile-pop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.hud-mobile-row {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px;
+  border-radius: 9px;
+  color: var(--hud-text);
+  cursor: pointer;
+  transition:
+    background 180ms var(--ease-out),
+    transform 180ms var(--ease-soft),
+    opacity 160ms var(--ease-out);
+}
+.hud-mobile-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+.hud-mobile-row:active:not(:disabled) {
+  transform: scale(0.985);
+}
+.hud-mobile-row:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.hud-mobile-row.phone-like {
+  /* faint gold edge to signal a phone-likely match */
+  background: linear-gradient(90deg, rgba(255, 205, 135, 0.04) 0%, rgba(255, 205, 135, 0) 22%);
+}
+.hud-mobile-row.phone-like:hover:not(:disabled) {
+  background:
+    linear-gradient(90deg, rgba(255, 205, 135, 0.07) 0%, rgba(255, 205, 135, 0) 22%),
+    rgba(255, 255, 255, 0.05);
+}
+.hud-mobile-row.is-current {
+  background: rgba(184, 165, 255, 0.06);
+}
+.hud-mobile-row.is-success {
+  background: rgba(80, 210, 140, 0.10);
+  animation: hud-mobile-row-success 420ms var(--ease-spring);
+}
+@keyframes hud-mobile-row-success {
+  0%   { box-shadow: 0 0 0 0 rgba(80, 210, 140, 0.5); }
+  60%  { box-shadow: 0 0 0 6px rgba(80, 210, 140, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(80, 210, 140, 0); }
+}
+.hud-mobile-row.is-error {
+  background: rgba(255, 79, 90, 0.10);
+}
+
+.hud-mobile-row-icon {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(225, 230, 240, 0.8);
+}
+.hud-mobile-row.phone-like .hud-mobile-row-icon { color: #ffcd87; }
+.hud-mobile-row.is-success .hud-mobile-row-icon { color: #4dd99c; }
+.hud-mobile-row.is-error .hud-mobile-row-icon { color: var(--hud-rec); }
+
+.hud-mobile-row-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.hud-mobile-row-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--hud-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-mobile-row-sub {
+  font-size: 10.5px;
+  color: rgba(225, 230, 240, 0.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-mobile-row.is-error .hud-mobile-row-sub { color: rgba(255, 175, 180, 0.85); }
+.hud-mobile-row.is-success .hud-mobile-row-sub { color: rgba(110, 230, 170, 0.85); }
+.hud-mobile-row.is-current .hud-mobile-row-sub { color: rgba(184, 165, 255, 0.85); }
+
+.hud-mobile-row-state {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(225, 230, 240, 0.6);
+}
+.hud-mobile-row.is-success .hud-mobile-row-state { color: #4dd99c; }
+.hud-mobile-row.is-current .hud-mobile-row-state { color: #b8a5ff; }
+.hud-mobile-row.is-error .hud-mobile-row-state { color: var(--hud-rec); }
+
+/* ── Loading / Empty states ─────────────────────────────────────────── */
+
+.hud-mobile-pop-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 10px;
+  font-size: 12px;
+  color: rgba(225, 230, 240, 0.6);
+}
+
+.hud-mobile-pop-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 10px 12px;
+  text-align: center;
+}
+.hud-mobile-pop-empty-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--hud-text);
+}
+.hud-mobile-pop-empty-sub {
+  font-size: 11px;
+  color: rgba(225, 230, 240, 0.55);
+  line-height: 1.45;
+  max-width: 260px;
+}
+
+.hud-mobile-pop-link {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: rgba(184, 165, 255, 0.95);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.hud-mobile-pop-link:hover {
+  background: rgba(184, 165, 255, 0.10);
+  color: #d9ccff;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────── */
+
+.hud-mobile-pop-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 4px 2px;
+  margin-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.045);
+}
+.hud-mobile-pop-future {
+  font-size: 10px;
+  font-style: italic;
+  color: rgba(225, 230, 240, 0.35);
+  letter-spacing: 0.2px;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────── */
+
+.hud-mobile-spin {
+  animation: hud-mobile-spin 900ms linear infinite;
+}
+@keyframes hud-mobile-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Backend tabs (rendered when more than one backend exists) ──────── */
+
+.hud-mobile-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin: 0 0 10px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 10px;
+}
+.hud-mobile-tab {
+  appearance: none;
+  flex: 1 1 auto;
+  background: transparent;
+  border: 0;
+  color: rgba(225, 230, 240, 0.62);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.1px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition:
+    background 200ms var(--ease-out),
+    color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+.hud-mobile-tab:hover:not(:disabled):not(.is-active) {
+  color: var(--hud-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.hud-mobile-tab.is-active {
+  color: var(--hud-text);
+  background:
+    linear-gradient(135deg, rgba(255, 205, 135, 0.10) 0%, rgba(184, 165, 255, 0.10) 100%),
+    rgba(255, 255, 255, 0.05);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 205, 135, 0.22),
+    inset 0 0 0 1px rgba(184, 165, 255, 0.22);
+}
+.hud-mobile-tab:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Device-row warning state (phone reachable but not selectable, e.g.
+ *    unauthorized / offline). Sits between idle and is-error. ──────── */
+
+.hud-mobile-row.is-warning {
+  background: rgba(255, 205, 135, 0.06);
+}
+.hud-mobile-row.is-warning .hud-mobile-row-icon { color: #ffcd87; }
+.hud-mobile-row.is-warning .hud-mobile-row-sub { color: rgba(255, 215, 160, 0.85); }
+.hud-mobile-row.is-warning .hud-mobile-row-state { color: #ffcd87; }
+.hud-mobile-row.is-warning:disabled { opacity: 0.85; cursor: default; }
+
+/* ── Tab + footer hints ──────────────────────────────────────────── */
+
+.hud-mobile-pop-hint {
+  font-size: 10.5px;
+  color: rgba(225, 230, 240, 0.42);
+  letter-spacing: 0.2px;
+}
