@@ -23,6 +23,7 @@ import {
 } from './sound-fx';
 import { createMp4Encoder, isMp4ExportSupported } from './mp4-encoder';
 import { SourceDecoder } from './source-decoder';
+import { OverlayStage } from '../overlays/engine/OverlayStage';
 import type {
   AudioFxOptions,
   Background,
@@ -37,6 +38,7 @@ import type {
   MouseTrack,
   ZoomSegment,
 } from '../types';
+import type { Overlay } from '../overlays/types';
 
 export interface Resolution {
   w: number;
@@ -117,6 +119,8 @@ export interface ExportVideoOptions {
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
   blurRegions?: BlurRegion[] | null;
+  /** Text/image overlay layers to composite over each frame. */
+  overlays?: Overlay[] | null;
   signal?: AbortSignal;
   onProgress?: ExportProgressCallback;
   onLog?: ExportLogCallback;
@@ -184,6 +188,7 @@ async function exportVideoMp4({
   audioFx = null,
   backgroundMusic = null,
   blurRegions = null,
+  overlays = null,
   signal,
   onProgress,
   onLog,
@@ -259,6 +264,21 @@ async function exportVideoMp4({
   const onAbort = (): void => { aborted = true; };
   if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
+  // Spin up a dedicated Pixi overlay stage on a separate offscreen canvas
+  // so it doesn't collide with the export canvas's 2D context. Composited
+  // onto the export canvas via drawImage per frame. Skipped entirely when
+  // there are no overlays — avoids paying the Pixi init cost on every export.
+  let overlayStage: OverlayStage | null = null;
+  let overlayCanvas: HTMLCanvasElement | null = null;
+  if (overlays && overlays.length > 0) {
+    overlayCanvas = document.createElement('canvas');
+    overlayCanvas.width = w;
+    overlayCanvas.height = h;
+    overlayStage = new OverlayStage();
+    await overlayStage.mount(overlayCanvas, w, h);
+    await overlayStage.setOverlays(overlays);
+  }
+
   const fallbackFrameDur = 1 / fps;
   let elapsedOutput = 0;
   // Mediabunny's CanvasSource enforces strictly increasing timestamps. Across
@@ -271,6 +291,8 @@ async function exportVideoMp4({
 
   const cleanup = async (): Promise<void> => {
     sourceDecoder.destroy();
+    overlayStage?.dispose();
+    if (overlayCanvas) { overlayCanvas.width = 0; overlayCanvas.height = 0; }
     canvas.width = 0;
     canvas.height = 0;
     if (signal) signal.removeEventListener('abort', onAbort);
@@ -323,6 +345,13 @@ async function exportVideoMp4({
         let outSec = fragOutStart + Math.max(0, mediaTimeSec - frag.srcStart);
         if (outSec <= lastTimestampSec) outSec = lastTimestampSec + 1e-6;
         lastTimestampSec = outSec;
+
+        // Composite text/image overlays on top — sampled at output-time so
+        // their keyframes line up with what the user authored in the editor.
+        if (overlayStage && overlayCanvas) {
+          overlayStage.renderAt(outSec * 1000);
+          ctx.drawImage(overlayCanvas, 0, 0);
+        }
 
         const dur = durationSec > 0 ? durationSec : fallbackFrameDur;
         await encoder.addFrame(outSec, dur);

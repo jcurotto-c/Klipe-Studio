@@ -39,6 +39,11 @@ declare global {
     stopMouseTracking: () => Promise<MouseTrackingStopResult>;
     getPrimaryDisplaySize: () => Promise<Display>;
     focusWindowSource: (sourceId: string) => Promise<{ ok: boolean }>;
+    openImageFile: () => Promise<
+      | { dataUrl: string; name: string }
+      | { error: string }
+      | null
+    >;
     onMouseEvent: (cb: (evt: KlipeMouseEvent) => void) => () => void;
     /** ADB device enumeration via the bundled adb.exe. */
     adb: {

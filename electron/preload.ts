@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('klipe', {
   prepareDisplayMedia: (sourceId: string) => ipcRenderer.invoke('prepare-display-media', sourceId),
   saveVideoBlob: ({ buffer, suggestedName, mimeType }: SaveVideoBlobArgs) =>
     ipcRenderer.invoke('save-video-blob', { buffer, suggestedName, mimeType }),
+  openImageFile: () => ipcRenderer.invoke('open-image-file'),
   startMouseTracking: () => ipcRenderer.invoke('start-mouse-tracking'),
   stopMouseTracking: () => ipcRenderer.invoke('stop-mouse-tracking'),
   getPrimaryDisplaySize: () => ipcRenderer.invoke('get-primary-display-size'),

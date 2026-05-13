@@ -57,6 +57,16 @@ import type {
   ZoomDefaults,
   ZoomSegment,
 } from '../types';
+import type { Overlay } from '../overlays/types';
+import {
+  applyAnimation,
+  createImageOverlay,
+  createTextOverlay,
+  detectAnimation,
+  type AnimationKind,
+} from '../overlays/factories';
+import OverlayInspector from '../overlays/components/OverlayInspector';
+import OverlayLayerList from '../overlays/components/OverlayLayerList';
 
 const DEFAULTS_KEY = 'klipe.zoomDefaults';
 const CAMERA_OPTIONS_KEY = 'klipe.cameraOptions';
@@ -141,6 +151,7 @@ interface HistorySnapshot {
   fragments: Fragment[];
   segments: ZoomSegment[];
   blurRegions: BlurRegion[];
+  overlays: Overlay[];
 }
 
 const HISTORY_LIMIT = 100;
@@ -192,6 +203,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   );
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
   const aspectMenuRef = useRef<HTMLDivElement | null>(null);
+  const [addLayerMenuOpen, setAddLayerMenuOpen] = useState(false);
+  const addLayerMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const [mobileOptions, setMobileOptions] = useState<MobileOptions>(loadMobileOptions);
@@ -200,6 +213,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   const [blurRegions, setBlurRegions] = useState<BlurRegion[]>([]);
   const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
   const [blurMode, setBlurMode] = useState<boolean>(false);
+  const [overlays, setOverlays] = useState<Overlay[]>([]);
+  const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
 
   const exportCrop: Crop | null = isFullCrop(crop) ? null : crop;
 
@@ -244,6 +259,24 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     };
   }, [aspectMenuOpen]);
 
+  useEffect(() => {
+    if (!addLayerMenuOpen) return;
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as Node | null;
+      if (target && addLayerMenuRef.current?.contains(target)) return;
+      setAddLayerMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setAddLayerMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [addLayerMenuOpen]);
+
   const clicks = useMemo<KlipeMouseEvent[]>(
     () => recording.mouse.events.filter((e) => e.type === 'click'),
     [recording.mouse],
@@ -262,6 +295,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   segmentsRef.current = segments;
   const blurRegionsRef = useRef<BlurRegion[]>(blurRegions);
   blurRegionsRef.current = blurRegions;
+  const overlaysRef = useRef<Overlay[]>(overlays);
+  overlaysRef.current = overlays;
   const currentTimeRef = useRef(currentTime);
   currentTimeRef.current = currentTime;
   const playingRef = useRef(playing);
@@ -284,6 +319,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     fragments: fragmentsRef.current,
     segments: segmentsRef.current,
     blurRegions: blurRegionsRef.current,
+    overlays: overlaysRef.current,
   }), []);
 
   const pushHistory = useCallback((): void => {
@@ -298,9 +334,11 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     fragmentsRef.current = snap.fragments;
     segmentsRef.current = snap.segments;
     blurRegionsRef.current = snap.blurRegions;
+    overlaysRef.current = snap.overlays;
     setFragments(snap.fragments);
     setSegments(snap.segments);
     setBlurRegions(snap.blurRegions);
+    setOverlays(snap.overlays);
   }, []);
 
   const undo = useCallback((): void => {
@@ -574,6 +612,11 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     [blurRegions, selectedBlurId],
   );
 
+  const selectedOverlay = useMemo<Overlay | null>(
+    () => overlays.find((o) => o.id === selectedOverlayId) ?? null,
+    [overlays, selectedOverlayId],
+  );
+
   const handleSelectBlur = useCallback((id: string | null) => {
     setSelectedBlurId(id);
     if (id) setSelectedId(null);
@@ -646,6 +689,160 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     pushHistory();
     setBlurRegions((prev) => prev.map((r) => (r.id === selectedBlurId ? removeKeyframe(r, tMs) : r)));
   }, [selectedBlurId, pushHistory]);
+
+  // ---------------------------------------------------------------------------
+  // Overlay mutators
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Default visibility window for a newly added overlay: a 3-second bar
+   * starting at the current playhead, clamped to the clip's end. If the
+   * playhead is within 500 ms of the end, we slide the start earlier so the
+   * user still gets a draggable bar instead of a 0-width sliver.
+   */
+  const defaultVisibility = useCallback((): { visibleFrom: number; visibleTo: number } => {
+    const DEFAULT_MS = 3000;
+    const MIN_MS = 500;
+    const totalMs = Math.max(0, Math.round(duration * 1000));
+    let fromMs = Math.round(currentTimeRef.current * 1000);
+    let toMs = Math.min(fromMs + DEFAULT_MS, totalMs);
+    if (toMs - fromMs < MIN_MS) {
+      fromMs = Math.max(0, toMs - MIN_MS);
+    }
+    return { visibleFrom: fromMs, visibleTo: toMs };
+  }, [duration]);
+
+  const handleAddTextOverlay = useCallback(() => {
+    pushHistory();
+    const base = createTextOverlay(overlaysRef.current);
+    const overlay = { ...base, ...defaultVisibility() };
+    setOverlays((prev) => [...prev, overlay]);
+    setSelectedOverlayId(overlay.id);
+    setSelectedId(null);
+    setSelectedBlurId(null);
+    setSelectedFragmentId(null);
+  }, [pushHistory, defaultVisibility]);
+
+  const handleAddImageOverlay = useCallback(async () => {
+    const bridge = window.klipe;
+    if (!bridge?.openImageFile) return;
+    const result = await bridge.openImageFile();
+    if (!result || 'error' in result) return;
+    const img = new Image();
+    img.src = result.dataUrl;
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Failed to load image'));
+    });
+    pushHistory();
+    const base = createImageOverlay(
+      overlaysRef.current,
+      result.dataUrl,
+      img.naturalWidth || 800,
+      img.naturalHeight || 600,
+      result.name,
+    );
+    const overlay = { ...base, ...defaultVisibility() };
+    setOverlays((prev) => [...prev, overlay]);
+    setSelectedOverlayId(overlay.id);
+    setSelectedId(null);
+    setSelectedBlurId(null);
+    setSelectedFragmentId(null);
+  }, [pushHistory, defaultVisibility]);
+
+  const handleSelectOverlay = useCallback((id: string | null) => {
+    setSelectedOverlayId(id);
+    if (id) {
+      setSelectedId(null);
+      setSelectedBlurId(null);
+      setSelectedFragmentId(null);
+    }
+  }, []);
+
+  const handleUpdateOverlay = useCallback((id: string, patch: Partial<Overlay>) => {
+    const timingChanged = 'visibleFrom' in patch || 'visibleTo' in patch;
+    setOverlays((prev) => prev.map((o) => {
+      if (o.id !== id) return o;
+      const merged = { ...o, ...patch } as Overlay;
+      // When timing moves, re-apply the detected animation so its keyframes
+      // shift with visibleFrom / visibleTo. Without this, a "Fade In" applied
+      // at t=0 keeps firing at t=0 even after the user drags the bar to t=2s.
+      if (timingChanged) {
+        const kind = detectAnimation(o);
+        if (kind !== 'none') return applyAnimation(merged, kind);
+      }
+      return merged;
+    }));
+  }, []);
+
+  const handleRemoveOverlay = useCallback((id: string) => {
+    pushHistory();
+    setOverlays((prev) => prev.filter((o) => o.id !== id));
+    setSelectedOverlayId((cur) => (cur === id ? null : cur));
+  }, [pushHistory]);
+
+  const handleApplyOverlayAnimation = useCallback((id: string, kind: AnimationKind) => {
+    pushHistory();
+    setOverlays((prev) => prev.map((o) => (o.id === id ? applyAnimation(o, kind) : o)));
+  }, [pushHistory]);
+
+  const handleMoveOverlay = useCallback((id: string, base: { x: number; y: number }) => {
+    setOverlays((prev) =>
+      prev.map((o) => (o.id === id ? ({ ...o, base: { ...o.base, x: base.x, y: base.y } } as Overlay) : o)),
+    );
+  }, []);
+
+  const handleToggleHideOverlay = useCallback((id: string) => {
+    pushHistory();
+    setOverlays((prev) => prev.map((o) => (o.id === id ? ({ ...o, hidden: !o.hidden } as Overlay) : o)));
+  }, [pushHistory]);
+
+  const handleRenameOverlay = useCallback((id: string, name: string) => {
+    setOverlays((prev) => prev.map((o) => (o.id === id ? ({ ...o, name: name || undefined } as Overlay) : o)));
+  }, []);
+
+  const handleDuplicateOverlay = useCallback((id: string) => {
+    const source = overlaysRef.current.find((o) => o.id === id);
+    if (!source) return;
+    pushHistory();
+    const copy: Overlay = {
+      ...source,
+      id: `${source.type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      z: overlaysRef.current.reduce((acc, o) => Math.max(acc, o.z), 0) + 1,
+      // Slight offset so the duplicate is visible, not stacked exactly on top.
+      base: {
+        ...source.base,
+        x: Math.min(1, source.base.x + 0.03),
+        y: Math.min(1, source.base.y + 0.03),
+      },
+      transform: structuredClone(source.transform),
+    };
+    setOverlays((prev) => [...prev, copy]);
+    setSelectedOverlayId(copy.id);
+  }, [pushHistory]);
+
+  /**
+   * Reorder an overlay to a new index. `toIndex` is the position in the
+   * visible list (sorted by z descending). We re-stamp z values from the new
+   * array so the displayed order stays canonical.
+   */
+  const handleReorderOverlays = useCallback((fromId: string, toIndex: number) => {
+    pushHistory();
+    setOverlays((prev) => {
+      const sorted = [...prev].sort((a, b) => b.z - a.z);
+      const fromIndex = sorted.findIndex((o) => o.id === fromId);
+      if (fromIndex < 0 || toIndex < 0 || toIndex >= sorted.length || fromIndex === toIndex) {
+        return prev;
+      }
+      const next = [...sorted];
+      const [moved] = next.splice(fromIndex, 1);
+      if (!moved) return prev;
+      next.splice(toIndex, 0, moved);
+      // Top of list = highest z. Re-stamp so z is canonical.
+      const n = next.length;
+      return next.map((o, i) => ({ ...o, z: n - i } as Overlay));
+    });
+  }, [pushHistory]);
 
   const handleBackgroundMusicChange = useCallback((next: BackgroundMusic | null) => {
     setBackgroundMusic((prev) => {
@@ -1025,6 +1222,11 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               onDragBlurRect={handleDragBlurRect}
               onCommitBlurRect={handleCommitBlurRect}
               onCreateBlur={handleCreateBlur}
+              overlays={overlays}
+              overlayTimeMs={currentTime * 1000}
+              selectedOverlayId={selectedOverlayId}
+              onSelectOverlay={handleSelectOverlay}
+              onMoveOverlay={handleMoveOverlay}
             />
             <video
               ref={cameraVideoRef}
@@ -1070,13 +1272,74 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             />
           </div>
         )}
+
+        {!selected && !selectedBlur && overlays.length > 0 && (
+          <div className="editor-side-right overlay-side">
+            <OverlayLayerList
+              overlays={overlays}
+              selectedId={selectedOverlayId}
+              onSelect={handleSelectOverlay}
+              onToggleHide={handleToggleHideOverlay}
+              onRename={handleRenameOverlay}
+              onDuplicate={handleDuplicateOverlay}
+              onRemove={handleRemoveOverlay}
+              onReorder={handleReorderOverlays}
+            />
+            {selectedOverlay && (
+              <OverlayInspector
+                overlay={selectedOverlay}
+                onChange={(patch) => handleUpdateOverlay(selectedOverlay.id, patch)}
+                onRemove={() => handleRemoveOverlay(selectedOverlay.id)}
+                onApplyAnimation={(kind) => handleApplyOverlayAnimation(selectedOverlay.id, kind)}
+                onClose={() => setSelectedOverlayId(null)}
+              />
+            )}
+          </div>
+        )}
       </div>
 
         <div className="controls-pro">
           <div className="controls-left">
-            <button className="add-layer-btn" disabled title="Add a media layer (coming soon)">
-              <PlusIcon /> Add Layer <ChevronDownSmallIcon />
-            </button>
+            <div className="aspect-select" ref={addLayerMenuRef}>
+              <button
+                type="button"
+                className="add-layer-btn"
+                onClick={() => setAddLayerMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={addLayerMenuOpen}
+                title="Add a text or image overlay"
+              >
+                <PlusIcon /> Add Layer <ChevronDownSmallIcon />
+              </button>
+              {addLayerMenuOpen && (
+                <div className="aspect-select-menu" role="menu">
+                  <button
+                    type="button"
+                    className="aspect-select-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setAddLayerMenuOpen(false);
+                      handleAddTextOverlay();
+                    }}
+                  >
+                    <span className="aspect-select-label">Text</span>
+                    <span className="aspect-select-value">T</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="aspect-select-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setAddLayerMenuOpen(false);
+                      void handleAddImageOverlay();
+                    }}
+                  >
+                    <span className="aspect-select-label">Image</span>
+                    <span className="aspect-select-value">📁</span>
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               className="icon-btn"
               onClick={handleAddZoom}
@@ -1237,6 +1500,10 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
             onBeginEdit={pushHistory}
             backgroundMusic={backgroundMusic}
             onUpdateBackgroundMusic={handleUpdateBackgroundMusic}
+            overlays={overlays}
+            selectedOverlayId={selectedOverlayId}
+            onSelectOverlay={handleSelectOverlay}
+            onUpdateOverlay={handleUpdateOverlay}
           />
         ) : (
           <div className="empty">Loading clip…</div>
@@ -1268,6 +1535,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           audioFx={audioFxOptions}
           backgroundMusic={backgroundMusic}
           blurRegions={blurRegions}
+          overlays={overlays}
           sourceLabel={recording.name || 'recording'}
           onClose={() => setExportOpen(false)}
         />

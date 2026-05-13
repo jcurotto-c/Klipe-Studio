@@ -10,6 +10,7 @@ import { createCursorFollowState, resetCursorFollowState } from '../lib/cursor-f
 import { PixiCursorOverlay } from '../lib/cursor-overlay';
 import CropOverlay from './CropOverlay';
 import BlurOverlay from './BlurOverlay';
+import OverlayCanvas from '../overlays/OverlayCanvas';
 import type {
   Background,
   BlurRegion,
@@ -23,6 +24,7 @@ import type {
   MouseTrack,
   ZoomSegment,
 } from '../types';
+import type { Overlay } from '../overlays/types';
 
 interface VideoCanvasProps {
   videoRef: RefObject<HTMLVideoElement>;
@@ -59,6 +61,15 @@ interface VideoCanvasProps {
   onDragBlurRect?: (id: string, rect: BlurSampleRect) => void;
   onCommitBlurRect?: (id: string) => void;
   onCreateBlur?: (rect: BlurSampleRect) => void;
+  /** Text/image overlay layers drawn on top of the video composition. */
+  overlays?: Overlay[];
+  /** Current output-time in ms; drives overlay keyframe sampling. */
+  overlayTimeMs?: number;
+  /** Currently-selected overlay id. */
+  selectedOverlayId?: string | null;
+  onSelectOverlay?: (id: string | null) => void;
+  /** Called while an overlay is being dragged. Coordinates are fractional. */
+  onMoveOverlay?: (id: string, base: { x: number; y: number }) => void;
 }
 
 export default function VideoCanvas({
@@ -86,6 +97,11 @@ export default function VideoCanvas({
   onDragBlurRect,
   onCommitBlurRect,
   onCreateBlur,
+  overlays,
+  overlayTimeMs = 0,
+  selectedOverlayId = null,
+  onSelectOverlay,
+  onMoveOverlay,
 }: VideoCanvasProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -261,6 +277,17 @@ export default function VideoCanvas({
           pointerEvents: 'none',
         }}
       />
+      {overlays && (
+        <OverlayCanvas
+          hostRef={wrapRef}
+          overlays={overlays}
+          timeMs={overlayTimeMs}
+          interactive={overlays.length > 0 && !cropMode && !blurMode}
+          selectedId={selectedOverlayId}
+          onSelect={onSelectOverlay}
+          onMove={onMoveOverlay}
+        />
+      )}
       {cropMode && onCropChange && (
         <CropOverlay
           canvasWidth={sourceW}

@@ -11,6 +11,7 @@ import {
   reorderFragment,
 } from '../lib/fragments';
 import type { BackgroundMusic, Fragment, KlipeMouseEvent, ZoomSegment } from '../types';
+import type { Overlay } from '../overlays/types';
 
 const fmt = (s: number): string => {
   const m = Math.floor(s / 60);
@@ -28,7 +29,8 @@ type DragState =
   | { kind: 'fragMove'; id: string; index: number; startX: number; armed: boolean }
   | { kind: 'fragEdge'; index: number; edge: 'start' | 'end'; startX: number; origSrc: number }
   | { kind: 'seg' | 'segStart' | 'segEnd'; id: string; startX: number; origStart: number; origEnd: number }
-  | { kind: 'audioMove' | 'audioStart' | 'audioEnd'; startX: number; origStart: number; origEnd: number };
+  | { kind: 'audioMove' | 'audioStart' | 'audioEnd'; startX: number; origStart: number; origEnd: number }
+  | { kind: 'ovMove' | 'ovStart' | 'ovEnd'; id: string; startX: number; origStart: number; origEnd: number };
 
 interface TimelineProps {
   duration: number;
@@ -48,6 +50,10 @@ interface TimelineProps {
   onBeginEdit?: () => void;
   backgroundMusic?: BackgroundMusic | null;
   onUpdateBackgroundMusic?: (patch: Partial<BackgroundMusic>) => void;
+  overlays?: Overlay[];
+  selectedOverlayId?: string | null;
+  onSelectOverlay?: (id: string | null) => void;
+  onUpdateOverlay?: (id: string, patch: Partial<Overlay>) => void;
 }
 
 interface FragmentLayout {
@@ -75,6 +81,10 @@ export default function Timeline({
   onBeginEdit,
   backgroundMusic,
   onUpdateBackgroundMusic,
+  overlays,
+  selectedOverlayId = null,
+  onSelectOverlay,
+  onUpdateOverlay,
 }: TimelineProps): JSX.Element {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -171,6 +181,21 @@ export default function Timeline({
         let ne = tMs;
         ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(duration * 1000, ne));
         onUpdateBackgroundMusic({ endMs: ne });
+      } else if (drag.kind === 'ovMove' && onUpdateOverlay) {
+        const dx = e.clientX - drag.startX;
+        const dMs = (dx / trackRef.current!.getBoundingClientRect().width) * duration * 1000;
+        const len = drag.origEnd - drag.origStart;
+        let ns = drag.origStart + dMs;
+        ns = Math.max(0, Math.min(duration * 1000 - len, ns));
+        onUpdateOverlay(drag.id, { visibleFrom: ns, visibleTo: ns + len });
+      } else if (drag.kind === 'ovStart' && onUpdateOverlay) {
+        let ns = tMs;
+        ns = Math.max(0, Math.min(drag.origEnd - MIN_SEG_MS, ns));
+        onUpdateOverlay(drag.id, { visibleFrom: ns });
+      } else if (drag.kind === 'ovEnd' && onUpdateOverlay) {
+        let ne = tMs;
+        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(duration * 1000, ne));
+        onUpdateOverlay(drag.id, { visibleTo: ne });
       }
     };
     const up = (): void => {
@@ -189,7 +214,7 @@ export default function Timeline({
     };
   }, [
     drag, onSeek, onUpdateSegment, onUpdateFragments, onFragmentEdge, onBeginEdit,
-    onUpdateBackgroundMusic,
+    onUpdateBackgroundMusic, onUpdateOverlay,
     xToOutputTime, xDeltaToSeconds, duration, sourceDuration,
     fragments, layouts, dropIndex,
   ]);
@@ -199,8 +224,10 @@ export default function Timeline({
     if (target.dataset['handle']) return;
     if (target.closest('.zoom-seg')) return;
     if (target.closest('.fragment')) return;
+    if (target.closest('.overlay-seg')) return;
     onSelectSegment?.(null);
     onSelectFragment(null);
+    onSelectOverlay?.(null);
     onSeek(xToOutputTime(e.clientX));
     setDrag({ kind: 'playhead' });
   };
@@ -265,6 +292,44 @@ export default function Timeline({
       startX: e.clientX,
       origStart: backgroundMusic.startMs,
       origEnd: backgroundMusic.endMs,
+    });
+  };
+
+  const onOverlayMouseDown = (e: ReactMouseEvent<HTMLDivElement>, ov: Overlay): void => {
+    e.stopPropagation();
+    onSelectOverlay?.(ov.id);
+    onSelectSegment?.(null);
+    onSelectFragment(null);
+    onBeginEdit?.();
+    const start = ov.visibleFrom ?? 0;
+    const end = ov.visibleTo ?? duration * 1000;
+    setDrag({
+      kind: 'ovMove',
+      id: ov.id,
+      startX: e.clientX,
+      origStart: start,
+      origEnd: end,
+    });
+  };
+
+  const onOverlayEdgeMouseDown = (
+    e: ReactMouseEvent<HTMLDivElement>,
+    ov: Overlay,
+    edge: 'start' | 'end',
+  ): void => {
+    e.stopPropagation();
+    onSelectOverlay?.(ov.id);
+    onSelectSegment?.(null);
+    onSelectFragment(null);
+    onBeginEdit?.();
+    const start = ov.visibleFrom ?? 0;
+    const end = ov.visibleTo ?? duration * 1000;
+    setDrag({
+      kind: edge === 'start' ? 'ovStart' : 'ovEnd',
+      id: ov.id,
+      startX: e.clientX,
+      origStart: start,
+      origEnd: end,
     });
   };
 
@@ -459,6 +524,43 @@ export default function Timeline({
           })}
           <div className="playhead ghost" style={{ left: pct(currentTime) }} />
         </div>
+
+        {overlays && overlays.length > 0 && (
+          <div className="track overlay-track">
+            {overlays.map((ov) => {
+              const start = ov.visibleFrom ?? 0;
+              const end = ov.visibleTo ?? duration * 1000;
+              const isSel = ov.id === selectedOverlayId;
+              const label = ov.name || (ov.type === 'text' ? 'Text' : 'Image');
+              const isDragging = drag?.kind?.startsWith('ov') && 'id' in drag && drag.id === ov.id;
+              return (
+                <div
+                  key={ov.id}
+                  className={`overlay-seg ${ov.type} ${isSel ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+                  style={{
+                    left: pct(start / 1000),
+                    width: wPct(start / 1000, end / 1000),
+                  }}
+                  title={`${label} · ${(start / 1000).toFixed(2)}s → ${(end / 1000).toFixed(2)}s`}
+                  onMouseDown={(e) => onOverlayMouseDown(e, ov)}
+                >
+                  <span className="overlay-seg-label">{label}</span>
+                  <div
+                    className="overlay-seg-handle left"
+                    data-handle="overlay-start"
+                    onMouseDown={(e) => onOverlayEdgeMouseDown(e, ov, 'start')}
+                  />
+                  <div
+                    className="overlay-seg-handle right"
+                    data-handle="overlay-end"
+                    onMouseDown={(e) => onOverlayEdgeMouseDown(e, ov, 'end')}
+                  />
+                </div>
+              );
+            })}
+            <div className="playhead ghost" style={{ left: pct(currentTime) }} />
+          </div>
+        )}
 
         <div className="track audio-track">
           {backgroundMusic && backgroundMusic.endMs > backgroundMusic.startMs && (

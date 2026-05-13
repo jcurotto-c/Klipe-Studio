@@ -844,6 +844,149 @@ select {
   gap: 14px;
   overflow-y: auto;
 }
+
+/* When the right side shows layer-list + (optionally) the inspector,
+   stack them vertically rather than placing them side-by-side. */
+.editor-side-right.overlay-side {
+  flex-direction: column;
+  width: 300px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-1);
+}
+.editor-side-right.overlay-side > .zoom-inspector {
+  border-left: none;
+  border-top: 1px solid var(--border);
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.layer-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  padding: 10px 8px;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.layer-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.layer-list-title {
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.layer-list-count {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid transparent;
+  transition: background 100ms, border-color 100ms;
+}
+.layer-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.layer-row.selected {
+  background: rgba(124, 92, 255, 0.18);
+  border-color: var(--accent);
+}
+.layer-row.hidden .layer-name,
+.layer-row.hidden .layer-type-glyph {
+  opacity: 0.45;
+}
+.layer-row.dragging {
+  opacity: 0.4;
+}
+.layer-row.drag-over {
+  border-top: 2px solid var(--accent);
+  padding-top: 4px;
+}
+
+.layer-eye {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.layer-eye:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.layer-type-glyph {
+  width: 16px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+.layer-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-rename {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-2, #15171c);
+  color: inherit;
+  outline: none;
+}
+
+.layer-action {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.layer-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-1);
+}
+.layer-action.danger:hover {
+  background: rgba(220, 60, 60, 0.16);
+  color: #ff8a8a;
+}
 .zi-header {
   display: flex;
   align-items: flex-start;
@@ -2025,6 +2168,73 @@ select {
 .timeline.pro .track.audio-track .audio-block-handle.left { left: 0; }
 .timeline.pro .track.audio-track .audio-block-handle.right { right: 0; }
 .timeline.pro .track.audio-track .audio-block-handle:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Overlay (text/image) timing track */
+.timeline.pro .track.overlay-track {
+  height: 28px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+}
+.timeline.pro .track.overlay-track .overlay-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(245, 180, 60, 0.55), rgba(220, 140, 30, 0.45));
+  border: 1px solid rgba(245, 180, 60, 0.75);
+  border-radius: 5px;
+  cursor: grab;
+  overflow: hidden;
+}
+.timeline.pro .track.overlay-track .overlay-seg.image {
+  background: linear-gradient(180deg, rgba(92, 196, 255, 0.55), rgba(60, 160, 220, 0.45));
+  border-color: rgba(92, 196, 255, 0.75);
+}
+.timeline.pro .track.overlay-track .overlay-seg:hover {
+  filter: brightness(1.15);
+}
+.timeline.pro .track.overlay-track .overlay-seg.dragging {
+  cursor: grabbing;
+  box-shadow: 0 0 0 2px rgba(245, 180, 60, 0.9), 0 0 18px rgba(245, 180, 60, 0.4);
+  z-index: 2;
+}
+.timeline.pro .track.overlay-track .overlay-seg.image.dragging {
+  box-shadow: 0 0 0 2px rgba(92, 196, 255, 0.9), 0 0 18px rgba(92, 196, 255, 0.4);
+}
+.timeline.pro .track.overlay-track .overlay-seg.selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(124, 92, 255, 0.5);
+  z-index: 2;
+}
+.timeline.pro .track.overlay-track .overlay-seg-label {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.timeline.pro .track.overlay-track .overlay-seg-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: rgba(255, 255, 255, 0);
+  z-index: 2;
+}
+.timeline.pro .track.overlay-track .overlay-seg-handle.left { left: 0; }
+.timeline.pro .track.overlay-track .overlay-seg-handle.right { right: 0; }
+.timeline.pro .track.overlay-track .overlay-seg-handle:hover {
   background: rgba(255, 255, 255, 0.4);
 }
 .timeline.pro .marker {

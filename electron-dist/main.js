@@ -515,6 +515,31 @@ electron_1.ipcMain.handle('save-video-blob', async (_evt, { buffer, suggestedNam
     node_fs_1.default.writeFileSync(result.filePath, Buffer.from(buffer));
     return { canceled: false, filePath: result.filePath };
 });
+electron_1.ipcMain.handle('open-image-file', async () => {
+    if (!mainWindow)
+        return null;
+    const result = await electron_1.dialog.showOpenDialog(mainWindow, {
+        title: 'Add Image Overlay',
+        filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] }],
+        properties: ['openFile'],
+    });
+    if (result.canceled)
+        return null;
+    const filePath = result.filePaths[0];
+    if (!filePath)
+        return null;
+    // Read the file and return as a data URL so the renderer doesn't need
+    // file:// access. Smaller than blob IPC since images are usually < 10MB.
+    try {
+        const buf = await node_fs_1.default.promises.readFile(filePath);
+        const ext = node_path_1.default.extname(filePath).toLowerCase().slice(1);
+        const mime = ext === 'jpg' ? 'jpeg' : ext === 'svg' ? 'svg+xml' : ext;
+        return { dataUrl: `data:image/${mime};base64,${buf.toString('base64')}`, name: node_path_1.default.basename(filePath) };
+    }
+    catch (err) {
+        return { error: String(err) };
+    }
+});
 electron_1.ipcMain.handle('get-primary-display-size', () => {
     const d = electron_1.screen.getPrimaryDisplay();
     return { width: d.size.width, height: d.size.height, scaleFactor: d.scaleFactor };

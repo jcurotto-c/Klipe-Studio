@@ -5,6 +5,7 @@ electron_1.contextBridge.exposeInMainWorld('klipe', {
     getScreenSources: () => electron_1.ipcRenderer.invoke('get-screen-sources'),
     prepareDisplayMedia: (sourceId) => electron_1.ipcRenderer.invoke('prepare-display-media', sourceId),
     saveVideoBlob: ({ buffer, suggestedName, mimeType }) => electron_1.ipcRenderer.invoke('save-video-blob', { buffer, suggestedName, mimeType }),
+    openImageFile: () => electron_1.ipcRenderer.invoke('open-image-file'),
     startMouseTracking: () => electron_1.ipcRenderer.invoke('start-mouse-tracking'),
     stopMouseTracking: () => electron_1.ipcRenderer.invoke('stop-mouse-tracking'),
     getPrimaryDisplaySize: () => electron_1.ipcRenderer.invoke('get-primary-display-size'),

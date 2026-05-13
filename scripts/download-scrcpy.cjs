@@ -13,6 +13,7 @@
  * To upgrade scrcpy: bump SCRCPY_VERSION below and delete `binaries/`.
  */
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
@@ -20,6 +21,18 @@ const extract = require('extract-zip');
 
 const SCRCPY_VERSION = 'v2.7';
 const SCRCPY_WIN64_URL = `https://github.com/Genymobile/scrcpy/releases/download/${SCRCPY_VERSION}/scrcpy-win64-${SCRCPY_VERSION}.zip`;
+
+// SHA-256 hashes of the three binaries extracted from the official Genymobile release.
+// To update: bump SCRCPY_VERSION, delete binaries/, run `npm run setup:scrcpy`, then
+// run `node -e "const c=require('crypto'),f=require('fs');
+//   ['scrcpy.exe','adb.exe','scrcpy-server'].forEach(n=>
+//     console.log(n, c.createHash('sha256').update(f.readFileSync('binaries/'+n)).digest('hex').toUpperCase()))"
+// in the project root and paste the new hashes below.
+const EXPECTED_SHA256 = {
+  'scrcpy.exe':    '82C2DB86041A4B6EBBD72888888053D0818527C2F88B66CC76282F6BD0A3121E',
+  'adb.exe':       '997324A38D89E3B282306BF25CCAA167C49A35850AC0AB4A169E7A15AFA82FC8',
+  'scrcpy-server': 'A23C5659F36C260F105C022D27BCB3EAFFFA26070E7BAA9EDA66D01377A1ADBA',
+};
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const BINARIES_DIR = path.join(PROJECT_ROOT, 'binaries');
@@ -77,9 +90,34 @@ async function main() {
 
     fs.rmSync(extractTmp, { recursive: true, force: true });
     fs.unlinkSync(ZIP_PATH);
+
+    // Verify the three key binaries match the expected hashes for this release.
+    // This catches a corrupted download, a compromised GitHub release asset, or
+    // a MITM that slipped past TLS validation.
+    const mismatches = [];
+    for (const [name, expected] of Object.entries(EXPECTED_SHA256)) {
+      const filePath = path.join(BINARIES_DIR, name);
+      const actual = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').toUpperCase();
+      if (actual !== expected) {
+        mismatches.push({ name, expected, actual });
+      }
+    }
+    if (mismatches.length > 0) {
+      for (const { name, expected, actual } of mismatches) {
+        console.error(`[scrcpy-setup] HASH MISMATCH: ${name}`);
+        console.error(`   expected: ${expected}`);
+        console.error(`   actual:   ${actual}`);
+      }
+      // Wipe the binaries so they can't be used accidentally.
+      for (const name of Object.keys(EXPECTED_SHA256)) {
+        try { fs.unlinkSync(path.join(BINARIES_DIR, name)); } catch { /* ignore */ }
+      }
+      throw new Error('Binary integrity check failed — scrcpy binaries have been removed. See above for details.');
+    }
+
     fs.writeFileSync(VERSION_FILE, SCRCPY_VERSION + '\n', 'utf8');
 
-    console.log(`[scrcpy-setup] Installed scrcpy + adb in ${BINARIES_DIR}`);
+    console.log(`[scrcpy-setup] Installed scrcpy + adb in ${BINARIES_DIR} (integrity verified).`);
   } catch (err) {
     console.warn('[scrcpy-setup] WARNING: failed to install scrcpy.');
     console.warn('   Reason:', err && err.message ? err.message : err);

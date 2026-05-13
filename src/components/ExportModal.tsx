@@ -23,6 +23,7 @@ import type {
   MouseTrack,
   ZoomSegment,
 } from '../types';
+import type { Overlay } from '../overlays/types';
 
 interface FormatDef {
   id: ExportFormat;
@@ -81,6 +82,7 @@ interface ExportModalProps {
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
   blurRegions?: BlurRegion[] | null;
+  overlays?: Overlay[] | null;
   sourceLabel?: string;
   onClose: () => void;
 }
@@ -101,6 +103,7 @@ export default function ExportModal({
   audioFx,
   backgroundMusic,
   blurRegions,
+  overlays,
   sourceLabel,
   onClose,
 }: ExportModalProps): React.ReactPortal {
@@ -183,6 +186,7 @@ export default function ExportModal({
         audioFx,
         backgroundMusic,
         blurRegions,
+        overlays,
         signal: controller.signal,
         onProgress: (s, v) => {
           setProgressStage(s);
@@ -215,7 +219,7 @@ export default function ExportModal({
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
     fragments, size, fps, format, quality, cursorOptions, frame, mobileOptions, mobilePrimary,
-    audioFx, backgroundMusic, blurRegions, onClose,
+    audioFx, backgroundMusic, blurRegions, overlays, onClose,
   ]);
 
   const handleStop = useCallback(() => {
