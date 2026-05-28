@@ -7,17 +7,22 @@
  * sync.
  */
 
-import { springAt, springSettleTime } from './spring';
+import { springAt, springSettleTime, type SpringOptions } from './spring';
 import type { ZoomEasing } from '../types';
 
+// Critically damped (ζ = 1): the fastest spring that reaches the target with
+// NO overshoot, so the zoom eases in and settles smoothly instead of shooting
+// past and bouncing back (the under-damped default felt rough/"bouncy"). The
+// `snap` curve is the option for an intentional overshoot.
+const ZOOM_SPRING: SpringOptions = { stiffness: 170, damping: 2 * Math.sqrt(170), mass: 1 };
+
 /**
- * `spring` reproduces the original `springProgress(elapsed, window)` look:
- * progress `p` is stretched across the spring's settle time so the curve
- * fully resolves by `p = 1`.
+ * `spring` — a smooth, professional zoom: progress `p` is stretched across the
+ * spring's settle time so the curve fully resolves by `p = 1`, with no bounce.
  */
 function springEase(p: number): number {
   if (p <= 0) return 0;
-  return springAt(p * springSettleTime());
+  return springAt(p * springSettleTime(ZOOM_SPRING), ZOOM_SPRING);
 }
 
 function linear(p: number): number {
