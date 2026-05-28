@@ -8,3 +8,6 @@ release/
 recordings/
 binaries/
 electron-dist/
+
+# Local Claude Code settings (per-user, not shared)
+.claude/settings.local.json

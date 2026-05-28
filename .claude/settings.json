@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(curl -sL -A \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\)\" https://screen.studio/ -o /tmp/ss.html)",
+      "Read(//tmp/**)",
+      "Bash(perl -0777 *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git rm *)",
+      "Bash(git check-ignore *)"
+    ]
+  }
+}
