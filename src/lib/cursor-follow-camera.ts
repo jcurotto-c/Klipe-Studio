@@ -15,6 +15,7 @@
  */
 
 import { CursorSpringValue } from './cursor-spring';
+import type { CameraFollowStyle } from '../types';
 
 export interface CursorFollowState {
   initialized: boolean;
@@ -98,6 +99,41 @@ export const DEFAULT_CURSOR_FOLLOW: CursorFollowConfig = {
   maxLookAheadFraction: 0.18,
   restScaleFactor: 1.06,
 };
+
+export interface CameraFollowPreset {
+  /** When false the renderer skips follow entirely (camera holds focus). */
+  enabled: boolean;
+  config: CursorFollowConfig;
+}
+
+/**
+ * Named camera behaviours surfaced in the UI. `follow` is the historical
+ * default; `cinematic` floats more and leads the cursor harder; `static`
+ * pins the camera to the configured focus point.
+ */
+export const CURSOR_FOLLOW_PRESETS: Record<CameraFollowStyle, CameraFollowPreset> = {
+  static: { enabled: false, config: DEFAULT_CURSOR_FOLLOW },
+  follow: { enabled: true, config: DEFAULT_CURSOR_FOLLOW },
+  cinematic: {
+    enabled: true,
+    config: {
+      ...DEFAULT_CURSOR_FOLLOW,
+      // Floatier focus chase, stronger look-ahead, more aggressive
+      // rest-zoom and speed back-off — the "big keynote camera" feel.
+      focusStiffness: 80,
+      focusDamping: 19,
+      focusMass: 1.2,
+      lookAheadSec: 0.34,
+      maxLookAheadFraction: 0.24,
+      restScaleFactor: 1.1,
+      minScaleFactor: 0.8,
+    },
+  },
+};
+
+export function resolveCameraFollow(style: CameraFollowStyle | undefined): CameraFollowPreset {
+  return CURSOR_FOLLOW_PRESETS[style ?? 'follow'];
+}
 
 function makeSpring(cfg: CursorFollowConfig): CursorSpringValue {
   return new CursorSpringValue({

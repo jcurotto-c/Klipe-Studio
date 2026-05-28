@@ -488,6 +488,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
       easeIn: zoomDefaults.easeIn,
       easeOut: zoomDefaults.easeOut,
       scale: zoomDefaults.scale,
+      easing: zoomDefaults.easing,
       display: recording.display,
     });
     pushHistory();
@@ -1212,6 +1213,9 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
               mobileOptions={recordedMobile ? mobileOptions : null}
               mobilePrimary={!!recordedMobile}
               cursorOptions={cursorOptions}
+              cameraStyle={zoomDefaults.cameraStyle}
+              zoomBlur={zoomDefaults.zoomBlur}
+              playing={playing}
               frameOptions={frameOptions}
               aspectRatio={aspectOption.value}
               blurRegions={blurRegions}
@@ -1249,6 +1253,7 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           <div className="editor-side-right">
             <ZoomInspector
               segment={selected}
+              zoomDefaults={zoomDefaults}
               onChange={(patch) => handleUpdateSegment(selected.id, patch)}
               onRemove={() => handleRemoveSegment(selected.id)}
               onApplyToAll={handleApplyToAll}
@@ -1529,6 +1534,8 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
           duration={duration}
           crop={exportCrop}
           cursorOptions={cursorOptions}
+          cameraStyle={zoomDefaults.cameraStyle}
+          zoomBlur={zoomDefaults.zoomBlur}
           frame={frameOptions}
           mobileOptions={recordedMobile ? mobileOptions : null}
           mobilePrimary={!!recordedMobile}

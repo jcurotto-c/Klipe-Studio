@@ -12,7 +12,7 @@
 
 import { renderFrame } from './renderer';
 import { createCursorState } from './cursor-engine';
-import { createCursorFollowState } from './cursor-follow-camera';
+import { createCursorFollowState, resolveCameraFollow } from './cursor-follow-camera';
 import { fragmentDuration, totalOutputDuration } from './fragments';
 import {
   createSoundFxBus,
@@ -29,6 +29,7 @@ import type {
   Background,
   BackgroundMusic,
   BlurRegion,
+  CameraFollowStyle,
   Crop,
   CursorOptions,
   Display,
@@ -108,6 +109,10 @@ export interface ExportVideoOptions {
   format?: ExportFormat;
   quality?: QualityName;
   cursorOptions?: Partial<CursorOptions> | null;
+  /** Camera-follow behaviour during zoom. Absent → `follow`. */
+  cameraStyle?: CameraFollowStyle | null;
+  /** Zoom-transition motion blur intensity 0..1. Absent/0 → off. */
+  zoomBlur?: number | null;
   frame?: Partial<FrameOptions> | null;
   /** Phone frame styling, only consulted when `mobilePrimary` is true. */
   mobileOptions?: MobileOptions | null;
@@ -182,6 +187,8 @@ async function exportVideoMp4({
   format = 'mp4',
   quality = 'social',
   cursorOptions = null,
+  cameraStyle = null,
+  zoomBlur = null,
   frame = null,
   mobileOptions = null,
   mobilePrimary = false,
@@ -214,6 +221,7 @@ async function exportVideoMp4({
 
   const cursorState = createCursorState();
   const cursorFollowState = createCursorFollowState();
+  const camera = resolveCameraFollow(cameraStyle ?? undefined);
 
   const canvas = document.createElement('canvas');
   canvas.width = w;
@@ -332,7 +340,9 @@ async function exportVideoMp4({
           cursorOptions,
           frame,
           cursorFollowState,
-          cursorFollowEnabled: true,
+          cursorFollowEnabled: camera.enabled,
+          cursorFollowConfig: camera.config,
+          zoomBlur: zoomBlur ?? 0,
           blurRegions,
           // Phone-primary export: the source IS the phone capture. Feed
           // the decoded VideoFrame as mobileSource and tell renderFrame

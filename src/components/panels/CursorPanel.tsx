@@ -1,10 +1,27 @@
 import { DEFAULT_CURSOR_OPTIONS } from '../../lib/cursor-engine';
-import type { CursorOptions, CursorStyle } from '../../types';
+import type { CursorMovement, CursorOptions, CursorStyle } from '../../types';
 
 interface StyleTileDefinition {
   id: CursorStyle;
   render: () => JSX.Element;
 }
+
+interface MovementPreset {
+  id: CursorMovement;
+  label: string;
+  /** Slider values the preset writes when selected (advanced sliders stay editable). */
+  values: Pick<CursorOptions, 'movement' | 'smoothing' | 'motionBlur' | 'sway'>;
+}
+
+// smoothing 0.67 (SMOOTHING_ANCHOR) makes the spring-backed presets return
+// their exact Screen Studio anchor; the slider then fine-tunes from there.
+const MOVEMENT_PRESETS: MovementPreset[] = [
+  { id: 'raw',      label: 'Raw',      values: { movement: 'raw',      smoothing: 0,    motionBlur: 0,    sway: 0 } },
+  { id: 'smooth',   label: 'Smooth',   values: { movement: 'smooth',   smoothing: 0.67, motionBlur: 0.40, sway: 0.13 } },
+  { id: 'glide',    label: 'Glide',    values: { movement: 'glide',    smoothing: 0.67, motionBlur: 0.80, sway: 0.30 } },
+  { id: 'snappy',   label: 'Snappy',   values: { movement: 'snappy',   smoothing: 0.67, motionBlur: 0.50, sway: 0.18 } },
+  { id: 'magnetic', label: 'Magnetic', values: { movement: 'magnetic', smoothing: 0.40, motionBlur: 0.30, sway: 0.10 } },
+];
 
 const STYLE_TILES: StyleTileDefinition[] = [
   { id: 'arrow',         render: ArrowTile },
@@ -64,6 +81,25 @@ export default function CursorPanel({ value, onChange }: CursorPanelProps): JSX.
           >
             <FigmaTile />
           </StyleTile>
+        </div>
+      </div>
+
+      <div className="panel-section">
+        <div className="cursor-custom-head">
+          <span className="cursor-custom-title">MOVEMENT</span>
+          <span className="cursor-custom-hint">Presets tune the sliders below</span>
+        </div>
+        <div className="cursor-movement-grid">
+          {MOVEMENT_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`cursor-move-btn ${(opts.movement ?? 'smooth') === p.id ? 'active' : ''}`}
+              onClick={() => update(p.values)}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
       </div>
 

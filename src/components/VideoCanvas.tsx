@@ -6,7 +6,11 @@ import {
 } from 'react';
 import { renderFrame, computeFramePaddingScale, type CursorPlacement } from '../lib/renderer';
 import { createCursorState, resetCursorState } from '../lib/cursor-engine';
-import { createCursorFollowState, resetCursorFollowState } from '../lib/cursor-follow-camera';
+import {
+  createCursorFollowState,
+  resetCursorFollowState,
+  resolveCameraFollow,
+} from '../lib/cursor-follow-camera';
 import { PixiCursorOverlay } from '../lib/cursor-overlay';
 import CropOverlay from './CropOverlay';
 import BlurOverlay from './BlurOverlay';
@@ -15,6 +19,7 @@ import type {
   Background,
   BlurRegion,
   BlurSampleRect,
+  CameraFollowStyle,
   CameraOptions,
   Crop,
   CursorOptions,
@@ -47,6 +52,16 @@ interface VideoCanvasProps {
    */
   mobilePrimary?: boolean;
   cursorOptions?: CursorOptions | null;
+  /** Camera-follow behaviour during zoom. Absent → `follow`. */
+  cameraStyle?: CameraFollowStyle | null;
+  /** Zoom-transition motion blur intensity 0..1. Absent/0 → off. */
+  zoomBlur?: number | null;
+  /**
+   * Whether playback is running. While playing we hide the real OS cursor
+   * over the preview so only the rendered (smoothed) cursor is visible —
+   * otherwise you'd see two cursors (your mouse + the rendered one).
+   */
+  playing?: boolean;
   frameOptions?: FrameOptions | null;
   /** Output aspect ratio (w/h). When null/undefined, falls back to source display ratio. */
   aspectRatio?: number | null;
@@ -87,6 +102,9 @@ export default function VideoCanvas({
   mobileOptions = null,
   mobilePrimary = false,
   cursorOptions = null,
+  cameraStyle = null,
+  zoomBlur = null,
+  playing = false,
   frameOptions = null,
   aspectRatio = null,
   blurRegions,
@@ -115,10 +133,10 @@ export default function VideoCanvas({
     shape: 'arrow', contentTargetHeight: 0,
   });
   const propsRef = useRef({
-    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, frameOptions, blurRegions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions,
   });
   propsRef.current = {
-    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, frameOptions, blurRegions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions,
   };
 
   useEffect(() => {
@@ -218,6 +236,7 @@ export default function VideoCanvas({
         resetCursorFollowState(followStateRef.current);
       }
       const overlayActive = overlayRef.current !== null;
+      const camera = resolveCameraFollow(p.cameraStyle ?? undefined);
       renderFrame(ctx, video, {
         tMs,
         segments: p.segments,
@@ -237,7 +256,9 @@ export default function VideoCanvas({
         skipCursorDraw: overlayActive,
         cursorOutput: cursorOutputRef.current,
         cursorFollowState: followStateRef.current,
-        cursorFollowEnabled: true,
+        cursorFollowEnabled: camera.enabled,
+        cursorFollowConfig: camera.config,
+        zoomBlur: p.zoomBlur ?? 0,
         blurRegions: p.blurRegions,
       });
       if (overlayActive) {
@@ -260,11 +281,19 @@ export default function VideoCanvas({
   // applies to the canvas at a slightly offset y/x).
   const overlayPaddingScale = computeFramePaddingScale(frameOptions);
 
+  // While playing (and not actively editing crop/blur), hide the real OS
+  // cursor over the preview so only the rendered cursor shows.
+  const hideRealCursor = playing && !cropMode && !blurMode;
+
   return (
     <div
       ref={wrapRef}
       className="canvas-wrap"
-      style={{ aspectRatio: wrapAspect, position: 'relative' }}
+      style={{
+        aspectRatio: wrapAspect,
+        position: 'relative',
+        cursor: hideRealCursor ? 'none' : undefined,
+      }}
     >
       <canvas ref={canvasRef} width={sourceW} height={sourceH} />
       <canvas

@@ -132,10 +132,10 @@ export function loadSvgPointerSprite(): Promise<CursorSprite> {
  * is already settled by the time the caller awaits it); SVG shapes take one
  * trip through the image decoder on first request.
  */
-export function loadCursorSprite(shape: CursorShape): Promise<CursorSprite> {
+export function loadCursorSprite(shape: CursorShape, tMs = 0): Promise<CursorSprite> {
   if (shape === 'svg-bone') return rasterizeSvg('bone');
   if (shape === 'svg-hand') return rasterizeSvg('hand');
-  return Promise.resolve(getCursorSprite(shape));
+  return Promise.resolve(getCursorSprite(shape, tMs));
 }
 
 /**
@@ -143,10 +143,10 @@ export function loadCursorSprite(shape: CursorShape): Promise<CursorSprite> {
  * for SVG shapes that haven't finished rasterizing yet — the caller should
  * fall back to a procedural shape until then.
  */
-export function getCursorSpriteCached(shape: CursorShape): CursorSprite | null {
+export function getCursorSpriteCached(shape: CursorShape, tMs = 0): CursorSprite | null {
   if (shape === 'svg-bone') return svgCache.get('bone') ?? null;
   if (shape === 'svg-hand') return svgCache.get('hand') ?? null;
-  return getCursorSprite(shape);
+  return getCursorSprite(shape, tMs);
 }
 
 // Shared painters — these mirror the geometry in renderer.ts:drawCursorShape
@@ -265,7 +265,7 @@ const PROCEDURAL_META: Record<
   'figma':         { hotspotX: 1 / 18,        hotspotY: 1 / 18,          contentHeight: PROCEDURAL_RESOLUTION * 16 / 18 },
 };
 
-export function getCursorSprite(shape: CursorShape): CursorSprite {
+export function getCursorSprite(shape: CursorShape, _tMs = 0): CursorSprite {
   if (shape === 'svg-bone' || shape === 'svg-hand') {
     // Synchronous accessor returns the cached SVG if rasterization already
     // finished, otherwise falls back to the procedural arrow so the caller

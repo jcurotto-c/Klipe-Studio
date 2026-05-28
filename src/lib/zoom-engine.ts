@@ -1,4 +1,4 @@
-import { springProgress } from './spring';
+import { easeProgress } from './easing';
 import type {
   Display,
   KlipeMouseEvent,
@@ -6,6 +6,7 @@ import type {
   MouseTrack,
   Vec2,
   ZoomDefaults,
+  ZoomEasing,
   ZoomSample,
   ZoomSegment,
 } from '../types';
@@ -17,6 +18,9 @@ export const DEFAULT_ZOOM: ZoomDefaults = {
   duration: 2000,
   easeIn: 400,
   easeOut: 600,
+  easing: 'spring',
+  cameraStyle: 'follow',
+  zoomBlur: 0,
 };
 
 interface AutoZoomOptions extends ZoomDefaults {
@@ -274,6 +278,7 @@ export function generateZoomSegments(
     tEnd: cluster.lastT + o.padAfter + sustain + o.easeOut,
     easeIn: o.easeIn,
     easeOut: o.easeOut,
+    easing: o.easing ?? 'spring',
   }));
 }
 
@@ -283,6 +288,7 @@ export interface CreateManualSegmentArgs {
   easeIn?: number;
   easeOut?: number;
   scale?: number;
+  easing?: ZoomEasing;
   center?: Vec2;
   display?: Display | null;
 }
@@ -293,6 +299,7 @@ export function createManualSegment({
   easeIn = DEFAULT_ZOOM.easeIn,
   easeOut = DEFAULT_ZOOM.easeOut,
   scale = DEFAULT_ZOOM.scale,
+  easing = DEFAULT_ZOOM.easing ?? 'spring',
   center,
   display,
 }: CreateManualSegmentArgs): ZoomSegment {
@@ -310,6 +317,7 @@ export function createManualSegment({
     tEnd: tMs + half,
     easeIn,
     easeOut,
+    easing,
   };
 }
 
@@ -338,15 +346,16 @@ export function sampleZoom(segments: ZoomSegment[] | null | undefined, t: number
 
   const inEnd = seg.tStart + seg.easeIn;
   const outStart = seg.tEnd - seg.easeOut;
+  const easing: ZoomEasing = seg.easing ?? 'spring';
 
   let scale: number;
   let p: number;
   if (t < inEnd) {
-    const q = springProgress(t - seg.tStart, seg.easeIn);
+    const q = easeProgress(easing, t - seg.tStart, seg.easeIn);
     scale = 1 + (seg.scale - 1) * q;
     p = q;
   } else if (t > outStart) {
-    const q = springProgress(t - outStart, seg.easeOut);
+    const q = easeProgress(easing, t - outStart, seg.easeOut);
     scale = seg.scale + (1 - seg.scale) * q;
     p = 1 - q;
   } else {

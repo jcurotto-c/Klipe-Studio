@@ -241,6 +241,12 @@ export interface RenderFrameOptions {
   cursorFollowEnabled?: boolean;
   /** Cursor-follow tuning. */
   cursorFollowConfig?: Partial<CursorFollowConfig>;
+  /**
+   * Zoom-transition motion blur intensity 0..1. The actual smear is scaled
+   * by how fast the zoom is changing at `tMs` (derived deterministically
+   * from `sampleZoom` at `tMs ± dt`), so it only appears during ease-in/out.
+   */
+  zoomBlur?: number;
   /** Blur/redaction regions to bake into the frame. */
   blurRegions?: BlurRegion[] | null;
 }
@@ -314,8 +320,14 @@ function findLatestCursorType(mouse: MouseTrack | null | undefined, tMs: number)
  *   - `text`    → `svg-bone` (typing in a field)
  *   - `pointer` → `svg-hand` (hovering a clickable)
  *   - otherwise → user-selected style as-is
+ *
+ * The cursor-type override (text/pointer) wins over the user-selected style
+ * so the typing/hover affordance stays consistent across all styles.
  */
-function resolveCursorShape(style: CursorOptions['style'], type: CursorType): CursorShape {
+function resolveCursorShape(
+  style: CursorOptions['style'],
+  type: CursorType,
+): CursorShape {
   if (type === 'text') return 'svg-bone';
   if (type === 'pointer') return 'svg-hand';
   return style;
@@ -325,7 +337,9 @@ function resolveCursorShape(style: CursorOptions['style'], type: CursorType): Cu
  * Per-style visual scale. Arrow/outline/dot/figma render at the full
  * baseline height; arrow-mini intentionally shrinks. The bone/hand SVG
  * overrides inherit whichever scale the user-selected style uses, so the
- * cursor does not change size when typing or hovering buttons.
+ * cursor does not change size when typing or hovering buttons. Custom
+ * imports keep the baseline 1.0 — the user's source PNG/CUR/ANI controls
+ * the visual weight.
  */
 function styleHeightFactor(style: CursorOptions['style']): number {
   return style === 'arrow-mini' ? 0.85 : 1.0;
@@ -366,6 +380,7 @@ export function renderFrame(
     cursorFollowState = null,
     cursorFollowEnabled = false,
     cursorFollowConfig,
+    zoomBlur = 0,
     blurRegions = null,
   } = opts;
   if (cursorOutput) {
@@ -557,6 +572,24 @@ export function renderFrame(
   ctx.drawImage(source, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH);
   ctx.restore();
 
+  // Zoom motion blur — only during transitions, derived deterministically
+  // from how fast the zoom scale is changing at this frame. Drawn over the
+  // sharp frame but BEFORE the cursor/blur regions so those stay crisp.
+  if (zoomBlur > 0 && scale > 1.001) {
+    const dt = 1000 / 60;
+    const sBefore = sampleZoom(segments, tMs - dt).scale;
+    const sAfter = sampleZoom(segments, tMs + dt).scale;
+    const vel = Math.abs(sAfter - sBefore);
+    const amount = Math.min(1, vel * 10) * Math.max(0, Math.min(1, zoomBlur));
+    if (amount > 0.001) {
+      const fx = focusInCrop ? drawX + (fcx! / swEff) * drawW : drawX + drawW / 2;
+      const fy = focusInCrop ? drawY + (fcy! / shEff) * drawH : drawY + drawH / 2;
+      applyZoomBlur(ctx, source, {
+        sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius,
+      }, fx, fy, amount);
+    }
+  }
+
   if (blurRegions && blurRegions.length > 0) {
     applyBlurRegions(ctx, source, blurRegions, tMs, {
       sw, sh, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius,
@@ -695,6 +728,55 @@ function applyFeatherMask(
     tctx.fillRect(0, 0, w, h);
   }
   tctx.globalCompositeOperation = 'source-over';
+}
+
+/**
+ * Fake radial/zoom motion blur. Draws a few copies of the just-rendered
+ * video region scaled about the zoom focus point (both slightly larger and
+ * smaller) at low alpha — the overlap reads as a radial smear. Uses no
+ * filters and no per-frame state, so it's identical between preview and
+ * export for the same `tMs`. Clipped to the rounded video frame.
+ */
+type ZoomBlurGeometry = Omit<BlurDrawGeometry, 'sw' | 'sh'>;
+
+function applyZoomBlur(
+  ctx: CanvasRenderingContext2D,
+  source: RenderableSource,
+  geom: ZoomBlurGeometry,
+  focusX: number,
+  focusY: number,
+  amount: number,
+): void {
+  const { sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius } = geom;
+  if (swEff <= 0 || shEff <= 0 || drawW <= 0 || drawH <= 0) return;
+
+  const ghosts = 4;
+  // Max radial smear as a fraction of the frame (5% at full strength).
+  const maxOffset = 0.05 * amount;
+
+  const drawScaled = (f: number, alpha: number): void => {
+    const newW = drawW * f;
+    const newH = drawH * f;
+    const nx = focusX - (focusX - drawX) * f;
+    const ny = focusY - (focusY - drawY) * f;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(source, sx0, sy0, swEff, shEff, nx, ny, newW, newH);
+  };
+
+  ctx.save();
+  if (radius > 0) {
+    ctx.beginPath();
+    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+    ctx.clip();
+  }
+  for (let i = 1; i <= ghosts; i += 1) {
+    const t = i / ghosts;
+    const alpha = (0.5 / ghosts) * (1 - t * 0.4) * amount;
+    drawScaled(1 + maxOffset * t, alpha);
+    drawScaled(1 - maxOffset * t, alpha);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 function applyBlurRegions(

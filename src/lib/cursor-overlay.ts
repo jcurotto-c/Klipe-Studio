@@ -132,6 +132,7 @@ export class PixiCursorOverlay {
     }
 
     const meta = getCursorSprite(shape);
+
     if (this.sprite && this.container) {
       this.container.removeChild(this.sprite);
       this.sprite.destroy();

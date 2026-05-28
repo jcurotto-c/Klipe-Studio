@@ -11,6 +11,7 @@
  */
 
 import type {
+  CursorMovement,
   CursorOptions,
   CursorSample,
   CursorState,
@@ -26,6 +27,7 @@ export const DEFAULT_CURSOR_OPTIONS: CursorOptions = {
   show: true,
   loop: false,
   style: 'dot',
+  movement: 'smooth',
   size: 3.0,
   smoothing: 0.67,
   motionBlur: 0.40,
@@ -74,6 +76,76 @@ export function springConfigFromSmoothing(smoothing: number): SpringConfig {
     damping: 58 + n * 22,
     mass: 1 + n * 0.35,
   };
+}
+
+/** Damping for the given stiffness/mass at a target damping ratio ζ. */
+function dampingForRatio(stiffness: number, mass: number, zeta: number): number {
+  return zeta * 2 * Math.sqrt(stiffness * mass);
+}
+
+// Screen Studio's shipped cursor-movement spring presets, lifted verbatim
+// from their site bundle (a shared framer-motion spring-preset module). We
+// anchor our movement personalities to these so the feel matches:
+//   Rapid {530,40,1}  Quick {470,70,3}  Default {340,60,3}  Slow {170,50,3}
+// (Quick is unused — snappy/smooth/glide cover Rapid/Default/Slow; raw and
+// magnetic have no Screen Studio equivalent.)
+const SS_RAPID: SpringConfig = { stiffness: 530, damping: 40, mass: 1 };
+const SS_DEFAULT: SpringConfig = { stiffness: 340, damping: 60, mass: 3 };
+const SS_SLOW: SpringConfig = { stiffness: 170, damping: 50, mass: 3 };
+
+// Smoothing value at which a preset returns its anchor spring verbatim. The
+// CursorPanel preset buttons set the slider here, so clicking a preset gives
+// the exact Screen Studio feel; dragging from there fine-tunes.
+const SMOOTHING_ANCHOR = DEFAULT_CURSOR_OPTIONS.smoothing;
+
+/**
+ * Scale a base spring by the smoothing slider while preserving its damping
+ * ratio ζ — so the preset's *character* (overshoot vs glassy) is unchanged
+ * and only the overall speed shifts. At `smoothing === SMOOTHING_ANCHOR` the
+ * base is returned verbatim; lower = snappier, higher = floatier/slower.
+ */
+function modulateSpring(base: SpringConfig, smoothing: number): SpringConfig {
+  const s = clamp(smoothing, 0, SMOOTHING_MAX);
+  const ref = SMOOTHING_ANCHOR;
+  const f = s <= ref
+    ? 0.55 + (s / ref) * 0.45                            // 0 → 0.55×, ref → 1×
+    : 1 + ((s - ref) / (SMOOTHING_MAX - ref)) * 1.4;     // ref → 1×, max → 2.4×
+  const stiffness = base.stiffness / f;                  // higher f → softer/slower
+  const zeta = base.damping / (2 * Math.sqrt(base.stiffness * base.mass));
+  return { stiffness, mass: base.mass, damping: dampingForRatio(stiffness, base.mass, zeta) };
+}
+
+/**
+ * Spring config for a movement personality. Most families anchor to a Screen
+ * Studio preset (see SS_* above) and let the `smoothing` slider scale speed
+ * around that anchor.
+ *   - smooth   → Screen Studio "Default" {340,60,3}
+ *   - snappy   → Screen Studio "Rapid"   {530,40,1} (stiff, light, snappy)
+ *   - glide    → Screen Studio "Slow"    {170,50,3} (heavy, glassy, no overshoot)
+ *   - raw      → near-instant (ignores smoothing)
+ *   - magnetic → critically-damped lock-on (no Screen Studio equivalent)
+ */
+export function springConfig(
+  movement: CursorMovement | undefined,
+  smoothing: number,
+): SpringConfig {
+  switch (movement ?? 'smooth') {
+    case 'raw':
+      return { stiffness: 4000, damping: 95, mass: 0.5 };
+    case 'snappy':
+      return modulateSpring(SS_RAPID, smoothing);
+    case 'glide':
+      return modulateSpring(SS_SLOW, smoothing);
+    case 'magnetic': {
+      // Critically damped, quick lock-on — its own family.
+      const n = clamp(smoothing, 0, SMOOTHING_MAX) / SMOOTHING_MAX;
+      const stiffness = 720 - n * 300;
+      return { stiffness, mass: 1, damping: dampingForRatio(stiffness, 1, 1.02) };
+    }
+    case 'smooth':
+    default:
+      return modulateSpring(SS_DEFAULT, smoothing);
+  }
 }
 
 function stepSpring(
@@ -287,7 +359,7 @@ export function sampleCursor(
   const dtMs = state.lastTms == null ? 16.7 : Math.max(0.5, tMs - state.lastTms);
   state.lastTms = tMs;
 
-  const cfg = springConfigFromSmoothing(o.smoothing);
+  const cfg = springConfig(o.movement, o.smoothing);
   const prevX = state.sx.init ? state.sx.value : targetX;
   const prevY = state.sy.init ? state.sy.value : targetY;
   const x = stepSpring(state.sx, targetX, dtMs, cfg);

@@ -14,6 +14,7 @@ import type {
   Background,
   BackgroundMusic,
   BlurRegion,
+  CameraFollowStyle,
   Crop,
   CursorOptions,
   Display,
@@ -71,6 +72,8 @@ interface ExportModalProps {
   duration: number;
   crop: Crop | null;
   cursorOptions: CursorOptions;
+  cameraStyle?: CameraFollowStyle | null;
+  zoomBlur?: number | null;
   frame?: FrameOptions | null;
   /** Phone-frame styling when in phone-primary mode. */
   mobileOptions?: MobileOptions | null;
@@ -97,6 +100,8 @@ export default function ExportModal({
   duration,
   crop,
   cursorOptions,
+  cameraStyle,
+  zoomBlur,
   frame,
   mobileOptions,
   mobilePrimary,
@@ -180,6 +185,8 @@ export default function ExportModal({
         format,
         quality,
         cursorOptions,
+        cameraStyle,
+        zoomBlur,
         frame,
         mobileOptions,
         mobilePrimary,
@@ -218,7 +225,7 @@ export default function ExportModal({
     }
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
-    fragments, size, fps, format, quality, cursorOptions, frame, mobileOptions, mobilePrimary,
+    fragments, size, fps, format, quality, cursorOptions, cameraStyle, zoomBlur, frame, mobileOptions, mobilePrimary,
     audioFx, backgroundMusic, blurRegions, overlays, onClose,
   ]);
 

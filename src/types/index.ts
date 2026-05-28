@@ -60,6 +60,25 @@ export interface Vec2 {
 
 export type ZoomSource = 'auto' | 'manual';
 
+/**
+ * Easing curve applied to a zoom segment's ease-in/ease-out windows.
+ *   - `spring`     — closed-form damped spring (the original/default look)
+ *   - `ease`       — easeInOutCubic, clean with no overshoot (keynote feel)
+ *   - `snap`       — easeOutBack, brief overshoot then settle (energetic)
+ *   - `linear`     — constant rate (mechanical/technical)
+ *   - `anticipate` — easeInBack, slight pull-back before moving (dramatic)
+ * Absent → treated as `spring` so legacy segments keep their look.
+ */
+export type ZoomEasing = 'spring' | 'ease' | 'snap' | 'linear' | 'anticipate';
+
+/**
+ * Cursor-follow camera behaviour during an active zoom.
+ *   - `static`   — camera holds the configured focus, never pans
+ *   - `follow`   — safe-zone follow (the original/default behaviour)
+ *   - `cinematic`— floatier springs, stronger look-ahead + rest-zoom
+ */
+export type CameraFollowStyle = 'static' | 'follow' | 'cinematic';
+
 export interface ZoomSegment {
   id: string;
   source: ZoomSource;
@@ -69,6 +88,8 @@ export interface ZoomSegment {
   tEnd: number;
   easeIn: number;
   easeOut: number;
+  /** Easing curve for this segment's transitions. Absent → `spring`. */
+  easing?: ZoomEasing;
 }
 
 export interface ZoomDefaults {
@@ -76,6 +97,12 @@ export interface ZoomDefaults {
   duration: number;
   easeIn: number;
   easeOut: number;
+  /** Default easing for newly created segments. Absent → `spring`. */
+  easing?: ZoomEasing;
+  /** Camera-follow behaviour during zoom. Absent → `follow`. */
+  cameraStyle?: CameraFollowStyle;
+  /** Zoom-transition motion blur intensity, 0..1. Absent/0 → off. */
+  zoomBlur?: number;
 }
 
 export interface ZoomSample {
@@ -273,12 +300,29 @@ export interface BlurSampleRect {
   height: number;
 }
 
-export type CursorStyle = 'arrow' | 'arrow-outline' | 'arrow-mini' | 'dot' | 'figma';
+export type BuiltInCursorStyle = 'arrow' | 'arrow-outline' | 'arrow-mini' | 'dot' | 'figma';
+
+/** The user-selectable cursor style. */
+export type CursorStyle = BuiltInCursorStyle;
+
+/**
+ * Movement "personality" of the cursor — selects the spring family the
+ * smoothing slider then tunes within.
+ *   - `raw`      — 1:1 with telemetry, no lag
+ *   - `smooth`   — balanced spring (the original/default feel)
+ *   - `glide`    — soft, floaty spring with a longer trail
+ *   - `snappy`   — stiff, lightly under-damped spring (brief overshoot)
+ *   - `magnetic` — eases & settles as it approaches click points
+ * Absent → treated as `smooth` so legacy cursor options keep their look.
+ */
+export type CursorMovement = 'raw' | 'smooth' | 'glide' | 'snappy' | 'magnetic';
 
 export interface CursorOptions {
   show: boolean;
   loop: boolean;
   style: CursorStyle;
+  /** Movement personality. Absent → `smooth` (back-compat). */
+  movement?: CursorMovement;
   size: number;
   smoothing: number;
   motionBlur: number;

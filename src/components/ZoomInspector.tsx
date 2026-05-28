@@ -1,7 +1,9 @@
-import type { ZoomDefaults, ZoomSegment } from '../types';
+import { ZOOM_EASING_LABELS } from '../lib/easing';
+import type { CameraFollowStyle, ZoomDefaults, ZoomEasing, ZoomSegment } from '../types';
 
 interface ZoomInspectorProps {
   segment: ZoomSegment;
+  zoomDefaults: ZoomDefaults;
   onChange: (patch: Partial<ZoomSegment>) => void;
   onRemove: () => void;
   onApplyToAll: (patch: Partial<ZoomSegment>) => void;
@@ -9,8 +11,17 @@ interface ZoomInspectorProps {
   onClose: () => void;
 }
 
+const EASING_ORDER: ZoomEasing[] = ['spring', 'ease', 'snap', 'linear', 'anticipate'];
+
+const CAMERA_OPTIONS: ReadonlyArray<{ id: CameraFollowStyle; label: string }> = [
+  { id: 'static', label: 'Static' },
+  { id: 'follow', label: 'Follow' },
+  { id: 'cinematic', label: 'Cinematic' },
+];
+
 export default function ZoomInspector({
   segment,
+  zoomDefaults,
   onChange,
   onRemove,
   onApplyToAll,
@@ -18,6 +29,9 @@ export default function ZoomInspector({
   onClose,
 }: ZoomInspectorProps): JSX.Element {
   const durationMs = segment.tEnd - segment.tStart;
+  const easing: ZoomEasing = segment.easing ?? 'spring';
+  const cameraStyle: CameraFollowStyle = zoomDefaults.cameraStyle ?? 'follow';
+  const zoomBlur = zoomDefaults.zoomBlur ?? 0;
 
   const setScale = (v: string): void => onChange({ scale: Number(v) });
   const setDuration = (v: string): void => {
@@ -71,6 +85,25 @@ export default function ZoomInspector({
 
       <div className="zi-field">
         <div className="zi-row">
+          <label>Motion style</label>
+        </div>
+        <div className="zi-help">The easing curve for this zoom's in/out.</div>
+        <div className="zi-segmented">
+          {EASING_ORDER.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`zi-seg ${easing === id ? 'active' : ''}`}
+              onClick={() => onChange({ easing: id })}
+            >
+              {ZOOM_EASING_LABELS[id]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="zi-field">
+        <div className="zi-row">
           <label>Ease in</label>
           <span className="zi-value">{segment.easeIn} ms</span>
         </div>
@@ -99,6 +132,44 @@ export default function ZoomInspector({
         />
       </div>
 
+      <div className="zi-divider" />
+      <div className="zi-help zi-section-label">Applies to all zooms</div>
+
+      <div className="zi-field">
+        <div className="zi-row">
+          <label>Camera</label>
+        </div>
+        <div className="zi-help">How the camera tracks the cursor while zoomed.</div>
+        <div className="zi-segmented">
+          {CAMERA_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              className={`zi-seg ${cameraStyle === opt.id ? 'active' : ''}`}
+              onClick={() => onSetDefault({ cameraStyle: opt.id })}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="zi-field">
+        <div className="zi-row">
+          <label>Zoom blur</label>
+          <span className="zi-value">{Math.round(zoomBlur * 100)}%</span>
+        </div>
+        <div className="zi-help">Motion blur during the zoom transition.</div>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.05"
+          value={zoomBlur}
+          onChange={(e) => onSetDefault({ zoomBlur: Number(e.target.value) })}
+        />
+      </div>
+
       <div className="zi-actions">
         <button
           onClick={() => onSetDefault({
@@ -106,6 +177,7 @@ export default function ZoomInspector({
             duration: segment.tEnd - segment.tStart,
             easeIn: segment.easeIn,
             easeOut: segment.easeOut,
+            easing,
           })}
         >
           Set as default
@@ -115,6 +187,7 @@ export default function ZoomInspector({
             scale: segment.scale,
             easeIn: segment.easeIn,
             easeOut: segment.easeOut,
+            easing,
           })}
         >
           Apply to all zooms
