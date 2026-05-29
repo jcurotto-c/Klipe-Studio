@@ -4,7 +4,7 @@
   "description": "Screen recorder with automatic zoom (Screen Studio-like) for Windows.",
   "main": "electron-dist/main.js",
   "author": "Klipe Studio",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "scripts": {
     "typecheck": "tsc --build",

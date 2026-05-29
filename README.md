@@ -1,35 +1,79 @@
 # Klipe Studio
 
-A Windows desktop screen recorder with **automatic zoom on clicks**, in the spirit of Screen Studio. Records your screen + microphone, captures global mouse activity, and lets you trim, preview with cinematic zoom, and export to MP4 — all locally, with no backend.
+A Windows desktop **screen recorder and cinematic editor** with automatic
+zoom-on-click, smooth cursor, beautiful backgrounds, a webcam bubble, and
+Android phone mirroring — in the spirit of Screen Studio, but for Windows and
+fully **open source**. Everything runs locally: no backend, no telemetry, no
+uploads.
 
-> Stack: Electron + React + Vite + FFmpeg (WebAssembly).
+> **Stack:** Electron · React · Vite · TypeScript · PixiJS · WebCodecs + [mediabunny](https://www.npmjs.com/package/mediabunny) · scrcpy (phone capture)
 
 ---
 
 ## Features
 
-- **Screen recording** via Electron `desktopCapturer` + `MediaRecorder` (VP9/Opus → WebM).
-- **Global mouse tracking** (positions + clicks with timestamps) via a Win32-backed PowerShell helper — no native modules to compile.
-- **Timeline editor** with click markers, drag-to-trim handles, and a scrubbable playhead.
-- **Automatic zoom engine** — every click becomes a 1.8× zoom segment with `smoothstep` ease-in/out (~2 s); overlapping segments under 1.5 s apart are merged.
-- **Canvas renderer** with gradient backgrounds, an enhanced cursor halo, and click ripple effect.
-- **MP4 export** via `@ffmpeg/ffmpeg` (H.264 CRF 18 + AAC), at 720p / 1080p / 4K, 30 or 60 fps.
+- **Screen & window recording** via Electron `desktopCapturer` / `getDisplayMedia`
+  (Windows.Graphics.Capture under the hood) with microphone audio.
+- **Global input tracking** — mouse moves, clicks and keystrokes captured at the
+  OS level by a Win32-backed PowerShell helper (`GetCursorPos` /
+  `GetAsyncKeyState` / `GetCursorInfo`). No native modules to compile.
+- **Automatic zoom** that reacts to clicks, typing bursts and cursor-type changes,
+  plus **manual zoom segments** with per-segment scale, easing and a cinematic
+  **camera-follow** that tracks the cursor.
+- **Cursor styling** — smoothing, size, multiple styles, motion blur, click bounce
+  and sway. The live preview cursor is rendered on a content-protected overlay so
+  the real OS cursor never bleeds into the capture.
+- **Backgrounds & framing** — wallpaper presets, gradients, solid colors, custom
+  images and blur, plus frame shadow, corner radius and padding.
+- **Webcam camera bubble** — position grid, mirror, roundness and size.
+- **Android phone mirroring** (optional) via bundled **scrcpy + adb**, recorded
+  inside an on-screen phone frame.
+- **Overlays** — text and image layers with animations (PixiJS).
+- **Audio** — generated click/keystroke sound effects and looping background music
+  with fades.
+- **Blur / redaction** regions with keyframes.
+- **Timeline editing** — multi-fragment trim, cut/split, reorder, click markers, a
+  scrubbable playhead, and undo/redo.
+- **Export** to **MP4 (H.264)** or **WebM (VP9)** via the OS hardware encoder
+  (WebCodecs), at 720p / 1080p / 4K, 30 or 60 fps, with quality presets.
+
+---
+
+## How export works
+
+Klipe Studio uses a modern, hardware-accelerated pipeline — **not** FFmpeg.wasm:
+
+1. The source recording is demuxed by **mediabunny** and decoded by a WebCodecs
+   `VideoDecoder` (hardware-accelerated where the OS/GPU allows).
+2. Each decoded frame is composited on a canvas with all effects baked in —
+   cinematic zoom, cursor, blur regions, overlays.
+3. Frames are fed to a WebCodecs `VideoEncoder` (H.264 / VP9) and muxed by
+   mediabunny with faststart, so the output is streamable.
+4. Audio (source track + sound FX + background music) is mixed offline via an
+   `OfflineAudioContext`.
+
+On Windows this maps to **Media Foundation** for encode/decode — the same
+"use the OS codec" approach Screen Studio takes with VideoToolbox on macOS.
 
 ---
 
 ## Getting started
 
+**Requirements:** Windows 10/11 (x64), [Node.js](https://nodejs.org) 18+,
+PowerShell (built-in). For phone mirroring you also need an Android device with
+**USB debugging** enabled — scrcpy/adb are downloaded automatically on install.
+
 ```bash
-npm install
-npm run dev
+npm install     # also runs postinstall → downloads + verifies scrcpy/adb
+npm run dev     # boots Vite (renderer) and Electron together with HMR
 ```
 
-`npm run dev` boots Vite (renderer) and Electron together. The first launch lets Vite warm up before Electron opens; if Electron exits before Vite is ready, just rerun.
+If Electron exits before Vite is ready on the first launch, just rerun `npm run dev`.
 
 To produce a Windows installer:
 
 ```bash
-npm run build
+npm run build   # typecheck → vite build → electron build → NSIS installer
 ```
 
 Output is written to `release/` as an NSIS installer (`.exe`).
@@ -40,85 +84,58 @@ Output is written to `release/` as an NSIS installer (`.exe`).
 
 ```
 klipe-studio/
-├── electron/
-│   ├── main.js          # window, IPC, mouse tracker (PowerShell + Win32)
-│   └── preload.js       # contextBridge → window.klipe
-├── src/
-│   ├── index.html
-│   ├── main.jsx
-│   ├── App.jsx          # view router (Recorder ↔ Editor)
-│   ├── styles.css
-│   ├── components/
-│   │   ├── RecorderView.jsx   # source picker, mic toggle, 3-2-1 countdown
-│   │   ├── EditorView.jsx     # preview + controls + timeline + export
-│   │   ├── Timeline.jsx       # click markers, zoom segments, trim handles
-│   │   ├── VideoCanvas.jsx    # rAF preview at 30fps
-│   │   └── ExportPanel.jsx    # resolution, fps, progress, FFmpeg log
-│   └── lib/
-│       ├── capture.js         # MediaRecorder wrapper + mouse event sink
-│       ├── zoom-engine.js     # smoothstep, segment generation + merging
-│       ├── renderer.js        # frame rendering: bg, zoom, cursor, ripple
-│       └── exporter.js        # PNG-sequence + audio → mp4 via ffmpeg.wasm
-├── vite.config.js
-└── package.json
+├── electron/              # Electron main process
+│   ├── main.ts            # windows, IPC, PowerShell mouse/key tracker, file save
+│   ├── preload.ts         # contextBridge → window.klipe / klipeHud / previews
+│   ├── scrcpy-bridge.ts   # Android mirroring via scrcpy + adb
+│   └── cursorHider.ts     # blanks the OS cursor during capture (Win32)
+├── src/                   # Renderer (React + Vite)
+│   ├── App.tsx            # Recorder ↔ Editor router
+│   ├── components/        # RecorderView, EditorView, Timeline, panels/, modals
+│   ├── lib/               # Engines: renderer, exporter, zoom-engine, cursor-engine, capture, …
+│   ├── overlays/          # PixiJS text/image overlay system
+│   └── types/             # Shared TypeScript types + window.klipe typings
+├── scripts/               # download-scrcpy.cjs (postinstall), scrcpy-stop.ps1
+├── public/                # wallpapers, sound effects
+└── binaries/              # scrcpy / adb / FFmpeg DLLs (auto-downloaded; not in git)
 ```
 
 ---
 
-## How it works
+## Privacy
 
-### Mouse capture (Windows)
-
-`electron/main.js` spawns a hidden PowerShell process that uses Win32 P/Invoke (`GetAsyncKeyState`, `GetCursorPos`) to detect clicks and cursor moves at ~80 Hz. Events are streamed back to the renderer via IPC. No native compilation, no extra binaries.
-
-If you ever port this off Windows, the main process falls back to polling `screen.getCursorScreenPoint()` for moves only (clicks won't be detected).
-
-### Mouse event payload
-
-```js
-{
-  startTime: 1714512345678,         // wall-clock ms (informational)
-  events: [
-    { type: 'move',  x, y, t },     // t = ms since recording start
-    { type: 'click', x, y, t, button: 'left' | 'right' | 'middle' }
-  ]
-}
-```
-
-### Zoom segments
-
-```js
-{ center: { x, y }, scale: 1.8, tStart, tEnd, easeIn: 400, easeOut: 600 }
-```
-
-Generated from clicks, then merged when two consecutive segments are within `1500 ms` of each other. Easing is `smoothstep(t) = t*t*(3 - 2*t)`.
-
-### Rendering
-
-- **Preview**: hidden `<video>`, `requestAnimationFrame` loop capped at 30 fps, frame painted to a 1280×720 canvas with `ctx.drawImage`.
-- **Export**: same renderer at the chosen resolution, advancing `video.currentTime` step by step at `1/fps`, capturing each frame as PNG, written to ffmpeg's virtual FS, then muxed with the trimmed AAC audio extracted from the source WebM.
-
----
-
-## Notes & caveats
-
-- The recording itself is WebM (VP9/Opus); the MP4 is produced only at export.
-- 4K @ 60 fps export is heavy in WebAssembly — give it time, and prefer 1080p for everyday use.
-- Click capture requires PowerShell (Windows). The first time you record, you may see the window flash briefly while the helper starts.
-- All processing is local — no telemetry, no upload.
+All processing is local. Klipe Studio has no telemetry, makes no network calls
+during recording or export, and uploads nothing.
 
 ---
 
 ## Scripts
 
-| Command           | What it does                                            |
-| ----------------- | ------------------------------------------------------- |
-| `npm run dev`     | Vite + Electron together, with HMR                      |
-| `npm run build`   | Build the renderer and package a Windows NSIS installer |
-| `npm run preview` | Vite preview (without Electron)                         |
+| Command                | What it does                                            |
+| ---------------------- | ------------------------------------------------------- |
+| `npm run dev`          | Vite + Electron together, with HMR                      |
+| `npm run build`        | Typecheck, build the renderer, package a Windows installer |
+| `npm run preview`      | Vite preview (renderer only, no Electron)               |
+| `npm run typecheck`    | `tsc --build` across all tsconfigs                      |
+| `npm run setup:scrcpy` | Re-download and verify the scrcpy/adb binaries          |
+| `npm run audit:check`  | `npm audit --audit-level=high`                          |
+
+---
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). By
+contributing you agree your changes are licensed under the project's GPL-3.0-or-later
+license.
 
 ---
 
 ## License
 
-MIT.
+Klipe Studio is free software licensed under the **GNU General Public License
+v3.0 or later** — see [LICENSE](./LICENSE). You may use, study, share and improve
+it; any distributed version (including forks and modifications) must remain open
+source under the same license.
+
+Bundled third-party binaries (scrcpy, FFmpeg, SDL2, libusb, adb) are distributed
+under their own licenses — see [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
