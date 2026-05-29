@@ -65,7 +65,16 @@ declare global {
         media: Array<{ name: string; bytes: Uint8Array }>;
         suggestedName: string;
       }) => Promise<{ canceled: boolean; projectPath?: string; error?: string }>;
+      saveDoc: (params: {
+        projectPath: string;
+        manifestJson: string;
+        media: Array<{ name: string; bytes: Uint8Array }>;
+      }) => Promise<{ ok: boolean; error?: string }>;
       open: () => Promise<
+        | { canceled: boolean; manifestJson?: string; media?: Record<string, Uint8Array>; projectPath?: string }
+        | null
+      >;
+      openPath: (projectPath: string) => Promise<
         | { canceled: boolean; manifestJson?: string; media?: Record<string, Uint8Array>; projectPath?: string }
         | null
       >;

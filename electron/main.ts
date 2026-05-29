@@ -624,14 +624,10 @@ ipcMain.handle('project:save', async (_evt: IpcMainInvokeEvent, args: ProjectSav
   }
 });
 
-ipcMain.handle('project:open', async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Open Klipe project',
-    properties: ['openDirectory'],
-  });
-  if (result.canceled || !result.filePaths[0]) return { canceled: true as const };
-  const projectDir = result.filePaths[0];
+async function readProjectDir(projectDir: string): Promise<
+  | { canceled: false; manifestJson: string; media: Record<string, Uint8Array>; projectPath: string }
+  | { canceled: true; error?: string }
+> {
   try {
     const manifestJson = await fs.promises.readFile(path.join(projectDir, 'project.json'), 'utf8');
     const manifest = JSON.parse(manifestJson) as { media?: Record<string, { file?: string } | null> };
@@ -647,9 +643,55 @@ ipcMain.handle('project:open', async () => {
         /* missing media file — skip, the renderer handles absence */
       }
     }
-    return { canceled: false as const, manifestJson, media, projectPath: projectDir };
+    return { canceled: false, manifestJson, media, projectPath: projectDir };
   } catch (err) {
-    return { canceled: true as const, error: String(err) };
+    return { canceled: true, error: String(err) };
+  }
+}
+
+ipcMain.handle('project:open', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open Klipe project',
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true as const };
+  return readProjectDir(result.filePaths[0]);
+});
+
+// Open a known project folder without a dialog — used by the recents list.
+ipcMain.handle('project:open-path', async (_evt: IpcMainInvokeEvent, projectPath: unknown) => {
+  if (typeof projectPath !== 'string' || !projectPath) return { canceled: true as const };
+  return readProjectDir(projectPath);
+});
+
+interface ProjectSaveDocArgs {
+  projectPath: string;
+  manifestJson: string;
+  media: Array<{ name: string; bytes: Uint8Array }>;
+}
+
+// Fast re-save / autosave: rewrite project.json (and any supplied media, e.g.
+// background music) in an existing project folder. The large video blobs are
+// immutable in the editor, so they are never rewritten here.
+ipcMain.handle('project:save-doc', async (_evt: IpcMainInvokeEvent, args: ProjectSaveDocArgs) => {
+  const { projectPath, manifestJson, media } = args || ({} as ProjectSaveDocArgs);
+  if (typeof projectPath !== 'string' || typeof manifestJson !== 'string') {
+    return { ok: false as const, error: 'Invalid args' };
+  }
+  try {
+    if (!fs.existsSync(projectPath)) return { ok: false as const, error: 'Project folder not found' };
+    await fs.promises.writeFile(path.join(projectPath, 'project.json'), manifestJson, 'utf8');
+    if (Array.isArray(media)) {
+      for (const m of media) {
+        if (!m || typeof m.name !== 'string' || !m.bytes) continue;
+        const safe = path.basename(m.name);
+        await fs.promises.writeFile(path.join(projectPath, safe), Buffer.from(m.bytes));
+      }
+    }
+    return { ok: true as const };
+  } catch (err) {
+    return { ok: false as const, error: String(err) };
   }
 });
 

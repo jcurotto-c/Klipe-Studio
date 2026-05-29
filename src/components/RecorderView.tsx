@@ -5,6 +5,7 @@ import {
   type RecorderController,
 } from '../lib/capture';
 import type { Display, HudEvent, Recording } from '../types';
+import type { RecentProject } from '../lib/recents';
 
 const AUTO_ZOOM_KEY = 'klipe.autoZoom';
 
@@ -57,6 +58,8 @@ function hasMp4Moov(buf: ArrayBuffer): boolean {
 
 interface RecorderViewProps {
   onRecordingDone: (rec: Recording) => void;
+  recents: RecentProject[];
+  onOpenRecent: (path: string) => void;
 }
 
 interface ActiveRecorder {
@@ -67,7 +70,7 @@ interface ActiveRecorder {
   scrcpy: { filePath: string; serial: string } | null;
 }
 
-export default function RecorderView({ onRecordingDone }: RecorderViewProps): JSX.Element {
+export default function RecorderView({ onRecordingDone, recents, onOpenRecent }: RecorderViewProps): JSX.Element {
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recorderRef = useRef<ActiveRecorder | null>(null);
@@ -282,6 +285,44 @@ export default function RecorderView({ onRecordingDone }: RecorderViewProps): JS
           </button>
         )}
       </div>
+
+      {recents.length > 0 && (
+        <div style={{ marginTop: 28, width: '100%', maxWidth: 520 }}>
+          <div style={{ fontSize: 13, opacity: 0.6, marginBottom: 8 }}>Recent projects</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {recents.map((r) => (
+              <button
+                key={r.path}
+                className="ghost"
+                onClick={() => onOpenRecent(r.path)}
+                title={r.path}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  gap: 2,
+                  textAlign: 'left',
+                  padding: '8px 12px',
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>{r.name}</span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    opacity: 0.5,
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {r.path}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

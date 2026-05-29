@@ -42,7 +42,13 @@ contextBridge.exposeInMainWorld('klipe', {
       media: Array<{ name: string; bytes: Uint8Array }>;
       suggestedName: string;
     }) => ipcRenderer.invoke('project:save', params),
+    saveDoc: (params: {
+      projectPath: string;
+      manifestJson: string;
+      media: Array<{ name: string; bytes: Uint8Array }>;
+    }) => ipcRenderer.invoke('project:save-doc', params),
     open: () => ipcRenderer.invoke('project:open'),
+    openPath: (projectPath: string) => ipcRenderer.invoke('project:open-path', projectPath),
   },
 });
 

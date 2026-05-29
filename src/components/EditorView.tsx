@@ -67,7 +67,7 @@ import {
 } from '../overlays/factories';
 import OverlayInspector from '../overlays/components/OverlayInspector';
 import OverlayLayerList from '../overlays/components/OverlayLayerList';
-import { saveProject, type EditDocument } from '../lib/project';
+import { saveProject, saveProjectDoc, type EditDocument } from '../lib/project';
 
 const DEFAULTS_KEY = 'klipe.zoomDefaults';
 const CAMERA_OPTIONS_KEY = 'klipe.cameraOptions';
@@ -148,6 +148,10 @@ interface EditorViewProps {
   navExtraEl: HTMLElement | null;
   /** When opening a saved .klipestudio project, the edit document to hydrate from. */
   initialDoc?: EditDocument | null;
+  /** Folder of the currently-open project, if any (enables quick-save + autosave). */
+  projectPath?: string | null;
+  /** Called after a successful save with the project's folder + name. */
+  onProjectSaved?: (path: string, name: string) => void;
 }
 
 interface HistorySnapshot {
@@ -176,7 +180,7 @@ const ASPECT_OPTIONS: ReadonlyArray<AspectOption> = [
   { id: '3:4',  label: 'Tall',     ratio: '3:4',  value: 3 / 4 },
 ];
 
-export default function EditorView({ recording, onNew, navExtraEl, initialDoc }: EditorViewProps): JSX.Element {
+export default function EditorView({ recording, onNew, navExtraEl, initialDoc, projectPath, onProjectSaved }: EditorViewProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [sourceDuration, setSourceDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -358,14 +362,39 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc }:
   const handleSaveProject = useCallback(async (): Promise<void> => {
     setSavingProject(true);
     try {
-      const res = await saveProject(recording, buildEditDocument());
-      if (res.error) console.error('[project] save failed:', res.error);
+      if (projectPath) {
+        // Re-save to the known folder without re-prompting (json + music only).
+        const res = await saveProjectDoc(projectPath, recording, buildEditDocument());
+        if (!res.ok) console.error('[project] save failed:', res.error);
+        else onProjectSaved?.(projectPath, recording.name || 'Untitled');
+      } else {
+        // First save: prompt for a location and write everything.
+        const res = await saveProject(recording, buildEditDocument());
+        if (res.error) console.error('[project] save failed:', res.error);
+        else if (!res.canceled && res.projectPath) {
+          onProjectSaved?.(res.projectPath, recording.name || 'Untitled');
+        }
+      }
     } catch (e) {
       console.error('[project] save failed:', e);
     } finally {
       setSavingProject(false);
     }
-  }, [recording, buildEditDocument]);
+  }, [projectPath, recording, buildEditDocument, onProjectSaved]);
+
+  // Debounced autosave: once a project has a folder on disk, persist edit-doc
+  // changes ~1.5s after the user stops editing. Rewrites only project.json
+  // (and music bytes), never the immutable video blobs. buildEditDocument's
+  // identity changes whenever any document field changes, re-arming the timer.
+  useEffect(() => {
+    if (!projectPath) return;
+    const t = setTimeout(() => {
+      void saveProjectDoc(projectPath, recording, buildEditDocument()).catch(() => {
+        /* autosave is best-effort — the explicit Save surfaces errors */
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [projectPath, recording, buildEditDocument]);
 
   const pushHistory = useCallback((): void => {
     const h = historyRef.current;

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import RecorderView from './components/RecorderView';
 import EditorView from './components/EditorView';
 import type { Recording } from './types';
-import { openProject, type EditDocument } from './lib/project';
+import { openProject, openProjectPath, type EditDocument } from './lib/project';
+import { loadRecents, addRecent, removeRecent, type RecentProject } from './lib/recents';
 
 type View = 'recorder' | 'editor';
 
@@ -10,6 +11,8 @@ export default function App(): JSX.Element {
   const [view, setView] = useState<View>('recorder');
   const [recording, setRecording] = useState<Recording | null>(null);
   const [loadedDoc, setLoadedDoc] = useState<EditDocument | null>(null);
+  const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
+  const [recents, setRecents] = useState<RecentProject[]>(() => loadRecents());
   const navExtraRef = useRef<HTMLDivElement | null>(null);
   const [navExtraEl, setNavExtraEl] = useState<HTMLDivElement | null>(null);
   const setNavExtra = useCallback((el: HTMLDivElement | null) => {
@@ -19,6 +22,7 @@ export default function App(): JSX.Element {
 
   const handleRecordingDone = useCallback((rec: Recording) => {
     setLoadedDoc(null);
+    setCurrentProjectPath(null);
     setRecording(rec);
     setView('editor');
     window.klipeHud?.showMain?.();
@@ -27,24 +31,48 @@ export default function App(): JSX.Element {
   const handleNewRecording = useCallback(() => {
     if (recording?.url) URL.revokeObjectURL(recording.url);
     setLoadedDoc(null);
+    setCurrentProjectPath(null);
     setRecording(null);
     setView('recorder');
     window.klipeHud?.hideMain?.();
   }, [recording]);
 
+  const applyOpened = useCallback((opened: { recording: Recording; doc: EditDocument; projectPath: string }) => {
+    if (recording?.url) URL.revokeObjectURL(recording.url);
+    setLoadedDoc(opened.doc);
+    setRecording(opened.recording);
+    setCurrentProjectPath(opened.projectPath || null);
+    if (opened.projectPath) {
+      setRecents(addRecent({ path: opened.projectPath, name: opened.recording.name || 'Untitled' }));
+    }
+    setView('editor');
+    window.klipeHud?.showMain?.();
+  }, [recording]);
+
   const handleOpenProject = useCallback(async () => {
     try {
       const opened = await openProject();
-      if (!opened) return;
-      if (recording?.url) URL.revokeObjectURL(recording.url);
-      setLoadedDoc(opened.doc);
-      setRecording(opened.recording);
-      setView('editor');
-      window.klipeHud?.showMain?.();
+      if (opened) applyOpened(opened);
     } catch (e) {
       console.error('[project] open failed:', e);
     }
-  }, [recording]);
+  }, [applyOpened]);
+
+  const handleOpenRecent = useCallback(async (path: string) => {
+    try {
+      const opened = await openProjectPath(path);
+      if (opened) applyOpened(opened);
+      else setRecents(removeRecent(path));
+    } catch (e) {
+      console.error('[project] open recent failed:', e);
+      setRecents(removeRecent(path));
+    }
+  }, [applyOpened]);
+
+  const handleProjectSaved = useCallback((path: string, name: string) => {
+    setCurrentProjectPath(path);
+    setRecents(addRecent({ path, name }));
+  }, []);
 
   useEffect(() => {
     if (view === 'editor') {
@@ -90,14 +118,21 @@ export default function App(): JSX.Element {
 
       <main className="view">
         {view === 'recorder' && (
-          <RecorderView onRecordingDone={handleRecordingDone} />
+          <RecorderView
+            onRecordingDone={handleRecordingDone}
+            recents={recents}
+            onOpenRecent={handleOpenRecent}
+          />
         )}
         {view === 'editor' && recording && (
           <EditorView
+            key={recording.url}
             recording={recording}
             onNew={handleNewRecording}
             navExtraEl={navExtraEl}
             initialDoc={loadedDoc}
+            projectPath={currentProjectPath}
+            onProjectSaved={handleProjectSaved}
           />
         )}
       </main>
