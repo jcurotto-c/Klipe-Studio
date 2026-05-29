@@ -67,6 +67,7 @@ import {
 } from '../overlays/factories';
 import OverlayInspector from '../overlays/components/OverlayInspector';
 import OverlayLayerList from '../overlays/components/OverlayLayerList';
+import { saveProject, type EditDocument } from '../lib/project';
 
 const DEFAULTS_KEY = 'klipe.zoomDefaults';
 const CAMERA_OPTIONS_KEY = 'klipe.cameraOptions';
@@ -145,6 +146,8 @@ interface EditorViewProps {
   recording: Recording;
   onNew: () => void;
   navExtraEl: HTMLElement | null;
+  /** When opening a saved .klipestudio project, the edit document to hydrate from. */
+  initialDoc?: EditDocument | null;
 }
 
 interface HistorySnapshot {
@@ -173,33 +176,39 @@ const ASPECT_OPTIONS: ReadonlyArray<AspectOption> = [
   { id: '3:4',  label: 'Tall',     ratio: '3:4',  value: 3 / 4 },
 ];
 
-export default function EditorView({ recording, onNew, navExtraEl }: EditorViewProps): JSX.Element {
+export default function EditorView({ recording, onNew, navExtraEl, initialDoc }: EditorViewProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [sourceDuration, setSourceDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [fragments, setFragments] = useState<Fragment[]>([]);
+  const [fragments, setFragments] = useState<Fragment[]>(() => initialDoc?.fragments ?? []);
   const [selectedFragmentId, setSelectedFragmentId] = useState<string | null>(null);
-  const [background, setBackground] = useState<Background>({ type: 'wallpaper', value: 'default', blur: 0 });
+  const [background, setBackground] = useState<Background>(
+    () => initialDoc?.background ?? { type: 'wallpaper', value: 'default', blur: 0 },
+  );
   const [cropMode, setCropMode] = useState(false);
-  const [crop, setCrop] = useState<Crop | null>(null);
-  const [zoomDefaults, setZoomDefaults] = useState<ZoomDefaults>(loadDefaults);
+  const [crop, setCrop] = useState<Crop | null>(() => initialDoc?.crop ?? null);
+  const [zoomDefaults, setZoomDefaults] = useState<ZoomDefaults>(() => initialDoc?.zoomDefaults ?? loadDefaults());
   const [segments, setSegments] = useState<ZoomSegment[]>(() =>
-    recording.autoZoom === false ? [] : generateZoomSegments(recording.mouse),
+    initialDoc
+      ? initialDoc.segments
+      : recording.autoZoom === false
+        ? []
+        : generateZoomSegments(recording.mouse),
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
-  const [cameraOptions, setCameraOptions] = useState<CameraOptions>(loadCameraOptions);
+  const [cameraOptions, setCameraOptions] = useState<CameraOptions>(() => initialDoc?.cameraOptions ?? loadCameraOptions());
   const [cameraAvailable, setCameraAvailable] = useState(false);
-  const [cursorOptions, setCursorOptions] = useState<CursorOptions>(loadCursorOptions);
-  const [frameOptions, setFrameOptions] = useState<FrameOptions>(loadFrameOptions);
-  const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(loadAudioFxOptions);
-  const [backgroundMusic, setBackgroundMusic] = useState<BackgroundMusic | null>(null);
+  const [cursorOptions, setCursorOptions] = useState<CursorOptions>(() => initialDoc?.cursorOptions ?? loadCursorOptions());
+  const [frameOptions, setFrameOptions] = useState<FrameOptions>(() => initialDoc?.frameOptions ?? loadFrameOptions());
+  const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(() => initialDoc?.audioFxOptions ?? loadAudioFxOptions());
+  const [backgroundMusic, setBackgroundMusic] = useState<BackgroundMusic | null>(() => initialDoc?.backgroundMusic ?? null);
   const bgMusicAudioRef = useRef<HTMLAudioElement | null>(null);
   // A phone clip is portrait by nature, so default the canvas to 9:16 when
   // the recording's primary subject is a phone. The user can still change it.
   const [aspectRatioId, setAspectRatioId] = useState<string>(
-    recording.mobile ? '9:16' : 'auto',
+    () => initialDoc?.aspectRatioId ?? (recording.mobile ? '9:16' : 'auto'),
   );
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
   const aspectMenuRef = useRef<HTMLDivElement | null>(null);
@@ -207,14 +216,15 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
   const addLayerMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [mobileOptions, setMobileOptions] = useState<MobileOptions>(loadMobileOptions);
+  const [mobileOptions, setMobileOptions] = useState<MobileOptions>(() => initialDoc?.mobileOptions ?? loadMobileOptions());
   const [mobileAvailable, setMobileAvailable] = useState(false);
   const mobileVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [blurRegions, setBlurRegions] = useState<BlurRegion[]>([]);
+  const [blurRegions, setBlurRegions] = useState<BlurRegion[]>(() => initialDoc?.blurRegions ?? []);
   const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
   const [blurMode, setBlurMode] = useState<boolean>(false);
-  const [overlays, setOverlays] = useState<Overlay[]>([]);
+  const [overlays, setOverlays] = useState<Overlay[]>(() => initialDoc?.overlays ?? []);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
+  const [savingProject, setSavingProject] = useState(false);
 
   const exportCrop: Crop | null = isFullCrop(crop) ? null : crop;
 
@@ -321,6 +331,41 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
     blurRegions: blurRegionsRef.current,
     overlays: overlaysRef.current,
   }), []);
+
+  // The full editor state, gathered for project persistence. Mirrors the
+  // fields the export pipeline consumes plus zoomDefaults / aspectRatioId.
+  const buildEditDocument = useCallback((): EditDocument => ({
+    fragments,
+    segments,
+    background,
+    crop,
+    zoomDefaults,
+    cameraOptions,
+    cursorOptions,
+    frameOptions,
+    audioFxOptions,
+    backgroundMusic,
+    aspectRatioId,
+    mobileOptions,
+    blurRegions,
+    overlays,
+  }), [
+    fragments, segments, background, crop, zoomDefaults, cameraOptions,
+    cursorOptions, frameOptions, audioFxOptions, backgroundMusic, aspectRatioId,
+    mobileOptions, blurRegions, overlays,
+  ]);
+
+  const handleSaveProject = useCallback(async (): Promise<void> => {
+    setSavingProject(true);
+    try {
+      const res = await saveProject(recording, buildEditDocument());
+      if (res.error) console.error('[project] save failed:', res.error);
+    } catch (e) {
+      console.error('[project] save failed:', e);
+    } finally {
+      setSavingProject(false);
+    }
+  }, [recording, buildEditDocument]);
 
   const pushHistory = useCallback((): void => {
     const h = historyRef.current;
@@ -1516,10 +1561,20 @@ export default function EditorView({ recording, onNew, navExtraEl }: EditorViewP
       </div>
 
       {navExtraEl && createPortal(
-        <ExportButton
-          onClick={() => setExportOpen(true)}
-          disabled={!duration}
-        />,
+        <>
+          <button
+            className="ghost"
+            onClick={handleSaveProject}
+            disabled={savingProject || !duration}
+            title="Save project (.klipestudio)"
+          >
+            {savingProject ? 'Saving…' : 'Save'}
+          </button>
+          <ExportButton
+            onClick={() => setExportOpen(true)}
+            disabled={!duration}
+          />
+        </>,
         navExtraEl,
       )}
 

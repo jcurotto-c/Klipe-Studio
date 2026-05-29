@@ -585,6 +585,74 @@ ipcMain.handle('get-primary-display-size', () => {
   return { width: d.size.width, height: d.size.height, scaleFactor: d.scaleFactor };
 });
 
+interface ProjectSaveArgs {
+  manifestJson: string;
+  media: Array<{ name: string; bytes: Uint8Array }>;
+  suggestedName: string;
+}
+
+// Persist a .klipestudio project as a folder bundle: project.json plus the
+// source media (screen/camera/mobile/music). The renderer supplies the JSON
+// and the raw bytes; we only do the file IO here.
+ipcMain.handle('project:save', async (_evt: IpcMainInvokeEvent, args: ProjectSaveArgs) => {
+  if (!mainWindow) return { canceled: true as const };
+  const { manifestJson, media, suggestedName } = args || ({} as ProjectSaveArgs);
+  if (typeof manifestJson !== 'string' || !Array.isArray(media)) {
+    return { canceled: true as const, error: 'Invalid project payload' };
+  }
+  const safeName = (suggestedName || 'Untitled').replace(/[\\/:*?"<>|]/g, '_');
+  const defaultPath = path.join(app.getPath('videos'), `${safeName}.klipestudio`);
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save Klipe project',
+    defaultPath,
+    filters: [{ name: 'Klipe Project', extensions: ['klipestudio'] }],
+  });
+  if (result.canceled || !result.filePath) return { canceled: true as const };
+  const projectDir = result.filePath;
+  try {
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(path.join(projectDir, 'project.json'), manifestJson, 'utf8');
+    for (const m of media) {
+      if (!m || typeof m.name !== 'string' || !m.bytes) continue;
+      // Only a bare filename is allowed inside the bundle — block traversal.
+      const safe = path.basename(m.name);
+      fs.writeFileSync(path.join(projectDir, safe), Buffer.from(m.bytes));
+    }
+    return { canceled: false as const, projectPath: projectDir };
+  } catch (err) {
+    return { canceled: false as const, error: String(err) };
+  }
+});
+
+ipcMain.handle('project:open', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open Klipe project',
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true as const };
+  const projectDir = result.filePaths[0];
+  try {
+    const manifestJson = await fs.promises.readFile(path.join(projectDir, 'project.json'), 'utf8');
+    const manifest = JSON.parse(manifestJson) as { media?: Record<string, { file?: string } | null> };
+    const media: Record<string, Uint8Array> = {};
+    const refs = manifest.media ? Object.values(manifest.media) : [];
+    for (const ref of refs) {
+      if (!ref || typeof ref.file !== 'string') continue;
+      const safe = path.basename(ref.file);
+      try {
+        const buf = await fs.promises.readFile(path.join(projectDir, safe));
+        media[safe] = new Uint8Array(buf);
+      } catch {
+        /* missing media file — skip, the renderer handles absence */
+      }
+    }
+    return { canceled: false as const, manifestJson, media, projectPath: projectDir };
+  } catch (err) {
+    return { canceled: true as const, error: String(err) };
+  }
+});
+
 const POWERSHELL_TRACKER_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @"

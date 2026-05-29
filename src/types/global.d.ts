@@ -58,6 +58,18 @@ declare global {
       read: (filePath: string) => Promise<ArrayBuffer>;
       onDisconnect: (cb: (serial: string) => void) => () => void;
     };
+    /** Project (.klipestudio) save/open. */
+    project: {
+      save: (params: {
+        manifestJson: string;
+        media: Array<{ name: string; bytes: Uint8Array }>;
+        suggestedName: string;
+      }) => Promise<{ canceled: boolean; projectPath?: string; error?: string }>;
+      open: () => Promise<
+        | { canceled: boolean; manifestJson?: string; media?: Record<string, Uint8Array>; projectPath?: string }
+        | null
+      >;
+    };
   }
 
   interface KlipeHudBridge {

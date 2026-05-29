@@ -36,6 +36,14 @@ contextBridge.exposeInMainWorld('klipe', {
       return () => ipcRenderer.removeListener('scrcpy:disconnect', listener);
     },
   },
+  project: {
+    save: (params: {
+      manifestJson: string;
+      media: Array<{ name: string; bytes: Uint8Array }>;
+      suggestedName: string;
+    }) => ipcRenderer.invoke('project:save', params),
+    open: () => ipcRenderer.invoke('project:open'),
+  },
 });
 
 contextBridge.exposeInMainWorld('klipeCursorPreview', {
