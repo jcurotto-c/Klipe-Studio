@@ -5,6 +5,7 @@ import type { Recording } from './types';
 import { openProject, openProjectPath, type EditDocument } from './lib/project';
 import { loadRecents, addRecent, removeRecent, type RecentProject } from './lib/recents';
 import { loadGlobalShortcuts, applyGlobalShortcuts } from './lib/global-shortcuts';
+import logoIcon from './assets/branding/klipe-icon.svg';
 
 type View = 'recorder' | 'editor';
 
@@ -93,8 +94,11 @@ export default function App(): JSX.Element {
     <div className="app">
       <header className="titlebar">
         <div className="brand">
-          <div className="logo" />
-          <span>klipestudio</span>
+          <img className="brand-logo" src={logoIcon} alt="Klipe Studio" />
+          <span className="brand-text">
+            <span className="brand-name">klipe</span>
+            <span className="brand-sub">studio</span>
+          </span>
         </div>
         {recording?.name && (
           <div className="titlebar-center">

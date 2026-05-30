@@ -17,6 +17,7 @@
     "preview": "vite preview",
     "setup:scrcpy": "node scripts/download-scrcpy.cjs",
     "postinstall": "node scripts/download-scrcpy.cjs",
+    "make:icon": "electron scripts/make-icon.cjs",
     "audit:check": "npm audit --audit-level=high"
   },
   "dependencies": {
@@ -70,6 +71,7 @@
       "output": "release"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",

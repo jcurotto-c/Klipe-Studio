@@ -16,6 +16,13 @@ import {
 
 const isDev = process.env['NODE_ENV'] === 'development';
 
+// Window + taskbar icon. In dev this resolves to <root>/build/icon.ico (one
+// level above electron-dist/). In the packaged app the .exe already carries the
+// icon embedded by electron-builder, so a missing file here is harmless and we
+// fall back to the exe's icon.
+const APP_ICON = path.join(__dirname, '..', 'build', 'icon.ico');
+const appIcon = fs.existsSync(APP_ICON) ? APP_ICON : undefined;
+
 Menu.setApplicationMenu(null);
 
 let mainWindow: BrowserWindow | null = null;
@@ -53,6 +60,7 @@ function createWindow(): void {
     minHeight: 640,
     backgroundColor: '#0b0d12',
     title: 'Klipe Studio',
+    icon: appIcon,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -433,6 +441,10 @@ function applyGlobalShortcuts(s: GlobalShortcuts): ShortcutRegResult[] {
 }
 
 app.whenReady().then(() => {
+  // Group the taskbar entry under our own AppUserModelID so Windows shows the
+  // Klipe icon (not electron.exe's) and attributes notifications correctly.
+  if (process.platform === 'win32') app.setAppUserModelId('com.klipe.studio');
+
   // Grant the capture permissions a local recorder needs (mic, camera, screen).
   // Electron shows no browser-style prompt; without this the renderer's
   // getUserMedia / getDisplayMedia can be denied silently on some setups.
