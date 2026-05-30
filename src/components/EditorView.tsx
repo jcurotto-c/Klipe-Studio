@@ -210,6 +210,82 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
   const [backgroundMusic, setBackgroundMusic] = useState<BackgroundMusic | null>(() => initialDoc?.backgroundMusic ?? null);
   const [audioVolume, setAudioVolume] = useState<number>(() => initialDoc?.audioVolume ?? 1);
   const lastVolumeRef = useRef(1);
+  // Per-track recording-audio volumes (mic vs system). Multiplied by the master
+  // audioVolume. Only meaningful when the recording has separate audio tracks.
+  const [micVolume, setMicVolume] = useState<number>(() => initialDoc?.micVolume ?? 1);
+  const [systemVolume, setSystemVolume] = useState<number>(() => initialDoc?.systemVolume ?? 1);
+  const micAudioRef = useRef<HTMLAudioElement | null>(null);
+  const systemAudioRef = useRef<HTMLAudioElement | null>(null);
+  const recordedMicAudio = recording.micAudio ?? null;
+  const recordedSystemAudio = recording.systemAudio ?? null;
+
+  // Recorded mic/system audio playback. New recordings store audio as separate
+  // tracks (the screen blob is video-only), so two hidden <audio> elements play
+  // them in lockstep with the main <video>, like the camera/mobile videos.
+  useEffect(() => {
+    const main = videoRef.current;
+    const mic = micAudioRef.current;
+    const sys = systemAudioRef.current;
+    const els: HTMLAudioElement[] = [];
+    if (mic && recordedMicAudio) {
+      mic.src = recordedMicAudio.url; mic.preload = 'auto'; mic.load(); els.push(mic);
+    }
+    if (sys && recordedSystemAudio) {
+      sys.src = recordedSystemAudio.url; sys.preload = 'auto'; sys.load(); els.push(sys);
+    }
+    if (!main || els.length === 0) return undefined;
+    const SYNC = 0.06;
+    const syncTime = (): void => {
+      for (const a of els) {
+        if (Math.abs(a.currentTime - main.currentTime) > SYNC) a.currentTime = main.currentTime;
+      }
+    };
+    const onPlay = (): void => {
+      syncTime();
+      for (const a of els) { a.playbackRate = main.playbackRate; a.play().catch(() => { /* retry */ }); }
+    };
+    const onPause = (): void => { for (const a of els) a.pause(); syncTime(); };
+    const onSeek = (): void => { for (const a of els) a.currentTime = main.currentTime; };
+    const onRate = (): void => { for (const a of els) a.playbackRate = main.playbackRate; };
+    const onTime = (): void => syncTime();
+    main.addEventListener('play', onPlay);
+    main.addEventListener('pause', onPause);
+    main.addEventListener('seeking', onSeek);
+    main.addEventListener('seeked', onSeek);
+    main.addEventListener('ratechange', onRate);
+    main.addEventListener('timeupdate', onTime);
+    if (!main.paused) onPlay(); else syncTime();
+    return () => {
+      main.removeEventListener('play', onPlay);
+      main.removeEventListener('pause', onPause);
+      main.removeEventListener('seeking', onSeek);
+      main.removeEventListener('seeked', onSeek);
+      main.removeEventListener('ratechange', onRate);
+      main.removeEventListener('timeupdate', onTime);
+      for (const a of els) a.pause();
+    };
+  }, [recordedMicAudio, recordedSystemAudio]);
+
+  // Apply master × per-track volume to each recorded audio element.
+  useEffect(() => {
+    if (micAudioRef.current) {
+      micAudioRef.current.volume = Math.max(0, Math.min(1, audioVolume * micVolume));
+    }
+  }, [audioVolume, micVolume]);
+  useEffect(() => {
+    if (systemAudioRef.current) {
+      systemAudioRef.current.volume = Math.max(0, Math.min(1, audioVolume * systemVolume));
+    }
+  }, [audioVolume, systemVolume]);
+
+  // Release recorded audio object URLs when the recording is replaced.
+  useEffect(() => {
+    return () => {
+      if (recordedMicAudio?.url) { try { URL.revokeObjectURL(recordedMicAudio.url); } catch { /* ignore */ } }
+      if (recordedSystemAudio?.url) { try { URL.revokeObjectURL(recordedSystemAudio.url); } catch { /* ignore */ } }
+    };
+  }, [recordedMicAudio, recordedSystemAudio]);
+  const hasSeparateAudio = !!(recordedMicAudio || recordedSystemAudio);
   const bgMusicAudioRef = useRef<HTMLAudioElement | null>(null);
   // A phone clip is portrait by nature, so default the canvas to 9:16 when
   // the recording's primary subject is a phone. The user can still change it.
@@ -352,6 +428,8 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
     audioFxOptions,
     backgroundMusic,
     audioVolume,
+    micVolume,
+    systemVolume,
     aspectRatioId,
     mobileOptions,
     blurRegions,
@@ -359,7 +437,7 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
   }), [
     fragments, segments, background, crop, zoomDefaults, cameraOptions,
     cursorOptions, frameOptions, audioFxOptions, backgroundMusic, audioVolume,
-    aspectRatioId, mobileOptions, blurRegions, overlays,
+    micVolume, systemVolume, aspectRatioId, mobileOptions, blurRegions, overlays,
   ]);
 
   const handleSaveProject = useCallback(async (): Promise<void> => {
@@ -399,12 +477,22 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
     return () => clearTimeout(t);
   }, [projectPath, recording, buildEditDocument]);
 
-  // Master volume for the recording's own audio (mic + system). Drives the
-  // preview <video> and is passed to the exporter so the file matches.
+  // Master volume for the recording's own audio. With separate mic/system
+  // tracks the screen blob has no audio, so the main <video> is muted and the
+  // per-track <audio> elements carry the sound (master × per-track gain). For
+  // legacy recordings (audio baked into the screen blob) the main <video> plays
+  // it at the master volume.
   useEffect(() => {
     const v = videoRef.current;
-    if (v) v.volume = audioVolume;
-  }, [audioVolume]);
+    if (v) {
+      v.muted = hasSeparateAudio;
+      v.volume = audioVolume;
+    }
+    const mic = micAudioRef.current;
+    if (mic) mic.volume = Math.max(0, Math.min(1, audioVolume * micVolume));
+    const sys = systemAudioRef.current;
+    if (sys) sys.volume = Math.max(0, Math.min(1, audioVolume * systemVolume));
+  }, [audioVolume, micVolume, systemVolume, hasSeparateAudio]);
 
   const handleVolumeChange = useCallback((v: number): void => {
     setAudioVolume(v);
@@ -1270,6 +1358,12 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
           onAudioFxOptionsChange={handleAudioFxOptionsChange}
           backgroundMusic={backgroundMusic}
           onBackgroundMusicChange={handleBackgroundMusicChange}
+          micVolume={micVolume}
+          systemVolume={systemVolume}
+          onMicVolumeChange={setMicVolume}
+          onSystemVolumeChange={setSystemVolume}
+          hasMicAudio={!!recordedMicAudio}
+          hasSystemAudio={!!recordedSystemAudio}
           inputEvents={recording.mouse.events}
           blurRegions={blurRegions}
           blurMode={blurMode}
@@ -1359,6 +1453,8 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
               playsInline
               autoPlay
             />
+            <audio ref={micAudioRef} style={{ display: 'none' }} preload="auto" />
+            <audio ref={systemAudioRef} style={{ display: 'none' }} preload="auto" />
           </div>
         </div>
 
@@ -1688,6 +1784,10 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
           audioFx={audioFxOptions}
           backgroundMusic={backgroundMusic}
           audioVolume={audioVolume}
+          micBlob={recordedMicAudio?.blob ?? null}
+          systemBlob={recordedSystemAudio?.blob ?? null}
+          micVolume={micVolume}
+          systemVolume={systemVolume}
           blurRegions={blurRegions}
           overlays={overlays}
           sourceLabel={recording.name || 'recording'}

@@ -60,6 +60,9 @@ export interface EditDocument {
   backgroundMusic: BackgroundMusic | null;
   /** Master volume (0..1) for the recording's own audio. */
   audioVolume?: number;
+  /** Per-track volumes (0..1) for the separate mic / system audio tracks. */
+  micVolume?: number;
+  systemVolume?: number;
   aspectRatioId: string;
   mobileOptions: MobileOptions;
   blurRegions: BlurRegion[];
@@ -85,6 +88,8 @@ export interface ProjectManifest {
     camera: MediaRef | null;
     mobile: MediaRef | null;
     music: MediaRef | null;
+    micAudio?: MediaRef | null;
+    systemAudio?: MediaRef | null;
   };
 }
 
@@ -135,6 +140,8 @@ function mediaRefsFor(recording: Recording): {
   screen: MediaRef;
   camera: MediaRef | null;
   mobile: MediaRef | null;
+  micAudio: MediaRef | null;
+  systemAudio: MediaRef | null;
 } {
   return {
     screen: { file: `screen.${extFor(recording.mimeType, 'webm')}`, mimeType: recording.mimeType },
@@ -143,6 +150,12 @@ function mediaRefsFor(recording: Recording): {
       : null,
     mobile: recording.mobile
       ? { file: `mobile.${extFor(recording.mobile.mimeType, 'mp4')}`, mimeType: recording.mobile.mimeType }
+      : null,
+    micAudio: recording.micAudio
+      ? { file: `mic.${extFor(recording.micAudio.mimeType, 'webm')}`, mimeType: recording.micAudio.mimeType }
+      : null,
+    systemAudio: recording.systemAudio
+      ? { file: `system.${extFor(recording.systemAudio.mimeType, 'webm')}`, mimeType: recording.systemAudio.mimeType }
       : null,
   };
 }
@@ -182,7 +195,14 @@ function buildManifest(
     autoZoom: recording.autoZoom !== false,
     mouse: recording.mouse,
     doc: docToStore,
-    media: { screen: refs.screen, camera: refs.camera, mobile: refs.mobile, music: musicRef },
+    media: {
+      screen: refs.screen,
+      camera: refs.camera,
+      mobile: refs.mobile,
+      music: musicRef,
+      micAudio: refs.micAudio,
+      systemAudio: refs.systemAudio,
+    },
   };
 }
 
@@ -207,6 +227,12 @@ export async function saveProject(
   }
   if (recording.mobile && refs.mobile) {
     media.push({ name: refs.mobile.file, bytes: await blobBytes(recording.mobile.blob) });
+  }
+  if (recording.micAudio && refs.micAudio) {
+    media.push({ name: refs.micAudio.file, bytes: await blobBytes(recording.micAudio.blob) });
+  }
+  if (recording.systemAudio && refs.systemAudio) {
+    media.push({ name: refs.systemAudio.file, bytes: await blobBytes(recording.systemAudio.blob) });
   }
   const music = await readMusicMedia(doc);
   if (music) media.push({ name: music.ref.file, bytes: music.bytes });
@@ -267,6 +293,8 @@ function reconstructProject(result: ReadResult | null): OpenedProject | null {
   const camera = blobFor(manifest.media.camera);
   const mobile = blobFor(manifest.media.mobile);
   const music = blobFor(manifest.media.music);
+  const micAudio = blobFor(manifest.media.micAudio ?? null);
+  const systemAudio = blobFor(manifest.media.systemAudio ?? null);
 
   const doc: EditDocument = { ...manifest.doc };
   if (doc.backgroundMusic) {
@@ -283,6 +311,8 @@ function reconstructProject(result: ReadResult | null): OpenedProject | null {
     name: manifest.name,
     camera: camera ? { blob: camera.blob, url: camera.url, mimeType: camera.mimeType } : null,
     mobile: mobile ? { blob: mobile.blob, url: mobile.url, mimeType: mobile.mimeType } : null,
+    micAudio: micAudio ? { blob: micAudio.blob, url: micAudio.url, mimeType: micAudio.mimeType } : null,
+    systemAudio: systemAudio ? { blob: systemAudio.blob, url: systemAudio.url, mimeType: systemAudio.mimeType } : null,
   };
 
   return { recording, doc, projectPath: result.projectPath || '' };

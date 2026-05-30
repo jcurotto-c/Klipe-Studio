@@ -124,6 +124,13 @@ export interface RecordingMobile {
   mimeType: string;
 }
 
+/** A standalone recorded audio track (microphone or system/desktop audio). */
+export interface RecordingAudio {
+  blob: Blob;
+  url: string;
+  mimeType: string;
+}
+
 export interface Recording {
   blob: Blob;
   url: string;
@@ -134,6 +141,13 @@ export interface Recording {
   name?: string;
   /** Whether the recording captured any audio track (mic and/or system). */
   hasAudio?: boolean;
+  /**
+   * Microphone and system audio recorded as SEPARATE tracks so the editor can
+   * balance them independently. Absent on legacy recordings, where the audio is
+   * baked into the screen blob and controlled only by the master volume.
+   */
+  micAudio?: RecordingAudio | null;
+  systemAudio?: RecordingAudio | null;
   /**
    * Recorded camera footage captured alongside the screen. The editor plays
    * this back through cameraVideoRef instead of opening a live stream, so

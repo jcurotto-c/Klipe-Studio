@@ -23,8 +23,6 @@ export interface ScreenCapture {
   mobile: MediaStream | null;
   /** Dedicated loopback stream for system audio (video stripped). Stopped on stop. */
   systemAudioStream?: MediaStream | null;
-  /** WebAudio context used to mix mic + system audio, if any. Closed on stop. */
-  audioMixCtx?: AudioContext | null;
 }
 
 export interface BuildScreenStreamOptions {
@@ -185,45 +183,16 @@ export async function buildScreenStream(
   const cameraStream = camDeviceId ? await acquireCameraStream(camDeviceId) : null;
   const mobileStream = mobileDeviceId ? await acquireMobileStream(mobileDeviceId) : null;
 
-  // The "combined" stream is what the screen+mic recorder consumes. The
-  // camera and mobile each go to their own recorder so the editor can
-  // move/resize/restyle them freely without reflowing what's baked into
-  // the screen capture.
-  // Gather every audio source: the dedicated loopback stream (system audio) and
-  // the mic. We mix them into ONE track (MediaRecorder only encodes a single
-  // audio track) so the recording — and therefore the export, which decodes the
-  // source blob — has both. Future per-track volume can split these back out.
-  const audioTracks: MediaStreamTrack[] = [
-    ...(systemAudioStream ? systemAudioStream.getAudioTracks() : []),
-    ...(micStream ? micStream.getAudioTracks() : []),
-  ];
-
-  let combined: MediaStream = screenStream;
-  let audioMixCtx: AudioContext | null = null;
-  if (audioTracks.length > 0) {
-    combined = new MediaStream();
-    screenStream.getVideoTracks().forEach((t) => combined.addTrack(t));
-    if (audioTracks.length === 1) {
-      combined.addTrack(audioTracks[0]!);
-    } else {
-      // Mix system + mic into a single destination track via WebAudio.
-      const ctx = new AudioContext();
-      // A fresh AudioContext can start "suspended" (autoplay policy); resume it
-      // so the mixing graph actually renders audio into the destination track.
-      try { await ctx.resume(); } catch { /* ignore */ }
-      const dest = ctx.createMediaStreamDestination();
-      for (const t of audioTracks) {
-        ctx.createMediaStreamSource(new MediaStream([t])).connect(dest);
-      }
-      dest.stream.getAudioTracks().forEach((t) => combined.addTrack(t));
-      audioMixCtx = ctx;
-    }
-  }
+  // The "combined" stream the main recorder consumes is VIDEO ONLY. Microphone
+  // and system audio are recorded as separate parallel tracks (like camera and
+  // mobile) so the editor can balance their volumes independently and the export
+  // can mix them with per-track gains. We no longer bake a single mixed audio
+  // track into the screen blob.
+  const combined: MediaStream = screenStream;
 
   console.info(
     `[capture] audio — system tracks=${systemAudioStream ? systemAudioStream.getAudioTracks().length : 0}`,
     `mic tracks=${micStream ? micStream.getAudioTracks().length : 0}`,
-    `combined=${combined.getAudioTracks().length}`,
   );
 
   return {
@@ -233,7 +202,6 @@ export async function buildScreenStream(
     camera: cameraStream,
     mobile: mobileStream,
     systemAudioStream,
-    audioMixCtx,
   };
 }
 
@@ -265,7 +233,13 @@ export interface RecordingResult {
   /** Recorded mobile (phone) footage, if a mobile session was attached. */
   mobileBlob: Blob | null;
   mobileMimeType: string | null;
-  /** Whether the recorded screen stream carried any audio track. */
+  /** Microphone audio recorded as its own track, if a mic was attached. */
+  micAudioBlob: Blob | null;
+  micAudioMimeType: string | null;
+  /** System/desktop audio recorded as its own track, if enabled. */
+  systemAudioBlob: Blob | null;
+  systemAudioMimeType: string | null;
+  /** Whether any audio (mic and/or system) was captured. */
   hasAudio: boolean;
 }
 
@@ -294,12 +268,26 @@ function pickCameraMimeType(): VideoOnlyMimeChoice {
   return { mimeType: 'video/webm' };
 }
 
+function pickAudioMimeType(): string {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+  ];
+  for (const m of candidates) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return 'audio/webm';
+}
+
 export function createRecorder(
   capture: ScreenCapture,
   { onMouseEvent }: RecorderOptions = {},
 ): RecorderController {
   const mimeType = pickBestMimeType();
-  const hasAudio = capture.combined.getAudioTracks().length > 0;
+  const hasAudio =
+    (capture.mic?.getAudioTracks().length ?? 0) > 0 ||
+    (capture.systemAudioStream?.getAudioTracks().length ?? 0) > 0;
   const recorder = new MediaRecorder(capture.combined, {
     mimeType,
     videoBitsPerSecond: 8_000_000,
@@ -357,9 +345,36 @@ export function createRecorder(
     }
   }
 
+  // Microphone and system audio each get their own audio-only recorder so the
+  // editor can balance them independently. Same parallel-recorder pattern as
+  // camera/mobile.
+  const makeAudioRecorder = (
+    stream: MediaStream | null | undefined,
+  ): { rec: MediaRecorder; chunks: Blob[]; mimeType: string } | null => {
+    if (!stream || stream.getAudioTracks().length === 0) return null;
+    const m = pickAudioMimeType();
+    const rec = new MediaRecorder(stream, { mimeType: m, audioBitsPerSecond: 128_000 });
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+    return { rec, chunks, mimeType: m };
+  };
+  const micAudio = makeAudioRecorder(capture.mic);
+  const systemAudio = makeAudioRecorder(capture.systemAudioStream);
+
   let mouseStartTime = 0;
   const events: KlipeMouseEvent[] = [];
   let removeListener: (() => void) | null = null;
+
+  const stopAudioRecorder = (
+    a: { rec: MediaRecorder; chunks: Blob[]; mimeType: string } | null,
+  ): Promise<Blob | null> =>
+    a
+      ? new Promise((resolve) => {
+          a.rec.onstop = () => resolve(new Blob(a.chunks, { type: a.mimeType }));
+          if (a.rec.state !== 'inactive') a.rec.stop();
+          else resolve(new Blob(a.chunks, { type: a.mimeType }));
+        })
+      : Promise.resolve(null);
 
   return {
     mimeType,
@@ -378,6 +393,8 @@ export function createRecorder(
       recorder.start(250);
       cameraRecorder?.start(250);
       mobileRecorder?.start(250);
+      micAudio?.rec.start(250);
+      systemAudio?.rec.start(250);
     },
     stop() {
       const screenStop = new Promise<Blob>((resolve) => {
@@ -408,8 +425,11 @@ export function createRecorder(
           })
         : Promise.resolve(null);
 
-      return Promise.all([screenStop, cameraStop, mobileStop]).then(
-        async ([screenBlob, cameraBlob, mobileBlob]) => {
+      const micStop = stopAudioRecorder(micAudio);
+      const systemStop = stopAudioRecorder(systemAudio);
+
+      return Promise.all([screenStop, cameraStop, mobileStop, micStop, systemStop]).then(
+        async ([screenBlob, cameraBlob, mobileBlob, micBlob, systemBlob]) => {
           await bridge().stopMouseTracking();
           if (removeListener) removeListener();
           capture.combined.getTracks().forEach((t) => t.stop());
@@ -418,9 +438,8 @@ export function createRecorder(
           capture.camera?.getTracks().forEach((t) => t.stop());
           capture.mobile?.getTracks().forEach((t) => t.stop());
           capture.systemAudioStream?.getTracks().forEach((t) => t.stop());
-          if (capture.audioMixCtx) {
-            try { await capture.audioMixCtx.close(); } catch { /* ignore */ }
-          }
+          const micOk = micBlob && micBlob.size > 0;
+          const systemOk = systemBlob && systemBlob.size > 0;
           return {
             blob: screenBlob,
             mimeType,
@@ -430,6 +449,10 @@ export function createRecorder(
             cameraMimeType: cameraBlob ? cameraMimeType : null,
             mobileBlob: mobileBlob && mobileBlob.size > 0 ? mobileBlob : null,
             mobileMimeType: mobileBlob && mobileBlob.size > 0 ? mobileMimeType : null,
+            micAudioBlob: micOk ? micBlob : null,
+            micAudioMimeType: micOk ? (micAudio?.mimeType ?? null) : null,
+            systemAudioBlob: systemOk ? systemBlob : null,
+            systemAudioMimeType: systemOk ? (systemAudio?.mimeType ?? null) : null,
           };
         },
       );

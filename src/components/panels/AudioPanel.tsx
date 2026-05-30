@@ -16,6 +16,13 @@ interface AudioPanelProps {
   backgroundMusic: BackgroundMusic | null;
   onBackgroundMusicChange: (next: BackgroundMusic | null) => void;
   events: ReadonlyArray<KlipeMouseEvent>;
+  /** Per-track recording-audio volumes + availability. */
+  micVolume: number;
+  systemVolume: number;
+  onMicVolumeChange: (v: number) => void;
+  onSystemVolumeChange: (v: number) => void;
+  hasMicAudio: boolean;
+  hasSystemAudio: boolean;
 }
 
 const MODES: ReadonlyArray<{ id: AudioFxMode; label: string; help: string }> = [
@@ -30,6 +37,12 @@ export default function AudioPanel({
   backgroundMusic,
   onBackgroundMusicChange,
   events,
+  micVolume,
+  systemVolume,
+  onMicVolumeChange,
+  onSystemVolumeChange,
+  hasMicAudio,
+  hasSystemAudio,
 }: AudioPanelProps): JSX.Element {
   const opts: AudioFxOptions = { ...DEFAULT_AUDIO_FX, ...(value ?? {}) };
   const update = (patch: Partial<AudioFxOptions>): void => onChange({ ...opts, ...patch });
@@ -55,6 +68,33 @@ export default function AudioPanel({
 
   return (
     <div className="panel-pro audio-panel">
+      {(hasMicAudio || hasSystemAudio) && (
+        <div className="section-card">
+          <div className="section-head">
+            <span className="section-title">Recording Audio</span>
+          </div>
+          <div className="section-body">
+            {hasMicAudio && (
+              <VolumeRow
+                label="Microphone"
+                value={micVolume}
+                disabled={false}
+                onChange={onMicVolumeChange}
+              />
+            )}
+            {hasSystemAudio && (
+              <VolumeRow
+                label="System audio"
+                value={systemVolume}
+                disabled={false}
+                onChange={onSystemVolumeChange}
+              />
+            )}
+            <div className="audio-meta dim">Balance your mic against the PC sound.</div>
+          </div>
+        </div>
+      )}
+
       <div className="section-card">
         <div className="section-head">
           <span className="section-title">Sound Effects</span>

@@ -214,6 +214,21 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
       }
     }
 
+    const micAudio = result.micAudioBlob
+      ? {
+          blob: result.micAudioBlob,
+          url: URL.createObjectURL(result.micAudioBlob),
+          mimeType: result.micAudioMimeType ?? 'audio/webm',
+        }
+      : null;
+    const systemAudio = result.systemAudioBlob
+      ? {
+          blob: result.systemAudioBlob,
+          url: URL.createObjectURL(result.systemAudioBlob),
+          mimeType: result.systemAudioMimeType ?? 'audio/webm',
+        }
+      : null;
+
     onRecordingDone({
       blob: result.blob,
       url,
@@ -225,6 +240,8 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
       camera,
       mobile,
       hasAudio: result.hasAudio,
+      micAudio,
+      systemAudio,
     });
   }, [onRecordingDone]);
 

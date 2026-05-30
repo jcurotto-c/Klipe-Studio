@@ -125,6 +125,11 @@ export interface ExportVideoOptions {
   backgroundMusic?: BackgroundMusic | null;
   /** Master volume (0..1) for the recording's own audio (mic + system mix). */
   audioVolume?: number;
+  /** Separate mic/system audio tracks (per-track volume). Optional. */
+  micBlob?: Blob | null;
+  systemBlob?: Blob | null;
+  micVolume?: number;
+  systemVolume?: number;
   blurRegions?: BlurRegion[] | null;
   /** Text/image overlay layers to composite over each frame. */
   overlays?: Overlay[] | null;
@@ -197,6 +202,10 @@ async function exportVideoMp4({
   audioFx = null,
   backgroundMusic = null,
   audioVolume = 1,
+  micBlob = null,
+  systemBlob = null,
+  micVolume = 1,
+  systemVolume = 1,
   blurRegions = null,
   overlays = null,
   signal,
@@ -244,6 +253,10 @@ async function exportVideoMp4({
       audioFx,
       backgroundMusic,
       sourceVolume: audioVolume,
+      micBlob,
+      systemBlob,
+      micVolume,
+      systemVolume,
       fragments,
       onLog,
     });
@@ -413,8 +426,15 @@ interface OfflineAudioInput {
   mouse: MouseTrack;
   audioFx: AudioFxOptions | null | undefined;
   backgroundMusic: BackgroundMusic | null | undefined;
-  /** Master volume (0..1) for the source recording audio. */
+  /** Master volume (0..1) applied on top of per-track gains. */
   sourceVolume?: number;
+  /** Separate microphone track; when present, used instead of source-blob audio. */
+  micBlob?: Blob | null;
+  /** Separate system-audio track; when present, used instead of source-blob audio. */
+  systemBlob?: Blob | null;
+  /** Per-track volumes (0..1), multiplied by the master volume. */
+  micVolume?: number;
+  systemVolume?: number;
   fragments: Fragment[];
   onLog?: ExportLogCallback;
 }
@@ -428,6 +448,10 @@ async function renderAudioOffline({
   audioFx,
   backgroundMusic,
   sourceVolume = 1,
+  micBlob = null,
+  systemBlob = null,
+  micVolume = 1,
+  systemVolume = 1,
   fragments,
   onLog,
 }: OfflineAudioInput): Promise<AudioBuffer | null> {
@@ -435,33 +459,54 @@ async function renderAudioOffline({
   const length = Math.ceil(total * OFFLINE_SAMPLE_RATE) + OFFLINE_SAMPLE_RATE; // tail headroom
   const offlineCtx = new OfflineAudioContext(OFFLINE_CHANNELS, length, OFFLINE_SAMPLE_RATE);
 
+  const master = Math.max(0, Math.min(1, sourceVolume));
   let scheduled = false;
 
-  // 1) Source-track audio.
-  let sourceBuf: AudioBuffer | null = null;
-  try {
-    const ab = await sourceBlob.arrayBuffer();
-    sourceBuf = await offlineCtx.decodeAudioData(ab.slice(0));
-  } catch (e) {
-    onLog?.(`Source audio not decodable: ${errorMessage(e)}`);
-  }
+  const decode = async (blob: Blob): Promise<AudioBuffer | null> => {
+    try {
+      const ab = await blob.arrayBuffer();
+      return await offlineCtx.decodeAudioData(ab.slice(0));
+    } catch (e) {
+      onLog?.(`Audio not decodable: ${errorMessage(e)}`);
+      return null;
+    }
+  };
 
-  if (sourceBuf) {
-    // Master volume for the recording's own audio (mic + system mix).
-    const sourceGain = offlineCtx.createGain();
-    sourceGain.gain.value = Math.max(0, Math.min(1, sourceVolume));
-    sourceGain.connect(offlineCtx.destination);
+  // Schedule an audio buffer across the fragment timeline at a fixed gain.
+  // mic/system/source tracks all share the recording's source-time clock.
+  const scheduleBuffer = (buf: AudioBuffer, gainValue: number): void => {
+    if (gainValue <= 0) return;
+    const gain = offlineCtx.createGain();
+    gain.gain.value = gainValue;
+    gain.connect(offlineCtx.destination);
     let outAt = 0;
     for (const f of fragments) {
       const dur = fragmentDuration(f);
       if (dur <= 0) continue;
       const node = offlineCtx.createBufferSource();
-      node.buffer = sourceBuf;
-      node.connect(sourceGain);
+      node.buffer = buf;
+      node.connect(gain);
       node.start(outAt, f.srcStart, dur);
       outAt += dur;
       scheduled = true;
     }
+  };
+
+  // 1) Recording audio. Prefer the separate mic/system tracks (independent
+  //    volumes); fall back to the legacy single mixed track baked into the
+  //    source blob for older recordings.
+  if (micBlob || systemBlob) {
+    if (micBlob) {
+      const buf = await decode(micBlob);
+      if (buf) scheduleBuffer(buf, master * Math.max(0, Math.min(1, micVolume)));
+    }
+    if (systemBlob) {
+      const buf = await decode(systemBlob);
+      if (buf) scheduleBuffer(buf, master * Math.max(0, Math.min(1, systemVolume)));
+    }
+  } else {
+    const sourceBuf = await decode(sourceBlob);
+    if (sourceBuf) scheduleBuffer(sourceBuf, master);
   }
 
   // 2) Background music with fade envelope.

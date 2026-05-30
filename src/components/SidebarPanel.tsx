@@ -65,6 +65,12 @@ interface SidebarPanelProps {
   onAudioFxOptionsChange: (next: AudioFxOptions) => void;
   backgroundMusic: BackgroundMusic | null;
   onBackgroundMusicChange: (next: BackgroundMusic | null) => void;
+  micVolume: number;
+  systemVolume: number;
+  onMicVolumeChange: (v: number) => void;
+  onSystemVolumeChange: (v: number) => void;
+  hasMicAudio: boolean;
+  hasSystemAudio: boolean;
   inputEvents: ReadonlyArray<KlipeMouseEvent>;
   blurRegions: BlurRegion[];
   blurMode: boolean;
@@ -94,6 +100,12 @@ export default function SidebarPanel({
   onAudioFxOptionsChange,
   backgroundMusic,
   onBackgroundMusicChange,
+  micVolume,
+  systemVolume,
+  onMicVolumeChange,
+  onSystemVolumeChange,
+  hasMicAudio,
+  hasSystemAudio,
   inputEvents,
   blurRegions,
   blurMode,
@@ -192,6 +204,12 @@ export default function SidebarPanel({
             backgroundMusic={backgroundMusic}
             onBackgroundMusicChange={onBackgroundMusicChange}
             events={inputEvents}
+            micVolume={micVolume}
+            systemVolume={systemVolume}
+            onMicVolumeChange={onMicVolumeChange}
+            onSystemVolumeChange={onSystemVolumeChange}
+            hasMicAudio={hasMicAudio}
+            hasSystemAudio={hasSystemAudio}
           />
         );
       case 'shortcuts':

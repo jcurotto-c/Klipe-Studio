@@ -85,6 +85,10 @@ interface ExportModalProps {
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
   audioVolume?: number;
+  micBlob?: Blob | null;
+  systemBlob?: Blob | null;
+  micVolume?: number;
+  systemVolume?: number;
   blurRegions?: BlurRegion[] | null;
   overlays?: Overlay[] | null;
   sourceLabel?: string;
@@ -109,6 +113,10 @@ export default function ExportModal({
   audioFx,
   backgroundMusic,
   audioVolume,
+  micBlob,
+  systemBlob,
+  micVolume,
+  systemVolume,
   blurRegions,
   overlays,
   sourceLabel,
@@ -195,6 +203,10 @@ export default function ExportModal({
         audioFx,
         backgroundMusic,
         audioVolume,
+        micBlob,
+        systemBlob,
+        micVolume,
+        systemVolume,
         blurRegions,
         overlays,
         signal: controller.signal,
