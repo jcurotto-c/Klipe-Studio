@@ -546,26 +546,6 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
   }, [applySnapshot, snapshot, syncHistoryFlags]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      const meta = e.ctrlKey || e.metaKey;
-      if (!meta) return;
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
-      const k = e.key.toLowerCase();
-      if (k === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        undo();
-      } else if ((k === 'z' && e.shiftKey) || k === 'y') {
-        e.preventDefault();
-        redo();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [undo, redo]);
-
-  useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const onLoaded = (): void => {
@@ -970,6 +950,69 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
     pushHistory();
     setOverlays((prev) => prev.map((o) => (o.id === id ? applyAnimation(o, kind) : o)));
   }, [pushHistory]);
+
+  // Editor keyboard shortcuts. Defined after every handler it calls so the deps
+  // can reference them safely. Typing in text inputs is never hijacked.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+
+      // Undo/redo: Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z (redo), Cmd/Ctrl+Y (redo).
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+        else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); redo(); }
+        return;
+      }
+
+      switch (e.key) {
+        case ' ':
+          if (tag === 'BUTTON') return; // let Space activate a focused button
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'Delete':
+        case 'Backspace':
+          // Remove the selected item (priority: zoom > blur > overlay > clip).
+          if (selectedId) { e.preventDefault(); handleRemoveSegment(selectedId); }
+          else if (selectedBlurId) { e.preventDefault(); handleRemoveBlur(selectedBlurId); }
+          else if (selectedOverlayId) { e.preventDefault(); handleRemoveOverlay(selectedOverlayId); }
+          else if (selectedFragmentId && fragments.length > 1) { e.preventDefault(); handleDeleteFragment(); }
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          seek(currentTimeRef.current - (e.shiftKey ? 1 : 1 / 30));
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          seek(currentTimeRef.current + (e.shiftKey ? 1 : 1 / 30));
+          break;
+        case 'Home':
+          e.preventDefault();
+          seek(0);
+          break;
+        case 'End':
+          e.preventDefault();
+          seek(totalOutputDuration(fragmentsRef.current));
+          break;
+        case 'c':
+        case 'C':
+          e.preventDefault();
+          handleCut();
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [
+    undo, redo, togglePlay, seek, handleCut,
+    handleRemoveSegment, handleRemoveBlur, handleRemoveOverlay, handleDeleteFragment,
+    selectedId, selectedBlurId, selectedOverlayId, selectedFragmentId, fragments.length,
+  ]);
 
   const handleMoveOverlay = useCallback((id: string, base: { x: number; y: number }) => {
     setOverlays((prev) =>

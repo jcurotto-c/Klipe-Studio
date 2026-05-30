@@ -51,6 +51,10 @@ contextBridge.exposeInMainWorld('klipe', {
     open: () => ipcRenderer.invoke('project:open'),
     openPath: (projectPath: string) => ipcRenderer.invoke('project:open-path', projectPath),
   },
+  shortcuts: {
+    set: (s: { toggleRecord: string; toggleHud: string }) => ipcRenderer.invoke('shortcuts:set', s),
+    getDefaults: () => ipcRenderer.invoke('shortcuts:get-defaults'),
+  },
 });
 
 contextBridge.exposeInMainWorld('klipeCursorPreview', {
@@ -114,6 +118,12 @@ contextBridge.exposeInMainWorld('klipeHud', {
     const listener = (): void => cb();
     ipcRenderer.on('hud:closed', listener);
     return () => ipcRenderer.removeListener('hud:closed', listener);
+  },
+
+  onTrigger: (cb: (payload: unknown) => void) => {
+    const listener = (_evt: IpcRendererEvent, payload: unknown): void => cb(payload);
+    ipcRenderer.on('hud:trigger', listener);
+    return () => ipcRenderer.removeListener('hud:trigger', listener);
   },
 
   cameraPreviewActivate: (deviceId: string) =>

@@ -507,6 +507,19 @@ export default function FloatingHUD(): JSX.Element {
     startCountdown();
   };
 
+  // Global recording shortcut: the main process fires `hud:trigger` from a
+  // system-wide accelerator (works even when Klipe isn't focused). Route it
+  // through the same path as clicking the record button. A ref keeps the
+  // listener stable while always calling the latest handler.
+  const onRecordClickRef = useRef(onRecordClick);
+  onRecordClickRef.current = onRecordClick;
+  useEffect(() => {
+    if (!window.klipeHud?.onTrigger) return undefined;
+    return window.klipeHud.onTrigger((payload) => {
+      if (payload?.action === 'toggle-record') onRecordClickRef.current();
+    });
+  }, []);
+
   const selectedSource = sources.find((s) => s.id === selectedId) || null;
   const selectedParts = selectedSource ? splitName(selectedSource.name) : null;
 

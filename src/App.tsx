@@ -4,6 +4,7 @@ import EditorView from './components/EditorView';
 import type { Recording } from './types';
 import { openProject, openProjectPath, type EditDocument } from './lib/project';
 import { loadRecents, addRecent, removeRecent, type RecentProject } from './lib/recents';
+import { loadGlobalShortcuts, applyGlobalShortcuts } from './lib/global-shortcuts';
 
 type View = 'recorder' | 'editor';
 
@@ -81,6 +82,12 @@ export default function App(): JSX.Element {
       window.klipeHud?.show?.();
     }
   }, [view]);
+
+  // Register the user's saved global recording shortcuts on launch. (The main
+  // process already registers defaults; this overrides them if customized.)
+  useEffect(() => {
+    void applyGlobalShortcuts(loadGlobalShortcuts());
+  }, []);
 
   return (
     <div className="app">

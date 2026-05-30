@@ -190,11 +190,6 @@ export async function buildScreenStream(
   // track into the screen blob.
   const combined: MediaStream = screenStream;
 
-  console.info(
-    `[capture] audio — system tracks=${systemAudioStream ? systemAudioStream.getAudioTracks().length : 0}`,
-    `mic tracks=${micStream ? micStream.getAudioTracks().length : 0}`,
-  );
-
   return {
     combined,
     screen: screenStream,
@@ -365,16 +360,26 @@ export function createRecorder(
   const events: KlipeMouseEvent[] = [];
   let removeListener: (() => void) | null = null;
 
-  const stopAudioRecorder = (
-    a: { rec: MediaRecorder; chunks: Blob[]; mimeType: string } | null,
+  // Stop a recorder and resolve with its blob. A safety timeout guarantees the
+  // promise settles even if `onstop` never fires (track already ended, driver
+  // hiccup) — otherwise a single stuck recorder would hang Promise.all forever,
+  // freezing the "finishing" state and (worse) leaving the system cursor blanked.
+  const stopRecorder = (
+    rec: MediaRecorder | null,
+    getBlob: () => Blob,
+    timeoutMs = 4000,
   ): Promise<Blob | null> =>
-    a
-      ? new Promise((resolve) => {
-          a.rec.onstop = () => resolve(new Blob(a.chunks, { type: a.mimeType }));
-          if (a.rec.state !== 'inactive') a.rec.stop();
-          else resolve(new Blob(a.chunks, { type: a.mimeType }));
-        })
-      : Promise.resolve(null);
+    new Promise((resolve) => {
+      if (!rec) { resolve(null); return; }
+      let settled = false;
+      const finish = (): void => { if (settled) return; settled = true; resolve(getBlob()); };
+      rec.onstop = finish;
+      setTimeout(finish, timeoutMs);
+      try {
+        if (rec.state !== 'inactive') rec.stop();
+        else finish();
+      } catch { finish(); }
+    });
 
   return {
     mimeType,
@@ -397,41 +402,32 @@ export function createRecorder(
       systemAudio?.rec.start(250);
     },
     stop() {
-      const screenStop = new Promise<Blob>((resolve) => {
-        recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
-        recorder.stop();
-      });
-      const cameraStop: Promise<Blob | null> = cameraRecorder
-        ? new Promise((resolve) => {
-            cameraRecorder!.onstop = () => {
-              const type = cameraMimeType ?? 'video/webm';
-              resolve(new Blob(cameraChunks, { type }));
-            };
-            // The mobile track's `ended` handler may have already stopped this
-            // recorder; in that case calling stop() again throws — guard it.
-            if (cameraRecorder!.state !== 'inactive') cameraRecorder!.stop();
-            else cameraRecorder!.onstop?.(new Event('stop'));
-          })
-        : Promise.resolve(null);
-      const mobileStop: Promise<Blob | null> = mobileRecorder
-        ? new Promise((resolve) => {
-            const finalize = (): void => {
-              const type = mobileMimeType ?? 'video/webm';
-              resolve(new Blob(mobileChunks, { type }));
-            };
-            mobileRecorder!.onstop = finalize;
-            if (mobileRecorder!.state !== 'inactive') mobileRecorder!.stop();
-            else finalize();
-          })
-        : Promise.resolve(null);
+      // Restore the system cursor and tear down the OS tracker IMMEDIATELY,
+      // independent of blob collection. Blob finalization can be slow; the user
+      // must never be left with a blanked cursor while it finishes.
+      const trackingStopped = bridge().stopMouseTracking().catch(() => undefined);
+      if (removeListener) { removeListener(); removeListener = null; }
 
-      const micStop = stopAudioRecorder(micAudio);
-      const systemStop = stopAudioRecorder(systemAudio);
+      const screenStop = stopRecorder(recorder, () => new Blob(chunks, { type: mimeType }), 6000);
+      const cameraStop = stopRecorder(
+        cameraRecorder,
+        () => new Blob(cameraChunks, { type: cameraMimeType ?? 'video/webm' }),
+      );
+      const mobileStop = stopRecorder(
+        mobileRecorder,
+        () => new Blob(mobileChunks, { type: mobileMimeType ?? 'video/webm' }),
+      );
+      const micStop = stopRecorder(
+        micAudio?.rec ?? null,
+        () => new Blob(micAudio!.chunks, { type: micAudio!.mimeType }),
+      );
+      const systemStop = stopRecorder(
+        systemAudio?.rec ?? null,
+        () => new Blob(systemAudio!.chunks, { type: systemAudio!.mimeType }),
+      );
 
-      return Promise.all([screenStop, cameraStop, mobileStop, micStop, systemStop]).then(
-        async ([screenBlob, cameraBlob, mobileBlob, micBlob, systemBlob]) => {
-          await bridge().stopMouseTracking();
-          if (removeListener) removeListener();
+      return Promise.all([screenStop, cameraStop, mobileStop, micStop, systemStop, trackingStopped]).then(
+        ([screenBlob, cameraBlob, mobileBlob, micBlob, systemBlob]) => {
           capture.combined.getTracks().forEach((t) => t.stop());
           capture.screen.getTracks().forEach((t) => t.stop());
           capture.mic?.getTracks().forEach((t) => t.stop());
@@ -441,7 +437,7 @@ export function createRecorder(
           const micOk = micBlob && micBlob.size > 0;
           const systemOk = systemBlob && systemBlob.size > 0;
           return {
-            blob: screenBlob,
+            blob: screenBlob ?? new Blob([], { type: mimeType }),
             mimeType,
             hasAudio,
             mouse: { startTime: mouseStartTime, events },

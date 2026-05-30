@@ -79,6 +79,24 @@ declare global {
         | null
       >;
     };
+    /** Configurable system-wide shortcuts (re)registered in the main process. */
+    shortcuts?: {
+      set: (s: GlobalShortcuts) => Promise<{
+        ok: boolean;
+        shortcuts: GlobalShortcuts;
+        results: Array<{ accel: string; ok: boolean }>;
+      }>;
+      getDefaults: () => Promise<GlobalShortcuts>;
+    };
+  }
+
+  interface GlobalShortcuts {
+    toggleRecord: string;
+    toggleHud: string;
+  }
+
+  interface HudTrigger {
+    action: 'toggle-record';
   }
 
   interface KlipeHudBridge {
@@ -99,6 +117,8 @@ declare global {
     onState: (cb: (state: HudState) => void) => () => void;
     onEvent: (cb: (evt: HudEvent) => void) => () => void;
     onClosed: (cb: () => void) => () => void;
+    /** Fired by a global shortcut (e.g. toggle recording) from the main process. */
+    onTrigger: (cb: (payload: HudTrigger) => void) => () => void;
 
     cameraPreviewActivate: (deviceId: string) => void;
     cameraPreviewDeactivate: () => void;

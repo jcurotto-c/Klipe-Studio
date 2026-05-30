@@ -4,6 +4,7 @@ import CameraPanel from './panels/CameraPanel';
 import MobilePanel from './panels/MobilePanel';
 import CursorPanel from './panels/CursorPanel';
 import AudioPanel from './panels/AudioPanel';
+import ShortcutsPanel from './panels/ShortcutsPanel';
 import PlaceholderPanel from './panels/PlaceholderPanel';
 import type {
   AudioFxOptions,
@@ -213,7 +214,7 @@ export default function SidebarPanel({
           />
         );
       case 'shortcuts':
-        return <PlaceholderPanel title="Shortcuts" description="Keyboard shortcut overlay during recording." />;
+        return <ShortcutsPanel />;
       case 'connections':
         return <PlaceholderPanel title="Connections" description="External integrations and webhooks." />;
       default:

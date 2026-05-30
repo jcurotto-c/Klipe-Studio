@@ -148,6 +148,13 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
       if (recorderRef.current?.scrcpy && window.klipe?.scrcpy?.stop) {
         try { await window.klipe.scrcpy.stop(); } catch { /* ignore */ }
       }
+      // If setup failed mid-way the OS cursor may have been blanked and the
+      // tracker left running — restore everything so the user isn't stranded
+      // with an invisible cursor and a half-open recording.
+      try { await window.klipe?.stopMouseTracking?.(); } catch { /* ignore */ }
+      recorderRef.current = null;
+      setRecording(false);
+      window.klipeHud?.pushState?.({ recording: false });
     } finally {
       settingUpRef.current = false;
     }

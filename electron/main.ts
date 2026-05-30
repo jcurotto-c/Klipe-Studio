@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, desktopCapturer, ipcMain, dialog, screen, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, Menu, desktopCapturer, globalShortcut, ipcMain, dialog, screen, session, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -379,6 +379,59 @@ let pendingDisplayMediaSourceId: string | null = null;
 // the display-media handler then answers with `audio: 'loopback'` (WASAPI).
 let pendingSystemAudio = false;
 
+// ---------------------------------------------------------------------------
+// Global (system-wide) shortcuts. These fire even when Klipe doesn't have
+// focus — essential during recording, since the user is in another app. The
+// accelerators are configurable from the renderer (persisted there) via the
+// `shortcuts:set` IPC; defaults below are used until the renderer overrides.
+// ---------------------------------------------------------------------------
+interface GlobalShortcuts {
+  toggleRecord: string;
+  toggleHud: string;
+}
+const DEFAULT_GLOBAL_SHORTCUTS: GlobalShortcuts = {
+  toggleRecord: 'CommandOrControl+Shift+R',
+  toggleHud: 'CommandOrControl+Shift+H',
+};
+let currentShortcuts: GlobalShortcuts = { ...DEFAULT_GLOBAL_SHORTCUTS };
+
+function toggleHudVisibility(): void {
+  if (hudWindow && !hudWindow.isDestroyed()) {
+    if (hudWindow.isVisible()) hudWindow.hide();
+    else { hudWindow.show(); hudWindow.focus(); }
+  } else {
+    createHudWindow();
+  }
+}
+
+function triggerRecordToggle(): void {
+  const win = (hudWindow && !hudWindow.isDestroyed()) ? hudWindow : createHudWindow();
+  if (!win.isVisible()) win.show();
+  win.webContents.send('hud:trigger', { action: 'toggle-record' });
+}
+
+interface ShortcutRegResult { accel: string; ok: boolean }
+
+function applyGlobalShortcuts(s: GlobalShortcuts): ShortcutRegResult[] {
+  globalShortcut.unregisterAll();
+  const results: ShortcutRegResult[] = [];
+  const reg = (accel: string, fn: () => void): void => {
+    if (!accel) return;
+    let ok = false;
+    try {
+      // register() returns false when the OS/another app already owns the
+      // accelerator (e.g. Ctrl+X is commonly grabbed). Verify with isRegistered.
+      ok = globalShortcut.register(accel, fn) && globalShortcut.isRegistered(accel);
+    } catch (err) {
+      console.warn(`[shortcuts] error registering "${accel}":`, err);
+    }
+    results.push({ accel, ok });
+  };
+  reg(s.toggleRecord, triggerRecordToggle);
+  reg(s.toggleHud, toggleHudVisibility);
+  return results;
+}
+
 app.whenReady().then(() => {
   // Grant the capture permissions a local recorder needs (mic, camera, screen).
   // Electron shows no browser-style prompt; without this the renderer's
@@ -422,6 +475,7 @@ app.whenReady().then(() => {
 
   createWindow();
   createHudWindow();
+  applyGlobalShortcuts(currentShortcuts);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -474,6 +528,7 @@ function ensureCursorRestored(): void {
 app.on('before-quit', ensureCursorRestored);
 app.on('before-quit', () => { try { cleanupAllScrcpy(); } catch { /* never throw from teardown */ } });
 app.on('will-quit', ensureCursorRestored);
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* ignore */ } });
 process.on('exit', ensureCursorRestored);
 process.on('SIGINT', () => { ensureCursorRestored(); process.exit(0); });
 process.on('SIGTERM', () => { ensureCursorRestored(); process.exit(0); });
@@ -602,6 +657,18 @@ ipcMain.handle('get-primary-display-size', () => {
   const d = screen.getPrimaryDisplay();
   return { width: d.size.width, height: d.size.height, scaleFactor: d.scaleFactor };
 });
+
+// Renderer-driven (re)registration of the configurable global shortcuts.
+ipcMain.handle('shortcuts:set', (_evt: IpcMainInvokeEvent, s: Partial<GlobalShortcuts> | undefined) => {
+  currentShortcuts = {
+    toggleRecord: typeof s?.toggleRecord === 'string' ? s.toggleRecord : DEFAULT_GLOBAL_SHORTCUTS.toggleRecord,
+    toggleHud: typeof s?.toggleHud === 'string' ? s.toggleHud : DEFAULT_GLOBAL_SHORTCUTS.toggleHud,
+  };
+  const results = applyGlobalShortcuts(currentShortcuts);
+  return { ok: true as const, shortcuts: currentShortcuts, results };
+});
+
+ipcMain.handle('shortcuts:get-defaults', () => DEFAULT_GLOBAL_SHORTCUTS);
 
 interface ProjectSaveArgs {
   manifestJson: string;
@@ -998,6 +1065,7 @@ ipcMain.on('hud:push-state', (_evt, payload: unknown) => {
     hudWindow.webContents.send('hud:state', payload);
   }
 });
+
 
 ipcMain.on('hud:set-ignore-mouse', (_evt, ignore: unknown) => {
   if (hudWindow && !hudWindow.isDestroyed()) {
