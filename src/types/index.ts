@@ -132,6 +132,8 @@ export interface Recording {
   display: Display;
   autoZoom?: boolean;
   name?: string;
+  /** Whether the recording captured any audio track (mic and/or system). */
+  hasAudio?: boolean;
   /**
    * Recorded camera footage captured alongside the screen. The editor plays
    * this back through cameraVideoRef instead of opening a live stream, so
@@ -406,6 +408,7 @@ export type HudEvent =
       camId: string | null;
       mobileId: string | null;
       autoZoom: boolean;
+      systemAudio: boolean;
       display: Display;
     }
   | { type: 'stop-recording' }

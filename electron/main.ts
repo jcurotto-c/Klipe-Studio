@@ -375,11 +375,28 @@ function destroyCameraPreviewWindow(): void {
 // getDisplayMedia(). The handler below resolves it to a real desktopCapturer
 // source so we can ask for cursor: 'never' without showing Chromium's picker.
 let pendingDisplayMediaSourceId: string | null = null;
+// Set alongside the source id when the renderer wants the PC's system audio;
+// the display-media handler then answers with `audio: 'loopback'` (WASAPI).
+let pendingSystemAudio = false;
 
 app.whenReady().then(() => {
+  // Grant the capture permissions a local recorder needs (mic, camera, screen).
+  // Electron shows no browser-style prompt; without this the renderer's
+  // getUserMedia / getDisplayMedia can be denied silently on some setups.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    const allowed = ['media', 'audioCapture', 'videoCapture', 'display-capture'];
+    callback(allowed.includes(permission));
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+    const allowed = ['media', 'audioCapture', 'videoCapture', 'display-capture'];
+    return allowed.includes(permission);
+  });
+
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     const targetId = pendingDisplayMediaSourceId;
+    const wantSystemAudio = pendingSystemAudio;
     pendingDisplayMediaSourceId = null;
+    pendingSystemAudio = false;
     if (!targetId) {
       console.warn('[displayMediaRequestHandler] no pending source — rejecting');
       callback({});
@@ -392,7 +409,7 @@ app.whenReady().then(() => {
       });
       const source = sources.find((s) => s.id === targetId);
       if (source) {
-        callback({ video: source });
+        callback(wantSystemAudio ? { video: source, audio: 'loopback' } : { video: source });
       } else {
         console.warn('[displayMediaRequestHandler] source not found:', targetId);
         callback({});
@@ -413,9 +430,10 @@ app.whenReady().then(() => {
   });
 });
 
-ipcMain.handle('prepare-display-media', (_evt: IpcMainInvokeEvent, sourceId: unknown) => {
+ipcMain.handle('prepare-display-media', (_evt: IpcMainInvokeEvent, sourceId: unknown, systemAudio: unknown) => {
   if (typeof sourceId !== 'string' || !sourceId) return { ok: false as const };
   pendingDisplayMediaSourceId = sourceId;
+  pendingSystemAudio = systemAudio === true;
   return { ok: true as const };
 });
 

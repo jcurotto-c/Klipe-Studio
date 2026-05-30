@@ -92,6 +92,7 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
     mobileDeviceId: string | null,
     autoZoom: boolean,
     display: Display,
+    systemAudio: boolean,
   ) => {
     if (settingUpRef.current || recorderRef.current) {
       // A previous beginRecording is already in flight or completed —
@@ -120,7 +121,7 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
         }
       }
 
-      const capture = await buildScreenStream(sourceId, { withMic, camDeviceId, mobileDeviceId });
+      const capture = await buildScreenStream(sourceId, { withMic, camDeviceId, mobileDeviceId, systemAudio });
       const track = capture.screen.getVideoTracks()[0];
       const settings = track?.getSettings?.() ?? {};
       const realW = typeof settings.width === 'number' && settings.width > 0
@@ -223,6 +224,7 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
       name: generateRecordingName(),
       camera,
       mobile,
+      hasAudio: result.hasAudio,
     });
   }, [onRecordingDone]);
 
@@ -240,6 +242,7 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
             evt.mobileId,
             evt.autoZoom,
             evt.display,
+            evt.systemAudio,
           );
           break;
         case 'stop-recording':

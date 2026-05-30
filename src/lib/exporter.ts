@@ -123,6 +123,8 @@ export interface ExportVideoOptions {
   mobilePrimary?: boolean;
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
+  /** Master volume (0..1) for the recording's own audio (mic + system mix). */
+  audioVolume?: number;
   blurRegions?: BlurRegion[] | null;
   /** Text/image overlay layers to composite over each frame. */
   overlays?: Overlay[] | null;
@@ -194,6 +196,7 @@ async function exportVideoMp4({
   mobilePrimary = false,
   audioFx = null,
   backgroundMusic = null,
+  audioVolume = 1,
   blurRegions = null,
   overlays = null,
   signal,
@@ -240,6 +243,7 @@ async function exportVideoMp4({
       mouse,
       audioFx,
       backgroundMusic,
+      sourceVolume: audioVolume,
       fragments,
       onLog,
     });
@@ -409,6 +413,8 @@ interface OfflineAudioInput {
   mouse: MouseTrack;
   audioFx: AudioFxOptions | null | undefined;
   backgroundMusic: BackgroundMusic | null | undefined;
+  /** Master volume (0..1) for the source recording audio. */
+  sourceVolume?: number;
   fragments: Fragment[];
   onLog?: ExportLogCallback;
 }
@@ -421,6 +427,7 @@ async function renderAudioOffline({
   mouse,
   audioFx,
   backgroundMusic,
+  sourceVolume = 1,
   fragments,
   onLog,
 }: OfflineAudioInput): Promise<AudioBuffer | null> {
@@ -440,13 +447,17 @@ async function renderAudioOffline({
   }
 
   if (sourceBuf) {
+    // Master volume for the recording's own audio (mic + system mix).
+    const sourceGain = offlineCtx.createGain();
+    sourceGain.gain.value = Math.max(0, Math.min(1, sourceVolume));
+    sourceGain.connect(offlineCtx.destination);
     let outAt = 0;
     for (const f of fragments) {
       const dur = fragmentDuration(f);
       if (dur <= 0) continue;
       const node = offlineCtx.createBufferSource();
       node.buffer = sourceBuf;
-      node.connect(offlineCtx.destination);
+      node.connect(sourceGain);
       node.start(outAt, f.srcStart, dur);
       outAt += dur;
       scheduled = true;

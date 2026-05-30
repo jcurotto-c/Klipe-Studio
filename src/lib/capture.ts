@@ -21,6 +21,10 @@ export interface ScreenCapture {
   mic: MediaStream | null;
   camera: MediaStream | null;
   mobile: MediaStream | null;
+  /** Dedicated loopback stream for system audio (video stripped). Stopped on stop. */
+  systemAudioStream?: MediaStream | null;
+  /** WebAudio context used to mix mic + system audio, if any. Closed on stop. */
+  audioMixCtx?: AudioContext | null;
 }
 
 export interface BuildScreenStreamOptions {
@@ -29,6 +33,8 @@ export interface BuildScreenStreamOptions {
   camDeviceId?: string | null;
   /** Mobile (phone-as-video-device) id, or null/empty for none. */
   mobileDeviceId?: string | null;
+  /** Capture the PC's system/desktop audio (Windows WASAPI loopback). */
+  systemAudio?: boolean;
 }
 
 interface DesktopMediaTrackConstraints extends MediaTrackConstraints {
@@ -50,12 +56,16 @@ interface DisplayMediaVideoConstraints extends MediaTrackConstraints {
   cursor?: 'always' | 'motion' | 'never';
 }
 
+// Video-only screen capture with the OS cursor excluded (cursor: 'never').
+// System audio is captured SEPARATELY via captureLoopbackAudio — bundling
+// loopback into this same getDisplayMedia call does not attach the audio track
+// in Electron, so the two must be requested independently.
 async function captureWithDisplayMedia(sourceId: string): Promise<MediaStream> {
   const k = bridge();
   if (typeof k.prepareDisplayMedia !== 'function') {
     throw new Error('prepareDisplayMedia bridge missing — preload likely outdated');
   }
-  await k.prepareDisplayMedia(sourceId);
+  await k.prepareDisplayMedia(sourceId, false);
   const videoConstraints: DisplayMediaVideoConstraints = {
     cursor: 'never',
     frameRate: { ideal: 60, min: 30 },
@@ -69,6 +79,30 @@ async function captureWithDisplayMedia(sourceId: string): Promise<MediaStream> {
     throw new Error('getDisplayMedia returned no video tracks');
   }
   return stream;
+}
+
+// System (desktop) audio via a DEDICATED getDisplayMedia request. The main
+// process answers with `audio: 'loopback'` (Windows WASAPI). getDisplayMedia
+// requires video:true for loopback to attach, so we request video too and
+// immediately discard it — only the loopback audio track is kept. This is the
+// reliable Electron pattern; a combined clean-video + loopback request yields
+// silence or no audio track at all.
+async function captureLoopbackAudio(sourceId: string): Promise<MediaStream | null> {
+  const k = bridge();
+  if (typeof k.prepareDisplayMedia !== 'function') return null;
+  try {
+    await k.prepareDisplayMedia(sourceId, true);
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    stream.getVideoTracks().forEach((t) => { t.stop(); stream.removeTrack(t); });
+    if (stream.getAudioTracks().length === 0) {
+      console.warn('[capture] loopback returned no audio track');
+      return null;
+    }
+    return stream;
+  } catch (err) {
+    console.warn('[capture] system-audio loopback failed:', err);
+    return null;
+  }
 }
 
 async function captureWithLegacyGetUserMedia(sourceId: string): Promise<MediaStream> {
@@ -114,6 +148,7 @@ export async function buildScreenStream(
     withMic = false,
     camDeviceId = null,
     mobileDeviceId = null,
+    systemAudio = false,
   }: BuildScreenStreamOptions = {},
 ): Promise<ScreenCapture> {
   // Prefer getDisplayMedia + cursor: 'never' so the OS cursor is excluded
@@ -144,6 +179,9 @@ export async function buildScreenStream(
     }
   }
 
+  // System/desktop audio via a separate, dedicated loopback capture.
+  const systemAudioStream = systemAudio ? await captureLoopbackAudio(sourceId) : null;
+
   const cameraStream = camDeviceId ? await acquireCameraStream(camDeviceId) : null;
   const mobileStream = mobileDeviceId ? await acquireMobileStream(mobileDeviceId) : null;
 
@@ -151,12 +189,42 @@ export async function buildScreenStream(
   // camera and mobile each go to their own recorder so the editor can
   // move/resize/restyle them freely without reflowing what's baked into
   // the screen capture.
+  // Gather every audio source: the dedicated loopback stream (system audio) and
+  // the mic. We mix them into ONE track (MediaRecorder only encodes a single
+  // audio track) so the recording — and therefore the export, which decodes the
+  // source blob — has both. Future per-track volume can split these back out.
+  const audioTracks: MediaStreamTrack[] = [
+    ...(systemAudioStream ? systemAudioStream.getAudioTracks() : []),
+    ...(micStream ? micStream.getAudioTracks() : []),
+  ];
+
   let combined: MediaStream = screenStream;
-  if (micStream) {
+  let audioMixCtx: AudioContext | null = null;
+  if (audioTracks.length > 0) {
     combined = new MediaStream();
     screenStream.getVideoTracks().forEach((t) => combined.addTrack(t));
-    micStream.getAudioTracks().forEach((t) => combined.addTrack(t));
+    if (audioTracks.length === 1) {
+      combined.addTrack(audioTracks[0]!);
+    } else {
+      // Mix system + mic into a single destination track via WebAudio.
+      const ctx = new AudioContext();
+      // A fresh AudioContext can start "suspended" (autoplay policy); resume it
+      // so the mixing graph actually renders audio into the destination track.
+      try { await ctx.resume(); } catch { /* ignore */ }
+      const dest = ctx.createMediaStreamDestination();
+      for (const t of audioTracks) {
+        ctx.createMediaStreamSource(new MediaStream([t])).connect(dest);
+      }
+      dest.stream.getAudioTracks().forEach((t) => combined.addTrack(t));
+      audioMixCtx = ctx;
+    }
   }
+
+  console.info(
+    `[capture] audio — system tracks=${systemAudioStream ? systemAudioStream.getAudioTracks().length : 0}`,
+    `mic tracks=${micStream ? micStream.getAudioTracks().length : 0}`,
+    `combined=${combined.getAudioTracks().length}`,
+  );
 
   return {
     combined,
@@ -164,6 +232,8 @@ export async function buildScreenStream(
     mic: micStream,
     camera: cameraStream,
     mobile: mobileStream,
+    systemAudioStream,
+    audioMixCtx,
   };
 }
 
@@ -195,6 +265,8 @@ export interface RecordingResult {
   /** Recorded mobile (phone) footage, if a mobile session was attached. */
   mobileBlob: Blob | null;
   mobileMimeType: string | null;
+  /** Whether the recorded screen stream carried any audio track. */
+  hasAudio: boolean;
 }
 
 export interface RecorderController {
@@ -227,6 +299,7 @@ export function createRecorder(
   { onMouseEvent }: RecorderOptions = {},
 ): RecorderController {
   const mimeType = pickBestMimeType();
+  const hasAudio = capture.combined.getAudioTracks().length > 0;
   const recorder = new MediaRecorder(capture.combined, {
     mimeType,
     videoBitsPerSecond: 8_000_000,
@@ -344,9 +417,14 @@ export function createRecorder(
           capture.mic?.getTracks().forEach((t) => t.stop());
           capture.camera?.getTracks().forEach((t) => t.stop());
           capture.mobile?.getTracks().forEach((t) => t.stop());
+          capture.systemAudioStream?.getTracks().forEach((t) => t.stop());
+          if (capture.audioMixCtx) {
+            try { await capture.audioMixCtx.close(); } catch { /* ignore */ }
+          }
           return {
             blob: screenBlob,
             mimeType,
+            hasAudio,
             mouse: { startTime: mouseStartTime, events },
             cameraBlob,
             cameraMimeType: cameraBlob ? cameraMimeType : null,

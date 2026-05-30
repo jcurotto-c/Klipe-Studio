@@ -29,7 +29,7 @@ declare global {
 
   interface KlipeBridge {
     getScreenSources: () => Promise<ScreenSource[]>;
-    prepareDisplayMedia?: (sourceId: string) => Promise<{ ok: boolean }>;
+    prepareDisplayMedia?: (sourceId: string, systemAudio?: boolean) => Promise<{ ok: boolean }>;
     saveVideoBlob: (params: {
       buffer: ArrayBuffer;
       suggestedName: string;

@@ -84,6 +84,7 @@ interface ExportModalProps {
   mobilePrimary?: boolean;
   audioFx?: AudioFxOptions | null;
   backgroundMusic?: BackgroundMusic | null;
+  audioVolume?: number;
   blurRegions?: BlurRegion[] | null;
   overlays?: Overlay[] | null;
   sourceLabel?: string;
@@ -107,6 +108,7 @@ export default function ExportModal({
   mobilePrimary,
   audioFx,
   backgroundMusic,
+  audioVolume,
   blurRegions,
   overlays,
   sourceLabel,
@@ -192,6 +194,7 @@ export default function ExportModal({
         mobilePrimary,
         audioFx,
         backgroundMusic,
+        audioVolume,
         blurRegions,
         overlays,
         signal: controller.signal,

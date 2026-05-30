@@ -208,6 +208,8 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
   const [frameOptions, setFrameOptions] = useState<FrameOptions>(() => initialDoc?.frameOptions ?? loadFrameOptions());
   const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(() => initialDoc?.audioFxOptions ?? loadAudioFxOptions());
   const [backgroundMusic, setBackgroundMusic] = useState<BackgroundMusic | null>(() => initialDoc?.backgroundMusic ?? null);
+  const [audioVolume, setAudioVolume] = useState<number>(() => initialDoc?.audioVolume ?? 1);
+  const lastVolumeRef = useRef(1);
   const bgMusicAudioRef = useRef<HTMLAudioElement | null>(null);
   // A phone clip is portrait by nature, so default the canvas to 9:16 when
   // the recording's primary subject is a phone. The user can still change it.
@@ -349,14 +351,15 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
     frameOptions,
     audioFxOptions,
     backgroundMusic,
+    audioVolume,
     aspectRatioId,
     mobileOptions,
     blurRegions,
     overlays,
   }), [
     fragments, segments, background, crop, zoomDefaults, cameraOptions,
-    cursorOptions, frameOptions, audioFxOptions, backgroundMusic, aspectRatioId,
-    mobileOptions, blurRegions, overlays,
+    cursorOptions, frameOptions, audioFxOptions, backgroundMusic, audioVolume,
+    aspectRatioId, mobileOptions, blurRegions, overlays,
   ]);
 
   const handleSaveProject = useCallback(async (): Promise<void> => {
@@ -395,6 +398,25 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
     }, 1500);
     return () => clearTimeout(t);
   }, [projectPath, recording, buildEditDocument]);
+
+  // Master volume for the recording's own audio (mic + system). Drives the
+  // preview <video> and is passed to the exporter so the file matches.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v) v.volume = audioVolume;
+  }, [audioVolume]);
+
+  const handleVolumeChange = useCallback((v: number): void => {
+    setAudioVolume(v);
+    if (v > 0) lastVolumeRef.current = v;
+  }, []);
+
+  const toggleMute = useCallback((): void => {
+    setAudioVolume((cur) => {
+      if (cur > 0) { lastVolumeRef.current = cur; return 0; }
+      return lastVolumeRef.current > 0 ? lastVolumeRef.current : 1;
+    });
+  }, []);
 
   const pushHistory = useCallback((): void => {
     const h = historyRef.current;
@@ -1261,13 +1283,30 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
       <div className="editor-right">
       <div className="editor-main">
 
+        {recording.hasAudio === false && (
+          <div
+            style={{
+              margin: '0 0 8px',
+              padding: '8px 12px',
+              borderRadius: 8,
+              border: '1px solid var(--danger, #e5484d)',
+              color: 'var(--danger, #e5484d)',
+              fontSize: 13,
+              background: 'rgba(229,72,77,0.08)',
+            }}
+          >
+            🔇 No audio was captured in this recording. Check the microphone
+            permission for Klipe (Windows Settings → Privacy → Microphone), or
+            enable “System audio” in the toolbar before recording.
+          </div>
+        )}
+
         <div className="preview-wrap">
           <div className="preview" style={previewSurroundStyle}>
             <video
               ref={videoRef}
               src={recording.url}
               style={{ display: 'none' }}
-              muted
               playsInline
             />
             <VideoCanvas
@@ -1515,6 +1554,29 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
               <SkipForwardIcon />
             </button>
             <span className="time-pro dim">{fmt(duration)}</span>
+            <span className="controls-divider" aria-hidden="true" />
+            <div className="volume-control" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                className="icon-btn"
+                onClick={toggleMute}
+                title={audioVolume === 0 ? 'Unmute' : 'Mute'}
+                aria-label={audioVolume === 0 ? 'Unmute' : 'Mute'}
+              >
+                {audioVolume === 0 ? <VolumeMuteIcon /> : <VolumeHighIcon />}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={audioVolume}
+                onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                className="volume-slider"
+                style={{ width: 90 }}
+                aria-label="Recording volume"
+                title="Recording volume"
+              />
+            </div>
           </div>
 
           <div className="controls-right">
@@ -1625,6 +1687,7 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
           mobilePrimary={!!recordedMobile}
           audioFx={audioFxOptions}
           backgroundMusic={backgroundMusic}
+          audioVolume={audioVolume}
           blurRegions={blurRegions}
           overlays={overlays}
           sourceLabel={recording.name || 'recording'}
@@ -1632,6 +1695,25 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
         />
       )}
     </div>
+  );
+}
+
+function VolumeHighIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 5L6 9H3v6h3l5 4V5z" />
+      <path d="M16 9a3 3 0 0 1 0 6" />
+      <path d="M19 6.5a7 7 0 0 1 0 11" />
+    </svg>
+  );
+}
+
+function VolumeMuteIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 5L6 9H3v6h3l5 4V5z" />
+      <path d="M22 9l-5 5M17 9l5 5" />
+    </svg>
   );
 }
 

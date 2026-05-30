@@ -58,6 +58,8 @@ export interface EditDocument {
   audioFxOptions: AudioFxOptions;
   /** `src` is rewritten to a fresh object URL on open (or '' if absent). */
   backgroundMusic: BackgroundMusic | null;
+  /** Master volume (0..1) for the recording's own audio. */
+  audioVolume?: number;
   aspectRatioId: string;
   mobileOptions: MobileOptions;
   blurRegions: BlurRegion[];

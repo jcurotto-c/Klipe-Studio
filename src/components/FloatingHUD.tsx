@@ -15,6 +15,7 @@ import MobileConnectModal from './MobileConnectModal';
 import { onMobileDisconnect as subscribeMobileDisconnect } from '../lib/scrcpy-backend';
 
 const AUTO_ZOOM_KEY = 'klipe.autoZoom';
+const SYSTEM_AUDIO_KEY = 'klipe.systemAudio';
 const MOBILE_DEVICE_KEY = 'klipe.mobileDeviceId';
 const MOBILE_ENABLED_KEY = 'klipe.mobileEnabled';
 
@@ -76,6 +77,14 @@ function loadAutoZoom(): boolean {
   }
 }
 
+function loadSystemAudio(): boolean {
+  try {
+    return localStorage.getItem(SYSTEM_AUDIO_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 interface MicMenuItem {
   id: string;
   label: string;
@@ -93,6 +102,7 @@ export default function FloatingHUD(): JSX.Element {
   const [camEnabled, setCamEnabled] = useState(false);
   const [camId, setCamId] = useState('');
   const [autoZoom, setAutoZoom] = useState<boolean>(loadAutoZoom);
+  const [systemAudio, setSystemAudio] = useState<boolean>(loadSystemAudio);
 
   // Mobile (phone) recording state. Persisted across sessions so the
   // toolbar wakes up reflecting the previously-paired device. We restore
@@ -153,9 +163,13 @@ export default function FloatingHUD(): JSX.Element {
 
   const refreshDevices = useCallback(async () => {
     try {
-      const tmp = await navigator.mediaDevices
-        .getUserMedia({ audio: true, video: true })
-        .catch(() => null);
+      // Prime device labels/ids. Request audio and video SEPARATELY: a combined
+      // { audio, video } request rejects wholesale on a machine with no webcam
+      // (or a busy camera), which would leave the microphone ids empty and
+      // silently disable mic capture. Requesting them apart unlocks the mic
+      // even when there's no camera.
+      const primeAudio = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+      const primeVideo = await navigator.mediaDevices.getUserMedia({ video: true }).catch(() => null);
       const all = await navigator.mediaDevices.enumerateDevices();
       const audioInputs = all.filter((d) => d.kind === 'audioinput');
       const videoInputs = all.filter((d) => d.kind === 'videoinput');
@@ -163,7 +177,8 @@ export default function FloatingHUD(): JSX.Element {
       setCams(videoInputs);
       setMicId((prev) => prev || audioInputs[0]?.deviceId || '');
       setCamId((prev) => prev || videoInputs[0]?.deviceId || '');
-      if (tmp) tmp.getTracks().forEach((t) => t.stop());
+      primeAudio?.getTracks().forEach((t) => t.stop());
+      primeVideo?.getTracks().forEach((t) => t.stop());
     } catch (e) {
       console.warn('Device enumeration failed:', e);
     }
@@ -340,6 +355,13 @@ export default function FloatingHUD(): JSX.Element {
       return next;
     });
   };
+  const onToggleSystemAudio = (): void => {
+    setSystemAudio((v) => {
+      const next = !v;
+      try { localStorage.setItem(SYSTEM_AUDIO_KEY, String(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   const onMobileClick = useCallback((): void => {
     // Idle button → open modal. Connected button → also open modal (lets the
@@ -446,10 +468,14 @@ export default function FloatingHUD(): JSX.Element {
         emit({
           type: 'start-recording',
           sourceId: selectedId,
-          micId: micEnabled ? micId : '',
+          // Non-empty whenever the mic is on — even if no specific device was
+          // picked yet (capture falls back to the default input). '' only when
+          // the user explicitly muted the mic.
+          micId: micEnabled ? (micId || 'default') : '',
           camId: camEnabled ? camId : null,
           mobileId: mobileEnabled ? mobileDeviceId : null,
           autoZoom,
+          systemAudio,
           display: {
             width: source.width,
             height: source.height,
@@ -465,7 +491,7 @@ export default function FloatingHUD(): JSX.Element {
     countdownTimer.current = setTimeout(tick, 1000);
   }, [
     selectedId, sources, micEnabled, micId, camEnabled, camId,
-    mobileEnabled, mobileDeviceId, autoZoom, emit,
+    mobileEnabled, mobileDeviceId, autoZoom, systemAudio, emit,
   ]);
 
   const onRecordClick = (): void => {
@@ -659,6 +685,12 @@ export default function FloatingHUD(): JSX.Element {
             active={autoZoom}
             variant="purple"
             onClick={onToggleAutoZoom}
+          />
+          <StackedToggle
+            icon={<SpeakerIcon />}
+            label="System audio"
+            active={systemAudio}
+            onClick={onToggleSystemAudio}
           />
         </div>
 
@@ -1170,6 +1202,16 @@ function PhoneIcon(): JSX.Element {
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
       <path d="M11 18.5h2" />
+    </svg>
+  );
+}
+
+function SpeakerIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 5L6 9H3v6h3l5 4V5z" />
+      <path d="M16 9a3 3 0 0 1 0 6" />
+      <path d="M19 6.5a7 7 0 0 1 0 11" />
     </svg>
   );
 }

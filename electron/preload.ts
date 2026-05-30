@@ -8,7 +8,8 @@ interface SaveVideoBlobArgs {
 
 contextBridge.exposeInMainWorld('klipe', {
   getScreenSources: () => ipcRenderer.invoke('get-screen-sources'),
-  prepareDisplayMedia: (sourceId: string) => ipcRenderer.invoke('prepare-display-media', sourceId),
+  prepareDisplayMedia: (sourceId: string, systemAudio?: boolean) =>
+    ipcRenderer.invoke('prepare-display-media', sourceId, systemAudio),
   saveVideoBlob: ({ buffer, suggestedName, mimeType }: SaveVideoBlobArgs) =>
     ipcRenderer.invoke('save-video-blob', { buffer, suggestedName, mimeType }),
   openImageFile: () => ipcRenderer.invoke('open-image-file'),

@@ -2524,6 +2524,41 @@ select {
   pointer-events: none;
 }
 
+/* Transport volume slider (editor playback bar) — matches the purple accent. */
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3, #2a2f3a);
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+.volume-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+.volume-slider::-moz-range-progress {
+  background: var(--accent);
+  height: 4px;
+  border-radius: 999px;
+}
+
 /* ── Blur / Redaction ─────────────────────────────────────────── */
 
 .blur-overlay {
