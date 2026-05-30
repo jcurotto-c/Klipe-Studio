@@ -120,8 +120,8 @@ export default function BackgroundPanel({
       onChange({ type: 'image', src, blur });
     }
     if (id === 'gradient') {
-      const from = value && value.type === 'gradient' ? value.from : '#7c5cff';
-      const to = value && value.type === 'gradient' ? value.to : '#5cc4ff';
+      const from = value && value.type === 'gradient' ? value.from : '#ffffff';
+      const to = value && value.type === 'gradient' ? value.to : '#d4d7dd';
       const angle = value && value.type === 'gradient' && value.angle != null ? value.angle : 135;
       onChange({ type: 'gradient', from, to, angle, blur });
     }
@@ -572,8 +572,8 @@ function WallpaperImageTab({
 }
 
 function GradientTab({ value, update }: SubTabProps): JSX.Element {
-  const from = value && value.type === 'gradient' ? value.from : '#7c5cff';
-  const to = value && value.type === 'gradient' ? value.to : '#5cc4ff';
+  const from = value && value.type === 'gradient' ? value.from : '#ffffff';
+  const to = value && value.type === 'gradient' ? value.to : '#d4d7dd';
   const angle = value && value.type === 'gradient' && value.angle != null ? value.angle : 135;
   return (
     <div className="grad-block">
@@ -617,7 +617,7 @@ function GradientTab({ value, update }: SubTabProps): JSX.Element {
 function ColorTab({ value, update }: SubTabProps): JSX.Element {
   const isWallpaper = !!value && value.type === 'wallpaper';
   const activeWallpaper = isWallpaper ? value.value : null;
-  const color = value && value.type === 'color' ? value.value : '#7c5cff';
+  const color = value && value.type === 'color' ? value.value : '#ffffff';
 
   let previewBg = color;
   if (isWallpaper) {

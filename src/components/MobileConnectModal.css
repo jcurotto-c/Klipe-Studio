@@ -32,8 +32,8 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #ffcd87, #b8a5ff);
-  box-shadow: 0 0 5px rgba(184, 165, 255, 0.6);
+  background: linear-gradient(135deg, #ffcd87, #ffffff);
+  box-shadow: 0 0 5px rgba(255, 255, 255, 0.6);
 }
 .hud-mobile-pop-title {
   font-size: 14px;
@@ -96,7 +96,7 @@
     rgba(255, 255, 255, 0.05);
 }
 .hud-mobile-row.is-current {
-  background: rgba(184, 165, 255, 0.06);
+  background: rgba(255, 255, 255, 0.06);
 }
 .hud-mobile-row.is-success {
   background: rgba(80, 210, 140, 0.10);
@@ -150,7 +150,7 @@
 }
 .hud-mobile-row.is-error .hud-mobile-row-sub { color: rgba(255, 175, 180, 0.85); }
 .hud-mobile-row.is-success .hud-mobile-row-sub { color: rgba(110, 230, 170, 0.85); }
-.hud-mobile-row.is-current .hud-mobile-row-sub { color: rgba(184, 165, 255, 0.85); }
+.hud-mobile-row.is-current .hud-mobile-row-sub { color: rgba(255, 255, 255, 0.85); }
 
 .hud-mobile-row-state {
   flex: 0 0 auto;
@@ -162,7 +162,7 @@
   color: rgba(225, 230, 240, 0.6);
 }
 .hud-mobile-row.is-success .hud-mobile-row-state { color: #4dd99c; }
-.hud-mobile-row.is-current .hud-mobile-row-state { color: #b8a5ff; }
+.hud-mobile-row.is-current .hud-mobile-row-state { color: #ffffff; }
 .hud-mobile-row.is-error .hud-mobile-row-state { color: var(--hud-rec); }
 
 /* ── Loading / Empty states ─────────────────────────────────────────── */
@@ -200,7 +200,7 @@
   appearance: none;
   background: transparent;
   border: 0;
-  color: rgba(184, 165, 255, 0.95);
+  color: rgba(255, 255, 255, 0.95);
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
@@ -209,8 +209,8 @@
   transition: background 160ms var(--ease-out), color 160ms var(--ease-out);
 }
 .hud-mobile-pop-link:hover {
-  background: rgba(184, 165, 255, 0.10);
-  color: #d9ccff;
+  background: rgba(255, 255, 255, 0.10);
+  color: #ffffff;
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────── */
@@ -276,11 +276,11 @@
 .hud-mobile-tab.is-active {
   color: var(--hud-text);
   background:
-    linear-gradient(135deg, rgba(255, 205, 135, 0.10) 0%, rgba(184, 165, 255, 0.10) 100%),
+    linear-gradient(135deg, rgba(255, 205, 135, 0.10) 0%, rgba(255, 255, 255, 0.10) 100%),
     rgba(255, 255, 255, 0.05);
   box-shadow:
     inset 0 0 0 1px rgba(255, 205, 135, 0.22),
-    inset 0 0 0 1px rgba(184, 165, 255, 0.22);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22);
 }
 .hud-mobile-tab:disabled { opacity: 0.4; cursor: not-allowed; }
 

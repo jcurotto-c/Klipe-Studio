@@ -38,7 +38,7 @@ function categorize(source: ScreenSource): SourceCategory {
   }
   const n = source.name.toLowerCase();
   if (/(chrome|safari|firefox|edge|brave|opera|vivaldi|arc)/.test(n)) {
-    return { label: 'browser', bg: 'rgba(122, 81, 247, 0.22)', fg: '#b59bff' };
+    return { label: 'browser', bg: 'rgba(244, 114, 182, 0.20)', fg: '#f9a8d4' };
   }
   if (/(figma|sketch|photoshop|illustrator|affinity|invision|procreate|canva)/.test(n)) {
     return { label: 'design', bg: 'rgba(240, 140, 70, 0.22)', fg: '#ffa86b' };
@@ -50,7 +50,7 @@ function categorize(source: ScreenSource): SourceCategory {
     return { label: 'editor', bg: 'rgba(96, 140, 240, 0.22)', fg: '#7fa4ff' };
   }
   if (/(notion|word|pages|docs|google docs|confluence|obsidian|evernote|onenote|bear|craft)/.test(n)) {
-    return { label: 'docs', bg: 'rgba(180, 140, 220, 0.22)', fg: '#caa6e6' };
+    return { label: 'docs', bg: 'rgba(148, 163, 184, 0.18)', fg: '#cbd5e1' };
   }
   return { label: 'app', bg: 'rgba(255, 255, 255, 0.10)', fg: '#cfd6e3' };
 }

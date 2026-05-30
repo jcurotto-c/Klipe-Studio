@@ -21,11 +21,11 @@
   --hud-rec-soft: rgba(255, 79, 90, 0.14);
   --hud-rec-glow: rgba(255, 79, 90, 0.22);
 
-  /* AI / Purple — refined, less saturated */
-  --hud-purple: #b8a5ff;
-  --hud-purple-bg: rgba(139, 110, 255, 0.10);
-  --hud-purple-bg-strong: rgba(139, 110, 255, 0.16);
-  --hud-purple-glow: rgba(139, 110, 255, 0.18);
+  /* AI / Accent — refined platinum */
+  --hud-purple: #ffffff;
+  --hud-purple-bg: rgba(255, 255, 255, 0.10);
+  --hud-purple-bg-strong: rgba(255, 255, 255, 0.16);
+  --hud-purple-glow: rgba(255, 255, 255, 0.18);
 
   /* Traffic lights */
   --hud-tl-close: #ff5f57;
@@ -359,10 +359,10 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 .hud-stacked-wrap.is-on.is-purple {
   background:
     radial-gradient(120% 90% at 50% 0%, var(--hud-purple-bg-strong) 0%, var(--hud-purple-bg) 70%),
-    rgba(139, 110, 255, 0.05);
+    rgba(255, 255, 255, 0.05);
   box-shadow:
-    inset 0 0 0 0.5px rgba(184, 165, 255, 0.20),
-    inset 0 1px 0 rgba(184, 165, 255, 0.12),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
     0 0 22px -10px var(--hud-purple-glow);
 }
 
@@ -448,7 +448,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 }
 .hud-stacked-wrap.is-purple .hud-stacked-indicator {
   background: var(--hud-purple);
-  box-shadow: 0 0 6px rgba(184, 165, 255, 0.55);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.55);
 }
 .hud-stacked-indicator.is-recording {
   background: var(--hud-rec);
@@ -530,7 +530,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
     transform 220ms var(--ease-spring);
 }
 
-/* Premium gold→violet hairline ring. Uses mask-composite to render only
+/* Premium gold→teal hairline ring. Uses mask-composite to render only
  * the 1px border without filling the interior. */
 .hud-mobile-btn-ring {
   position: absolute;
@@ -538,7 +538,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   border-radius: 13px;
   padding: 1px;
   pointer-events: none;
-  background: linear-gradient(135deg, rgba(255, 205, 135, 0.55) 0%, rgba(184, 165, 255, 0.55) 100%);
+  background: linear-gradient(135deg, rgba(255, 205, 135, 0.55) 0%, rgba(255, 255, 255, 0.55) 100%);
   -webkit-mask: linear-gradient(#000, #000) content-box, linear-gradient(#000, #000);
   -webkit-mask-composite: xor;
           mask-composite: exclude;
@@ -628,8 +628,8 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #ffcd87, #b8a5ff);
-  box-shadow: 0 0 4px rgba(184, 165, 255, 0.6);
+  background: linear-gradient(135deg, #ffcd87, #ffffff);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
   pointer-events: none;
 }
 
@@ -884,8 +884,8 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   transition: background 160ms var(--ease-out);
 }
 .hud-source-item:hover { background: rgba(255, 255, 255, 0.045); }
-.hud-source-item.is-selected { background: rgba(139, 110, 255, 0.14); }
-.hud-source-item.is-selected:hover { background: rgba(139, 110, 255, 0.20); }
+.hud-source-item.is-selected { background: rgba(255, 255, 255, 0.14); }
+.hud-source-item.is-selected:hover { background: rgba(255, 255, 255, 0.20); }
 
 .hud-source-icon {
   width: 36px;
@@ -982,9 +982,9 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 }
 .hud-source-screen-tile:active { transform: translateY(0) scale(0.98); }
 .hud-source-screen-tile.is-selected {
-  background: rgba(139, 110, 255, 0.14);
-  border-color: rgba(184, 165, 255, 0.40);
-  box-shadow: 0 0 0 1px rgba(184, 165, 255, 0.30) inset;
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.40);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.30) inset;
 }
 
 .hud-source-screen-thumb {
@@ -1031,11 +1031,11 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   height: 18px;
   border-radius: 50%;
   background: var(--hud-purple);
-  color: #fff;
+  color: #0b0e14;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(139, 110, 255, 0.40);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.40);
 }
 
 .hud-source-screen-info {
@@ -1099,7 +1099,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   transition: background 160ms var(--ease-out), color 160ms ease;
 }
 .hud-device-item:hover {
-  background: rgba(139, 110, 255, 0.28);
+  background: rgba(255, 255, 255, 0.28);
   color: #fff;
 }
 .hud-device-check {

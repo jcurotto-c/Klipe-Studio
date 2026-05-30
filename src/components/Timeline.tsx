@@ -12,6 +12,7 @@ import {
 } from '../lib/fragments';
 import type { BackgroundMusic, Fragment, KlipeMouseEvent, ZoomSegment } from '../types';
 import type { Overlay } from '../overlays/types';
+import { FragmentFilmstrip } from './FragmentFilmstrip';
 
 const fmt = (s: number): string => {
   const m = Math.floor(s / 60);
@@ -43,6 +44,7 @@ interface TimelineProps {
   onUpdateSegment: (id: string, patch: Partial<ZoomSegment>) => void;
   fragments: Fragment[];
   sourceDuration: number;
+  recordingUrl?: string;
   selectedFragmentId: string | null;
   onSelectFragment: (id: string | null) => void;
   onUpdateFragments: (next: Fragment[]) => void;
@@ -74,6 +76,7 @@ export default function Timeline({
   onUpdateSegment,
   fragments,
   sourceDuration,
+  recordingUrl,
   selectedFragmentId,
   onSelectFragment,
   onUpdateFragments,
@@ -460,6 +463,11 @@ export default function Timeline({
                 title={`Fragment ${l.index + 1} · src ${l.fragment.srcStart.toFixed(2)}s → ${l.fragment.srcEnd.toFixed(2)}s`}
                 onMouseDown={(e) => onFragmentMouseDown(e, l)}
               >
+                <FragmentFilmstrip
+                  recordingUrl={recordingUrl ?? null}
+                  fragment={l.fragment}
+                  durationHint={sourceDuration}
+                />
                 <div
                   className="fragment-handle left"
                   data-handle="frag-start"

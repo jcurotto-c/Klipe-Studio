@@ -1773,6 +1773,7 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
             onUpdateSegment={handleUpdateSegment}
             fragments={fragments}
             sourceDuration={sourceDuration}
+            recordingUrl={recording.url}
             selectedFragmentId={selectedFragmentId}
             onSelectFragment={handleSelectFragment}
             onUpdateFragments={handleUpdateFragments}

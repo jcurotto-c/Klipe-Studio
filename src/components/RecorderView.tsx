@@ -163,78 +163,119 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
   const stopRecording = useCallback(async () => {
     if (!recorderRef.current) return;
     const { rec, display, autoZoom, scrcpy } = recorderRef.current;
-    // Stop the screen+camera MediaRecorders and the scrcpy child in
-    // parallel so the resulting MP4 is finalized while we're already
-    // awaiting the MediaRecorder blobs.
-    const [result, scrcpyStop] = await Promise.all([
-      rec.stop(),
-      scrcpy && window.klipe?.scrcpy?.stop
-        ? window.klipe.scrcpy.stop()
-        : Promise.resolve(null),
-    ]);
+    // Claim the recorder immediately so a second stop (double-click, or the
+    // global shortcut racing the toolbar button) can't re-enter while we're
+    // still finalizing blobs.
+    recorderRef.current = null;
     setRecording(false);
     window.klipeHud?.pushState?.({ recording: false });
-    recorderRef.current = null;
 
-    const url = URL.createObjectURL(result.blob);
-    const camera = result.cameraBlob
-      ? {
-          blob: result.cameraBlob,
-          url: URL.createObjectURL(result.cameraBlob),
-          mimeType: result.cameraMimeType ?? 'video/webm',
-        }
-      : null;
-
-    // Mobile: either from the legacy MediaRecorder path (LocalDeviceBackend
-    // virtual cam) or from the scrcpy temp file. Both produce a Blob.
-    let mobile: Recording['mobile'] = null;
-    if (result.mobileBlob) {
-      mobile = {
-        blob: result.mobileBlob,
-        url: URL.createObjectURL(result.mobileBlob),
-        mimeType: result.mobileMimeType ?? 'video/webm',
-      };
-    } else if (scrcpy && scrcpyStop?.filePath && window.klipe?.scrcpy?.read) {
-      try {
-        const buf = await window.klipe.scrcpy.read(scrcpyStop.filePath);
-        // Validate before trusting the file. scrcpy on Windows occasionally
-        // fails to flush its libavformat MP4 muxer when killed mid-record;
-        // the file ends up with header bytes but no `moov` atom and the
-        // editor would show an empty Phone placeholder. If we can't find a
-        // moov atom, treat the recording as failed.
-        if (buf.byteLength > 1024 && hasMp4Moov(buf)) {
-          const blob = new Blob([buf], { type: 'video/mp4' });
-          mobile = {
-            blob,
-            url: URL.createObjectURL(blob),
-            mimeType: 'video/mp4',
-          };
-        } else {
-          console.warn(
-            `[recorder] phone recording invalid (${buf.byteLength} bytes, ` +
-            `moov=${hasMp4Moov(buf)}); editor will skip phone-primary mode.`,
-          );
-          setError('Phone recording was not finalized correctly — opening editor with screen recording only.');
-        }
-      } catch (err) {
-        console.warn('[recorder] failed to read scrcpy output:', err);
-      }
+    // Stop the screen+camera MediaRecorders and the scrcpy child in parallel so
+    // the resulting MP4 is finalized while we're already awaiting the
+    // MediaRecorder blobs. If finalization throws we must NOT fail silently —
+    // this view is headless, so surface the error and bring the main window
+    // forward instead of stranding the user on a reset toolbar with no editor.
+    let result: Awaited<ReturnType<typeof rec.stop>>;
+    let scrcpyFilePath: string | null = null;
+    try {
+      const [r, s] = await Promise.all([
+        rec.stop(),
+        scrcpy && window.klipe?.scrcpy?.stop
+          ? window.klipe.scrcpy.stop()
+          : Promise.resolve(null),
+      ]);
+      result = r;
+      scrcpyFilePath = s?.filePath ?? null;
+    } catch (e) {
+      console.error('[recorder] failed to finalize recording:', e);
+      window.klipeHud?.showMain?.();
+      setError(`Could not finish the recording: ${String(e)}`);
+      return;
     }
 
-    const micAudio = result.micAudioBlob
-      ? {
-          blob: result.micAudioBlob,
-          url: URL.createObjectURL(result.micAudioBlob),
-          mimeType: result.micAudioMimeType ?? 'audio/webm',
+    // The screen video is the essential output. Build its URL first so a
+    // failure assembling any optional track (camera, phone, audio) can never
+    // block opening the editor.
+    let url: string;
+    try {
+      if (!result.blob || result.blob.size === 0) {
+        throw new Error('the recording produced no video data');
+      }
+      url = URL.createObjectURL(result.blob);
+    } catch (e) {
+      console.error('[recorder] could not open the recording:', e);
+      window.klipeHud?.showMain?.();
+      setError(`Could not open the recording: ${String(e)}`);
+      return;
+    }
+
+    // Optional tracks — best-effort. Any failure here downgrades to a
+    // screen-only recording rather than losing the whole take.
+    let camera: Recording['camera'] = null;
+    let mobile: Recording['mobile'] = null;
+    let micAudio: Recording['micAudio'] = null;
+    let systemAudio: Recording['systemAudio'] = null;
+    try {
+      camera = result.cameraBlob
+        ? {
+            blob: result.cameraBlob,
+            url: URL.createObjectURL(result.cameraBlob),
+            mimeType: result.cameraMimeType ?? 'video/webm',
+          }
+        : null;
+
+      // Mobile: either from the legacy MediaRecorder path (LocalDeviceBackend
+      // virtual cam) or from the scrcpy temp file. Both produce a Blob.
+      if (result.mobileBlob) {
+        mobile = {
+          blob: result.mobileBlob,
+          url: URL.createObjectURL(result.mobileBlob),
+          mimeType: result.mobileMimeType ?? 'video/webm',
+        };
+      } else if (scrcpy && scrcpyFilePath && window.klipe?.scrcpy?.read) {
+        try {
+          const buf = await window.klipe.scrcpy.read(scrcpyFilePath);
+          // Validate before trusting the file. scrcpy on Windows occasionally
+          // fails to flush its libavformat MP4 muxer when killed mid-record;
+          // the file ends up with header bytes but no `moov` atom and the
+          // editor would show an empty Phone placeholder. If we can't find a
+          // moov atom, treat the recording as failed.
+          if (buf.byteLength > 1024 && hasMp4Moov(buf)) {
+            const blob = new Blob([buf], { type: 'video/mp4' });
+            mobile = {
+              blob,
+              url: URL.createObjectURL(blob),
+              mimeType: 'video/mp4',
+            };
+          } else {
+            console.warn(
+              `[recorder] phone recording invalid (${buf.byteLength} bytes, ` +
+              `moov=${hasMp4Moov(buf)}); editor will skip phone-primary mode.`,
+            );
+            setError('Phone recording was not finalized correctly — opening editor with screen recording only.');
+          }
+        } catch (err) {
+          console.warn('[recorder] failed to read scrcpy output:', err);
         }
-      : null;
-    const systemAudio = result.systemAudioBlob
-      ? {
-          blob: result.systemAudioBlob,
-          url: URL.createObjectURL(result.systemAudioBlob),
-          mimeType: result.systemAudioMimeType ?? 'audio/webm',
-        }
-      : null;
+      }
+
+      micAudio = result.micAudioBlob
+        ? {
+            blob: result.micAudioBlob,
+            url: URL.createObjectURL(result.micAudioBlob),
+            mimeType: result.micAudioMimeType ?? 'audio/webm',
+          }
+        : null;
+      systemAudio = result.systemAudioBlob
+        ? {
+            blob: result.systemAudioBlob,
+            url: URL.createObjectURL(result.systemAudioBlob),
+            mimeType: result.systemAudioMimeType ?? 'audio/webm',
+          }
+        : null;
+    } catch (e) {
+      console.warn('[recorder] failed to assemble optional tracks; opening editor with screen only:', e);
+    }
 
     onRecordingDone({
       blob: result.blob,
@@ -270,7 +311,11 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
           );
           break;
         case 'stop-recording':
-          stopRecording();
+          void stopRecording().catch((e) => {
+            console.error('[recorder] unexpected error stopping recording:', e);
+            window.klipeHud?.showMain?.();
+            setError(`Unexpected error finishing the recording: ${String(e)}`);
+          });
           break;
         case 'auto-zoom-change':
           autoZoomRef.current = evt.enabled;

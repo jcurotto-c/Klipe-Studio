@@ -7,8 +7,11 @@
   --text-0: #ececec;
   --text-1: #b0b0b0;
   --text-2: #777777;
-  --accent: #7c5cff;
-  --accent-2: #5cc4ff;
+  --accent: #ffffff;
+  --accent-rgb: 255, 255, 255;
+  --accent-dark: #e8e8e8;
+  --accent-2: #ffffff;
+  --accent-2-rgb: 255, 255, 255;
   --danger: #ff5c7a;
   --success: #3ddc97;
   --warn: #ffb454;
@@ -46,9 +49,9 @@ button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
 button.primary {
-  background: linear-gradient(180deg, var(--accent) 0%, #5b3eff 100%);
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 100%);
   border-color: transparent;
-  color: white;
+  color: #0a0a0a;
   font-weight: 600;
 }
 button.primary:hover:not(:disabled) { filter: brightness(1.08); }
@@ -104,7 +107,7 @@ button.ghost { background: transparent; }
 .titlebar .brand .logo {
   width: 22px; height: 22px; border-radius: 6px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 0 24px rgba(124, 92, 255, 0.5);
+  box-shadow: 0 0 24px rgba(var(--accent-rgb), 0.5);
 }
 .titlebar .nav { display: flex; gap: 8px; align-items: center; }
 .titlebar .nav button.active { background: var(--bg-3); border-color: var(--accent); }
@@ -178,7 +181,7 @@ button.ghost { background: transparent; }
   z-index: 1000;
   font-size: 200px; font-weight: 800;
   color: white;
-  text-shadow: 0 8px 60px rgba(124, 92, 255, 0.7);
+  text-shadow: 0 8px 60px rgba(var(--accent-rgb), 0.7);
   pointer-events: none;
 }
 
@@ -511,7 +514,7 @@ button.tool.active {
 }
 .timeline .zoom-seg {
   position: absolute; top: 0; bottom: 0;
-  background: linear-gradient(180deg, rgba(124,92,255,0.45), rgba(92,196,255,0.35));
+  background: linear-gradient(180deg, rgba(var(--accent-rgb),0.45), rgba(var(--accent-2-rgb),0.35));
   border: 1px solid var(--accent);
   border-radius: 4px;
   cursor: grab;
@@ -519,10 +522,10 @@ button.tool.active {
   transition: box-shadow 120ms, background 120ms;
 }
 .timeline .zoom-seg:hover {
-  background: linear-gradient(180deg, rgba(124,92,255,0.6), rgba(92,196,255,0.45));
+  background: linear-gradient(180deg, rgba(var(--accent-rgb),0.6), rgba(var(--accent-2-rgb),0.45));
 }
 .timeline .zoom-seg.selected {
-  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(124,92,255,0.55);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(var(--accent-rgb),0.55);
   z-index: 2;
 }
 .timeline .zoom-seg.manual {
@@ -905,7 +908,7 @@ select {
   background: rgba(255, 255, 255, 0.04);
 }
 .layer-row.selected {
-  background: rgba(124, 92, 255, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
   border-color: var(--accent);
 }
 .layer-row.hidden .layer-name,
@@ -1137,7 +1140,7 @@ select {
 }
 .sidebar-tab.active {
   color: var(--text-0);
-  border-bottom-color: var(--accent, #7c5cff);
+  border-bottom-color: var(--accent, #ffffff);
 }
 .sidebar-content {
   flex: 1 1 auto;
@@ -2184,12 +2187,12 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, var(--accent) 0%, #5b3eff 100%);
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 100%);
   border: none;
-  color: white;
+  color: #0a0a0a;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(124, 92, 255, 0.4);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.4);
   transition: transform 80ms, filter 120ms;
   padding: 0;
 }
@@ -2234,8 +2237,8 @@ select {
 }
 .timeline.pro .track.main-clip {
   height: 56px;
-  background: linear-gradient(180deg, rgba(124, 92, 255, 0.42) 0%, rgba(92, 70, 220, 0.55) 100%);
-  border: 1px solid rgba(124, 92, 255, 0.55);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.42) 0%, rgba(255, 255, 255, 0.55) 100%);
+  border: 1px solid rgba(var(--accent-rgb), 0.55);
   cursor: pointer;
 }
 .timeline.pro .clip-label {
@@ -2262,13 +2265,13 @@ select {
   border: 1px solid var(--border);
 }
 .timeline.pro .track.zoom-track .zoom-seg {
-  background: linear-gradient(180deg, rgba(124, 92, 255, 0.55), rgba(92, 70, 220, 0.45));
-  border: 1px solid rgba(124, 92, 255, 0.7);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.55), rgba(255, 255, 255, 0.45));
+  border: 1px solid rgba(var(--accent-rgb), 0.7);
   border-radius: 5px;
   height: 100%;
 }
 .timeline.pro .track.zoom-track .zoom-seg.selected {
-  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(124, 92, 255, 0.55);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(var(--accent-rgb), 0.55);
   z-index: 2;
 }
 .timeline.pro .track.zoom-track .zoom-seg-label {
@@ -2365,8 +2368,8 @@ select {
   overflow: hidden;
 }
 .timeline.pro .track.overlay-track .overlay-seg.image {
-  background: linear-gradient(180deg, rgba(92, 196, 255, 0.55), rgba(60, 160, 220, 0.45));
-  border-color: rgba(92, 196, 255, 0.75);
+  background: linear-gradient(180deg, rgba(var(--accent-2-rgb), 0.55), rgba(255, 255, 255, 0.45));
+  border-color: rgba(var(--accent-2-rgb), 0.75);
 }
 .timeline.pro .track.overlay-track .overlay-seg:hover {
   filter: brightness(1.15);
@@ -2377,10 +2380,10 @@ select {
   z-index: 2;
 }
 .timeline.pro .track.overlay-track .overlay-seg.image.dragging {
-  box-shadow: 0 0 0 2px rgba(92, 196, 255, 0.9), 0 0 18px rgba(92, 196, 255, 0.4);
+  box-shadow: 0 0 0 2px rgba(var(--accent-2-rgb), 0.9), 0 0 18px rgba(var(--accent-2-rgb), 0.4);
 }
 .timeline.pro .track.overlay-track .overlay-seg.selected {
-  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(124, 92, 255, 0.5);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(var(--accent-rgb), 0.5);
   z-index: 2;
 }
 .timeline.pro .track.overlay-track .overlay-seg-label {
@@ -2430,18 +2433,18 @@ select {
   position: absolute;
   top: 4px;
   bottom: 4px;
-  background: linear-gradient(180deg, rgba(124, 92, 255, 0.55) 0%, rgba(92, 70, 220, 0.65) 100%);
-  border: 1px solid rgba(124, 92, 255, 0.7);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.55) 0%, rgba(255, 255, 255, 0.65) 100%);
+  border: 1px solid rgba(var(--accent-rgb), 0.7);
   border-radius: 6px;
   cursor: grab;
   transition: box-shadow 120ms, background 120ms, transform 80ms;
   z-index: 1;
 }
 .timeline .fragment:hover {
-  background: linear-gradient(180deg, rgba(140, 110, 255, 0.7) 0%, rgba(110, 90, 240, 0.75) 100%);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.75) 0%, rgba(255, 255, 255, 0.8) 100%);
 }
 .timeline .fragment.selected {
-  box-shadow: 0 0 0 2px var(--accent-2), 0 0 18px rgba(92, 196, 255, 0.45);
+  box-shadow: 0 0 0 2px var(--accent-2), 0 0 18px rgba(var(--accent-2-rgb), 0.45);
   z-index: 3;
 }
 .timeline .fragment.dragging {
@@ -2568,14 +2571,14 @@ select {
 .shortcut-rebind.is-capturing {
   border-color: var(--accent);
   color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.25);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25);
 }
 .shortcut-rebind.is-failed {
   border-color: var(--danger, #e5484d);
   color: var(--danger, #e5484d);
 }
 
-/* Transport volume slider (editor playback bar) — matches the purple accent. */
+/* Transport volume slider (editor playback bar) — matches the teal accent. */
 .volume-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -2623,8 +2626,8 @@ select {
 .blur-region {
   position: absolute;
   box-sizing: border-box;
-  border: 1.5px solid rgba(124, 92, 255, 0.95);
-  background: rgba(124, 92, 255, 0.06);
+  border: 1.5px solid rgba(var(--accent-rgb), 0.95);
+  background: rgba(var(--accent-rgb), 0.06);
   cursor: move;
   touch-action: none;
 }
@@ -2636,10 +2639,10 @@ select {
   inset: 0;
   background: repeating-linear-gradient(
     45deg,
-    rgba(124, 92, 255, 0.10) 0,
-    rgba(124, 92, 255, 0.10) 6px,
-    rgba(124, 92, 255, 0.18) 6px,
-    rgba(124, 92, 255, 0.18) 12px
+    rgba(var(--accent-rgb), 0.10) 0,
+    rgba(var(--accent-rgb), 0.10) 6px,
+    rgba(var(--accent-rgb), 0.18) 6px,
+    rgba(var(--accent-rgb), 0.18) 12px
   );
   pointer-events: none;
 }
@@ -2648,7 +2651,7 @@ select {
 }
 .blur-region.is-selected {
   border-color: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.6);
 }
 .blur-region.drawing {
   border-style: dashed;
@@ -2662,7 +2665,7 @@ select {
   margin-left: -6px;
   margin-top: -6px;
   background: white;
-  border: 1.5px solid #7c5cff;
+  border: 1.5px solid #ffffff;
   border-radius: 2px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.6);
   touch-action: none;
@@ -2704,14 +2707,14 @@ select {
   background: var(--bg-3);
 }
 .blur-region-row.is-selected {
-  border-color: rgba(124, 92, 255, 0.7);
-  background: rgba(124, 92, 255, 0.08);
+  border-color: rgba(var(--accent-rgb), 0.7);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 .blur-region-dot {
   width: 12px;
   height: 12px;
   flex: 0 0 12px;
-  background: linear-gradient(135deg, #7c5cff, #5cc4ff);
+  background: linear-gradient(135deg, #ffffff, #ffffff);
   border-radius: 3px;
 }
 .blur-region-dot.shape-ellipse {
@@ -2731,8 +2734,8 @@ select {
   text-transform: uppercase;
   letter-spacing: 0.6px;
   padding: 1px 5px;
-  background: rgba(124, 92, 255, 0.18);
-  color: #b9a7ff;
+  background: rgba(var(--accent-rgb), 0.18);
+  color: white;
   border-radius: 999px;
 }
 .blur-region-meta {
@@ -2781,8 +2784,8 @@ select {
   font-size: 11px;
 }
 .blur-keyframe-row.is-active {
-  border-color: rgba(124, 92, 255, 0.7);
-  background: rgba(124, 92, 255, 0.08);
+  border-color: rgba(var(--accent-rgb), 0.7);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 .blur-keyframe-time {
   flex: 0 0 50px;

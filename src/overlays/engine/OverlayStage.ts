@@ -262,7 +262,7 @@ export class OverlayStage {
         const pad = 10;
         this.selectionOverlay
           .rect(cx - sw / 2 - pad, cy - sh / 2 - pad, sw + pad * 2, sh + pad * 2)
-          .stroke({ width: 2, color: 0x7c5cff, alpha: 0.95, alignment: 0.5 });
+          .stroke({ width: 2, color: 0xffffff, alpha: 0.95, alignment: 0.5 });
       }
     }
 
