@@ -34,6 +34,7 @@ import type {
   Crop,
   CursorOptions,
   Display,
+  FitMode,
   FrameOptions,
   Fragment,
   MobileOptions,
@@ -145,6 +146,11 @@ export interface ExportVideoOptions {
    * Null/undefined keeps the legacy behaviour (native 16:9 / phone-portrait).
    */
   outputAspect?: number | null;
+  /**
+   * How a non-matching `outputAspect` is fitted: 'fit' (default) shows the
+   * whole frame on the chosen background; 'fill' cover-crops the source.
+   */
+  fitMode?: FitMode | null;
   fps?: number;
   format?: ExportFormat;
   quality?: QualityName;
@@ -235,6 +241,7 @@ async function exportVideoMp4({
   fragments,
   resolution = '1080p',
   outputAspect = null,
+  fitMode = 'fit',
   fps = 60,
   format = 'mp4',
   quality = 'social',
@@ -424,6 +431,7 @@ async function exportVideoMp4({
           displayHeight: display?.height,
           background,
           crop,
+          fitMode: fitMode ?? 'fit',
           cameraSource: cameraFrame,
           cameraOptions,
           cursorState,

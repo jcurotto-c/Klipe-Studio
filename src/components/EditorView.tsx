@@ -24,7 +24,7 @@ import {
   removeKeyframe,
   updateBlurRegion,
 } from '../lib/blur-engine';
-import { isFullCrop } from '../lib/layout';
+import { isFullCrop, CROSS_ASPECT_EPSILON } from '../lib/layout';
 import {
   createFragment,
   cutFragmentAtSource,
@@ -50,6 +50,7 @@ import type {
   CameraOptions,
   Crop,
   CursorOptions,
+  FitMode,
   FrameOptions,
   Fragment,
   KlipeMouseEvent,
@@ -309,6 +310,9 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const [aspectRatioId, setAspectRatioId] = useState<string>(
     () => initialDoc?.aspectRatioId ?? (recording.mobile ? '9:16' : 'auto'),
   );
+  // How a chosen format that doesn't match the recording's shape is fitted:
+  // 'fit' shows the whole frame on the chosen background, 'fill' cover-crops.
+  const [fitMode, setFitMode] = useState<FitMode>(() => initialDoc?.fitMode ?? 'fit');
   // Target social platform. Choosing one in the export modal applies its
   // aspect ratio here, which drives the live preview + the safe-zone guides.
   const [platformId, setPlatformId] = useState<string>(() => initialDoc?.platformId ?? 'none');
@@ -335,6 +339,16 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     () => ASPECT_OPTIONS.find((o) => o.id === aspectRatioId) ?? ASPECT_OPTIONS[0]!,
     [aspectRatioId],
   );
+
+  // The Fit/Fill control only matters when the chosen format's shape differs
+  // from the recording — otherwise nothing is letterboxed or cropped, so the
+  // toggle stays hidden to avoid toolbar clutter.
+  const aspectWouldCrop = useMemo(() => {
+    if (aspectOption.value == null) return false;
+    const srcW = recording.display?.width || 16;
+    const srcH = recording.display?.height || 9;
+    return Math.abs(aspectOption.value - srcW / srcH) > CROSS_ASPECT_EPSILON;
+  }, [aspectOption, recording.display?.width, recording.display?.height]);
 
   const activePlatform = useMemo(() => getPlatform(platformId), [platformId]);
 
@@ -460,6 +474,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     micVolume,
     systemVolume,
     aspectRatioId,
+    fitMode,
     platformId,
     mobileOptions,
     blurRegions,
@@ -467,7 +482,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   }), [
     fragments, segments, background, crop, zoomDefaults, cameraOptions,
     cursorOptions, frameOptions, audioFxOptions, backgroundMusic, audioVolume,
-    micVolume, systemVolume, aspectRatioId, platformId, mobileOptions, blurRegions, overlays,
+    micVolume, systemVolume, aspectRatioId, fitMode, platformId, mobileOptions, blurRegions, overlays,
   ]);
 
   const handleSaveProject = useCallback(async (): Promise<void> => {
@@ -1497,6 +1512,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
               suspended={exportOpen}
               frameOptions={frameOptions}
               aspectRatio={aspectOption.value}
+              fitMode={fitMode}
               safeZones={showGuides ? activePlatform.safe ?? null : null}
               blurRegions={blurRegions}
               blurMode={blurMode}
@@ -1704,6 +1720,35 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
                 </div>
               )}
             </div>
+            {aspectWouldCrop && (
+              <div className="fit-toggle" role="group" aria-label="Fit mode">
+                <button
+                  type="button"
+                  className={`fit-toggle-btn ${fitMode === 'fit' ? 'is-active' : ''}`}
+                  onClick={() => setFitMode('fit')}
+                  aria-pressed={fitMode === 'fit'}
+                  title="Fit — show the whole video on your chosen background"
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.6" y="1.6" width="12.8" height="12.8" rx="2.4" stroke="currentColor" strokeWidth="1.4" />
+                    <rect x="3.4" y="6" width="9.2" height="4" rx="1" fill="currentColor" />
+                  </svg>
+                  Fit
+                </button>
+                <button
+                  type="button"
+                  className={`fit-toggle-btn ${fitMode === 'fill' ? 'is-active' : ''}`}
+                  onClick={() => setFitMode('fill')}
+                  aria-pressed={fitMode === 'fill'}
+                  title="Fill — crop the video to fill the frame"
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.6" y="1.6" width="12.8" height="12.8" rx="2.4" fill="currentColor" />
+                  </svg>
+                  Fill
+                </button>
+              </div>
+            )}
             {activePlatform.safe && (
               <button
                 className={`tool-btn ${showGuides ? 'active' : ''}`}
@@ -1881,6 +1926,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           platformId={platformId}
           onPlatform={applyPlatform}
           outputAspect={aspectOption.value}
+          fitMode={fitMode}
           videoRef={videoRef}
           cameraVideoRef={cameraVideoRef}
           mobileVideoRef={mobileVideoRef}

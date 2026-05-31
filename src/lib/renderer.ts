@@ -4,7 +4,7 @@
  */
 
 import { sampleZoom } from './zoom-engine';
-import { computeInsetRect } from './layout';
+import { computeInsetRect, CROSS_ASPECT_EPSILON } from './layout';
 import { cameraShapeAspect } from './camera-shape';
 import { sampleCursor, DEFAULT_CURSOR_OPTIONS } from './cursor-engine';
 import {
@@ -28,6 +28,7 @@ import type {
   CursorSample,
   CursorState,
   CursorType,
+  FitMode,
   FrameOptions,
   MobileOptions,
   MouseTrack,
@@ -218,6 +219,13 @@ export interface RenderFrameOptions {
   paddingScale?: number;
   showCursor?: boolean;
   crop?: Crop | null;
+  /**
+   * How to reconcile a chosen output aspect that differs from the source
+   * aspect. 'fit' (default) shows the whole frame inset on the chosen
+   * background; 'fill' cover-crops the source to fill the frame. No effect
+   * when the output aspect matches the source.
+   */
+  fitMode?: FitMode;
   /**
    * Webcam image source. `HTMLVideoElement` in the live editor; `VideoFrame`
    * in the export pipeline (which decodes the recorded camera track via
@@ -413,6 +421,7 @@ export function renderFrame(
     paddingScale,
     showCursor = true,
     crop = null,
+    fitMode = 'fit',
     cameraSource = null,
     cameraOptions = null,
     mobileSource = null,
@@ -476,11 +485,13 @@ export function renderFrame(
   const swEff = crop ? crop.width * sw : sw;
   const shEff = crop ? crop.height * sh : sh;
 
-  // When the canvas aspect doesn't match the source aspect, the user has
-  // explicitly asked for an output shape different from what was recorded
-  // (e.g. a 16:9 PC capture rendered into a 9:16 reels frame). Letterboxing
-  // would shrink the source into a tiny strip; instead, switch to cover-fit
-  // so the source fills the frame and the long axis is center-cropped.
+  // The chosen output shape differs from what was recorded (e.g. a 16:9 PC
+  // capture rendered into a 9:16 reels frame). Two ways to reconcile it:
+  //   - 'fill' → cover-fit the source so it fills the frame, center-cropping
+  //              the long axis (the classic reels crop).
+  //   - 'fit'  → show the WHOLE source (contain, inset like the matched-aspect
+  //              case); the user's chosen background fills the surrounding space
+  //              (already painted by drawBackground above).
   //
   // We compare against the RAW source aspect (sw/sh), not the cropped aspect
   // (swEff/shEff). Cropping is a "zoom into a sub-region" operation, not an
@@ -489,7 +500,8 @@ export function renderFrame(
   // with the background visible, not balloon it to fill the canvas.
   const canvasAspect = cw / ch;
   const sourceAspect = sw / sh;
-  const fillFrame = Math.abs(canvasAspect - sourceAspect) > 0.005;
+  const crossAspect = Math.abs(canvasAspect - sourceAspect) > CROSS_ASPECT_EPSILON;
+  const fillFrame = crossAspect && fitMode === 'fill';
 
   let baseX: number;
   let baseY: number;
@@ -559,11 +571,60 @@ export function renderFrame(
   const focusInCrop = fcx != null && fcy != null
     && fcx >= 0 && fcx <= swEff && fcy >= 0 && fcy <= shEff;
 
-  const drawW = baseW * scale;
-  const drawH = baseH * scale;
+  let drawW = baseW * scale;
+  let drawH = baseH * scale;
   let drawX: number;
   let drawY: number;
-  if (!focusInCrop) {
+  // Cross-aspect 'fit' + an active zoom: let the zoom break OUT of the
+  // letterbox band. As the zoom eases in (zoomP 0→1) the framing blends from
+  // the contained whole video toward a focus-centered, canvas-covering close-up
+  // — i.e. it behaves like 'fill' at the peak of the zoom, then settles back to
+  // the full frame as the zoom eases out. Without this, zooming inside a
+  // vertical frame magnifies only within the short band, so the subject stays
+  // tiny and can be clipped off to one side.
+  // Gated on a focus EXISTING, not on it lying inside the crop: a focus that
+  // falls in a cropped-out border (cursor-follow is crop-unaware, or a zoom
+  // centre placed outside the crop) is clamped to the nearest in-crop edge
+  // below, so breakout stays continuous instead of snapping to the plain inset.
+  // Centre the close-up on the CURSOR itself when it's visible, so the cursor
+  // is the subject and stays dead-centre. The auto-zoom focus (the click-cluster
+  // centre) can sit well away from where the cursor actually ended up — that's
+  // why a bottom-corner cursor was landing cropped at the edge. Fall back to the
+  // zoom focus when the cursor is hidden.
+  const breakoutFocusX = cursor.visible ? cursor.x : cx;
+  const breakoutFocusY = cursor.visible ? cursor.y : cy;
+  const breakoutZoom = crossAspect && !fillFrame && scale > 1.0001
+    && breakoutFocusX != null && breakoutFocusY != null;
+  if (breakoutZoom) {
+    const t = Math.max(0, Math.min(1, zoomP));
+    // Focus as a fraction of the visible source, clamped in case it lies in a
+    // cropped-out border (the cursor / zoom centre can fall outside the crop) so
+    // the framing stays continuous instead of snapping.
+    const u = Math.max(0, Math.min(1, (breakoutFocusX! - sx0) / swEff));
+    const v = Math.max(0, Math.min(1, (breakoutFocusY! - sy0) / shEff));
+    const coverFit = Math.max(cw / swEff, ch / shEff);
+    const coverW = swEff * coverFit;
+    const coverH = shEff * coverFit;
+    // Size blends contain→cover by zoomP (grows smoothly out of the band) then
+    // takes the zoom magnification, so the close-up fills the frame.
+    drawW = (baseW + (coverW - baseW) * t) * scale;
+    drawH = (baseH + (coverH - baseH) * t) * scale;
+    // Drive the focus point (the click / cursor location) from where it sits in
+    // the contained whole-video toward the canvas CENTRE as the zoom eases in,
+    // and place the source so the focus lands exactly there. No cover-clamp: the
+    // focus — and the cursor on it — ends up dead-centre and visible at full
+    // zoom; the chosen background simply shows through wherever a near-edge
+    // focus can't cover (e.g. wallpaper above a top-of-screen focus), matching
+    // the reference vertical zoom. Interpolating the focus's canvas POSITION
+    // against the FIXED contain size keeps it monotonic and on-screen — deriving
+    // it from the growing draw size would swing an edge focus off-frame mid-zoom.
+    const restFocusFracX = ((cw - baseW) / 2 + u * baseW) / cw;
+    const restFocusFracY = ((ch - baseH) / 2 + v * baseH) / ch;
+    const focusFracX = restFocusFracX + (0.5 - restFocusFracX) * t;
+    const focusFracY = restFocusFracY + (0.5 - restFocusFracY) * t;
+    drawX = focusFracX * cw - u * drawW;
+    drawY = focusFracY * ch - v * drawH;
+  } else if (!focusInCrop) {
     drawX = (cw - drawW) / 2;
     drawY = (ch - drawH) / 2;
   } else if (fillFrame) {
@@ -589,13 +650,26 @@ export function renderFrame(
   }
 
   const radiusScale = (fOpts.radius / 24);
-  // Fill-frame mode bleeds the source past the canvas edges, so rounded
-  // corners and shadow would render outside the visible area. Skip the
-  // chrome and let the canvas itself provide the edge.
-  const radius = fillFrame ? 0 : Math.min(drawW, drawH) * CORNER_RADIUS_RATIO * radiusScale;
+  // The framed-card chrome (rounded corners + drop shadow) only reads correctly
+  // while the video sits INSIDE the canvas. Fill mode bleeds past the edges so
+  // it's skipped entirely. Breakout grows past the edges as the zoom peaks too —
+  // keeping the chrome there would paint a floating-card shadow over the
+  // background mid-zoom — so fade it out as the nearest edge crosses the bound.
+  let chromeFade: number;
+  if (fillFrame) {
+    chromeFade = 0;
+  } else if (breakoutZoom) {
+    const minInset = Math.min(drawX, cw - (drawX + drawW), drawY, ch - (drawY + drawH));
+    chromeFade = Math.max(0, Math.min(1, minInset / Math.max(1, 0.04 * Math.min(cw, ch))));
+  } else {
+    chromeFade = 1;
+  }
+  const radius = chromeFade <= 0
+    ? 0
+    : Math.min(drawW, drawH) * CORNER_RADIUS_RATIO * radiusScale * chromeFade;
 
-  if (fOpts.shadow > 0 && !fillFrame) {
-    const shadowAlpha = Math.min(0.85, 0.18 + (fOpts.shadow / 100) * 0.7);
+  if (fOpts.shadow > 0 && chromeFade > 0) {
+    const shadowAlpha = Math.min(0.85, 0.18 + (fOpts.shadow / 100) * 0.7) * chromeFade;
     const shadowBlur = 8 + (fOpts.shadow / 100) * 70;
     const shadowOffset = 4 + (fOpts.shadow / 100) * 28;
     ctx.save();

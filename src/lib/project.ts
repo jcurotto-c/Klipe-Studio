@@ -32,6 +32,7 @@ import type {
   CameraOptions,
   Crop,
   CursorOptions,
+  FitMode,
   FrameOptions,
   Fragment,
   MobileOptions,
@@ -64,6 +65,9 @@ export interface EditDocument {
   micVolume?: number;
   systemVolume?: number;
   aspectRatioId: string;
+  /** How a non-matching output aspect is fitted (whole-frame 'fit' vs cropped
+   * 'fill'). Optional for back-compat; absent loads as 'fit'. */
+  fitMode?: FitMode;
   /** Target social platform export preset id (see lib/platforms). Optional for
    * back-compat with projects saved before the feature existed. */
   platformId?: string;

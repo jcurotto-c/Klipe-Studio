@@ -187,6 +187,17 @@ export interface Crop {
   height: number;
 }
 
+/**
+ * How a recording is fitted into a chosen output aspect that differs from the
+ * source aspect:
+ *   - 'fit'  → the WHOLE frame is shown (contain), centered and inset, with the
+ *              user's chosen background filling the surrounding space.
+ *   - 'fill' → the source is cover-cropped to fill the frame; the long axis is
+ *              center-cropped.
+ * Has no effect when the output aspect matches the source aspect.
+ */
+export type FitMode = 'fit' | 'fill';
+
 export interface BackgroundWallpaper {
   type: 'wallpaper';
   value: string;

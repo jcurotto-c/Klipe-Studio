@@ -26,6 +26,7 @@ import type {
   Crop,
   CursorOptions,
   Display,
+  FitMode,
   FrameOptions,
   MobileOptions,
   MouseTrack,
@@ -76,6 +77,9 @@ interface VideoCanvasProps {
   frameOptions?: FrameOptions | null;
   /** Output aspect ratio (w/h). When null/undefined, falls back to source display ratio. */
   aspectRatio?: number | null;
+  /** How a non-matching output aspect is fitted: 'fit' (whole frame on the
+   * chosen background) or 'fill' (cover-crop). Defaults to 'fit'. */
+  fitMode?: FitMode;
   /** Platform safe-zone guides to draw over the preview (editing aid only). */
   safeZones?: SafeZones | null;
   /** Blur regions to bake into the preview AND the export. */
@@ -121,6 +125,7 @@ export default function VideoCanvas({
   suspended = false,
   frameOptions = null,
   aspectRatio = null,
+  fitMode = 'fit',
   safeZones = null,
   blurRegions,
   blurMode = false,
@@ -148,10 +153,10 @@ export default function VideoCanvas({
     shape: 'arrow', contentTargetHeight: 0,
   });
   const propsRef = useRef({
-    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode,
   });
   propsRef.current = {
-    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode,
   };
 
   useEffect(() => {
@@ -264,6 +269,7 @@ export default function VideoCanvas({
         displayHeight: p.display?.height,
         background: p.background,
         crop: p.cropMode ? null : p.crop,
+        fitMode: p.fitMode,
         cameraSource: cameraVideoRef?.current ?? null,
         cameraOptions: p.cameraOptions,
         mobileSource: mobileVideoRef?.current ?? null,
@@ -355,6 +361,7 @@ export default function VideoCanvas({
           sourceWidth={sourceW}
           sourceHeight={sourceH}
           aspectRatio={aspectRatio}
+          fitMode={fitMode}
           crop={crop}
           paddingScale={overlayPaddingScale}
           regions={blurRegions}

@@ -21,6 +21,7 @@ import type {
   Crop,
   CursorOptions,
   Display,
+  FitMode,
   FrameOptions,
   Fragment,
   MobileOptions,
@@ -103,6 +104,9 @@ interface ExportModalProps {
   onPlatform?: (id: PlatformId) => void;
   /** Current output aspect (w/h) from the editor; null follows the source. */
   outputAspect?: number | null;
+  /** How a non-matching output aspect is fitted: 'fit' (whole frame on the
+   * chosen background) or 'fill' (cover-crop). Mirrors the editor's choice. */
+  fitMode?: FitMode;
   /**
    * Live-preview wiring. The editor's media elements are reused so the modal
    * can render the same composition (with the chosen aspect + safe-zone guides)
@@ -152,6 +156,7 @@ export default function ExportModal({
   platformId = 'none',
   onPlatform,
   outputAspect = null,
+  fitMode = 'fit',
   videoRef = null,
   cameraVideoRef = null,
   mobileVideoRef = null,
@@ -253,6 +258,7 @@ export default function ExportModal({
         fragments,
         resolution: size,
         outputAspect,
+        fitMode,
         fps,
         format,
         quality,
@@ -312,7 +318,7 @@ export default function ExportModal({
     }
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
-    fragments, size, outputAspect, fps, format, quality, cursorOptions, cameraStyle, zoomBlur, frame, cameraBlob, cameraOptions, mobileOptions, mobilePrimary,
+    fragments, size, outputAspect, fitMode, fps, format, quality, cursorOptions, cameraStyle, zoomBlur, frame, cameraBlob, cameraOptions, mobileOptions, mobilePrimary,
     audioFx, backgroundMusic, blurRegions, overlays, onClose,
   ]);
 
@@ -373,6 +379,7 @@ export default function ExportModal({
                     playing={playing}
                     frameOptions={frame ?? null}
                     aspectRatio={outputAspect}
+                    fitMode={fitMode}
                     safeZones={previewPlatform.safe ?? null}
                     blurRegions={blurRegions ?? undefined}
                     overlays={overlays ?? undefined}

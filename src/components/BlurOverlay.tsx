@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { PREVIEW_PADDING_SCALE } from '../lib/layout';
+import { PREVIEW_PADDING_SCALE, CROSS_ASPECT_EPSILON } from '../lib/layout';
 import { sampleBlurRegion } from '../lib/blur-engine';
-import type { BlurRegion, BlurSampleRect, Crop } from '../types';
+import type { BlurRegion, BlurSampleRect, Crop, FitMode } from '../types';
 
 type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 type DragMode = 'move' | HandleId;
@@ -27,6 +27,12 @@ interface BlurOverlayProps {
   sourceHeight: number;
   /** Output aspect (w/h). Null = follow source aspect. */
   aspectRatio?: number | null;
+  /**
+   * How a non-matching output aspect is fitted. Must mirror what the renderer
+   * uses or the blur handles land off the baked region: 'fit' contains the
+   * source (letterboxed), 'fill' cover-crops it. Defaults to 'fit'.
+   */
+  fitMode?: FitMode;
   crop: Crop | null | undefined;
   paddingScale?: number;
   regions: BlurRegion[];
@@ -73,6 +79,7 @@ export default function BlurOverlay({
   sourceWidth,
   sourceHeight,
   aspectRatio = null,
+  fitMode = 'fit',
   crop,
   paddingScale = PREVIEW_PADDING_SCALE,
   regions,
@@ -91,16 +98,18 @@ export default function BlurOverlay({
   // Where the visible source sits inside the wrapper, expressed as
   // wrapper-normalized fractions [0..1]. This mirrors the renderer's transform
   // exactly so a rect drawn here applies to the same canvas pixels at export.
-  // Aspect-matched: source is letterboxed by `paddingScale` on all sides.
-  // Aspect-mismatched (fillFrame): source is cover-fit, so it overflows the
-  // wrapper on the long axis with `paddingScale` ignored — same as the
-  // renderer's fillFrame branch.
+  //   - Aspect-matched: source is letterboxed by `paddingScale` on all sides.
+  //   - Cross-aspect + 'fill': source is cover-fit, overflowing the wrapper on
+  //     the long axis with `paddingScale` ignored (renderer's fillFrame branch).
+  //   - Cross-aspect + 'fit': source is contained (computeInsetRect) inside the
+  //     wrapper with `paddingScale`, centered — the chosen background fills the
+  //     rest. Expressed here as wrapper-normalized fractions.
   const inset = useMemo<Inset>(() => {
     const sourceAspect = sourceWidth / sourceHeight;
     const targetAspect =
       aspectRatio && isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : sourceAspect;
-    const fillFrame = Math.abs(targetAspect - sourceAspect) > 0.005;
-    if (fillFrame) {
+    const crossAspect = Math.abs(targetAspect - sourceAspect) > CROSS_ASPECT_EPSILON;
+    if (crossAspect && fitMode === 'fill') {
       if (sourceAspect > targetAspect) {
         // Source wider than wrapper — fit by height, overflow horizontally.
         const w = sourceAspect / targetAspect;
@@ -110,9 +119,20 @@ export default function BlurOverlay({
       const h = targetAspect / sourceAspect;
       return { left: 0, top: (1 - h) / 2, width: 1, height: h };
     }
+    if (crossAspect) {
+      // 'fit': contain the source within the wrapper (mirrors computeInsetRect).
+      if (sourceAspect > targetAspect) {
+        // Width-limited: spans the padded wrapper width, shorter in height.
+        const height = paddingScale * (targetAspect / sourceAspect);
+        return { left: (1 - paddingScale) / 2, top: (1 - height) / 2, width: paddingScale, height };
+      }
+      // Height-limited: spans the padded wrapper height, narrower in width.
+      const width = paddingScale * (sourceAspect / targetAspect);
+      return { left: (1 - width) / 2, top: (1 - paddingScale) / 2, width, height: paddingScale };
+    }
     const m = (1 - paddingScale) / 2;
     return { left: m, top: m, width: paddingScale, height: paddingScale };
-  }, [sourceWidth, sourceHeight, aspectRatio, paddingScale]);
+  }, [sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale]);
 
   const cropRect: Crop = crop ?? { x: 0, y: 0, width: 1, height: 1 };
 

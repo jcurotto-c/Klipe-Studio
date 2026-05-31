@@ -4,6 +4,15 @@ export const PREVIEW_PADDING_SCALE = 0.94;
 export const FULL_CROP: Crop = { x: 0, y: 0, width: 1, height: 1 };
 export const MIN_CROP_NORM = 0.05;
 
+/**
+ * Aspect-difference tolerance above which an output aspect is treated as
+ * "cross-aspect" (the source is letterboxed/cropped rather than rendered
+ * 1:1). Shared by the renderer (fit/fill decision), the BlurOverlay (handle
+ * geometry), and the editor (Fit/Fill toggle visibility) so all three agree
+ * on exactly when the output crosses the source aspect.
+ */
+export const CROSS_ASPECT_EPSILON = 0.005;
+
 export interface InsetRect {
   fit: number;
   baseW: number;

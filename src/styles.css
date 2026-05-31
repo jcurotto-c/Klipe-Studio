@@ -309,6 +309,44 @@ button.ghost { background: transparent; }
   display: inline-flex;
   align-items: center;
 }
+
+/* Fit / Fill segmented toggle — shown next to the aspect selector only when the
+   chosen format crops/letterboxes the recording. */
+.fit-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+}
+.fit-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  padding: 4px 9px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.fit-toggle-btn:hover:not(.is-active) {
+  color: var(--text-0);
+  background: var(--bg-2);
+}
+.fit-toggle-btn.is-active {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+.fit-toggle-btn svg {
+  flex-shrink: 0;
+}
 .aspect-select-trigger {
   display: inline-flex;
   align-items: center;
