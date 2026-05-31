@@ -60,6 +60,8 @@ interface SidebarPanelProps {
   mobileOptions: MobileOptions;
   onMobileOptionsChange: (next: MobileOptions) => void;
   mobileAvailable: boolean;
+  /** Output aspect (width/height) so the phone position preview is WYSIWYG. Null = auto. */
+  mobileStageAspect?: number | null;
   cursorOptions: CursorOptions;
   onCursorOptionsChange: (next: CursorOptions) => void;
   audioFxOptions: AudioFxOptions;
@@ -95,6 +97,7 @@ export default function SidebarPanel({
   mobileOptions,
   onMobileOptionsChange,
   mobileAvailable,
+  mobileStageAspect,
   cursorOptions,
   onCursorOptionsChange,
   audioFxOptions,
@@ -193,6 +196,7 @@ export default function SidebarPanel({
             value={mobileOptions}
             onChange={onMobileOptionsChange}
             available={mobileAvailable}
+            stageAspect={mobileStageAspect}
           />
         );
       case 'captions':

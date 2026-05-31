@@ -3042,6 +3042,14 @@ select {
 /* Camera panel — position stage, shape, presets */
 /* ============================================ */
 
+/* Phone position stage centers a capped, output-aspect box (portrait canvases
+   would otherwise make the preview absurdly tall). */
+.phone-stage-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
 /* Stage: a clean miniature of the recording canvas. No fill/lines at rest. */
 .cam-stage {
   position: relative;
@@ -3127,6 +3135,14 @@ select {
   height: 45%;
   max-width: 16px;
   max-height: 16px;
+}
+/* Phone chip is a tall portrait rectangle — size the glyph to its width so the
+   little phone reads clearly without overflowing the narrow chip. */
+.cam-stage-cam.phone svg {
+  width: 58%;
+  height: auto;
+  max-width: 15px;
+  max-height: 62%;
 }
 
 /* Click/hover zones — transparent layer mapping thirds to the 8 slots. */

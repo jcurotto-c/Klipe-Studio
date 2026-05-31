@@ -36,7 +36,7 @@ import {
   totalOutputDuration,
 } from '../lib/fragments';
 import { DEFAULT_CAMERA_OPTIONS } from './panels/CameraPanel';
-import { DEFAULT_MOBILE_OPTIONS } from './panels/MobilePanel';
+import { DEFAULT_MOBILE_OPTIONS, migrateMobileOptions } from './panels/MobilePanel';
 import { DEFAULT_CURSOR_OPTIONS } from '../lib/cursor-engine';
 import { DEFAULT_FRAME_OPTIONS, WALLPAPER_PRESETS } from '../lib/renderer';
 import { DEFAULT_AUDIO_FX } from '../lib/sound-fx';
@@ -106,7 +106,7 @@ function loadMobileOptions(): MobileOptions {
     const raw = localStorage.getItem(MOBILE_OPTIONS_KEY);
     if (!raw) return DEFAULT_MOBILE_OPTIONS;
     const parsed = JSON.parse(raw) as Partial<MobileOptions>;
-    return { ...DEFAULT_MOBILE_OPTIONS, ...parsed };
+    return migrateMobileOptions(parsed);
   } catch {
     return DEFAULT_MOBILE_OPTIONS;
   }
@@ -324,7 +324,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const addLayerMenuRef = useRef<HTMLDivElement | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [mobileOptions, setMobileOptions] = useState<MobileOptions>(() => initialDoc?.mobileOptions ?? loadMobileOptions());
+  const [mobileOptions, setMobileOptions] = useState<MobileOptions>(() => (initialDoc?.mobileOptions ? migrateMobileOptions(initialDoc.mobileOptions) : loadMobileOptions()));
   const [mobileAvailable, setMobileAvailable] = useState(false);
   const mobileVideoRef = useRef<HTMLVideoElement | null>(null);
   const [blurRegions, setBlurRegions] = useState<BlurRegion[]>(() => initialDoc?.blurRegions ?? []);
@@ -1446,6 +1446,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           mobileOptions={mobileOptions}
           onMobileOptionsChange={handleMobileOptionsChange}
           mobileAvailable={mobileAvailable}
+          mobileStageAspect={aspectOption.value}
           cursorOptions={cursorOptions}
           onCursorOptionsChange={handleCursorOptionsChange}
           audioFxOptions={audioFxOptions}

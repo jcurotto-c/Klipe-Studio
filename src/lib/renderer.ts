@@ -31,7 +31,9 @@ import type {
   FitMode,
   FrameOptions,
   MobileOptions,
+  MobilePosition,
   MouseTrack,
+  ZoomSample,
   ZoomSegment,
 } from '../types';
 import boneSvgUrl from '../assets/cartoon-bone.svg';
@@ -468,11 +470,12 @@ export function renderFrame(
   }
 
   // Phone-primary mode: the phone is the recording's main subject. Render
-  // the phone frame centered, large, on the background; skip the screen
-  // source, cursor, camera, zoom, and blur entirely (none of those apply
-  // when there's no screen behind the phone).
+  // the phone frame on the background; skip the screen source, cursor, camera,
+  // and blur (none apply when there's no screen behind the phone). Zoom DOES
+  // apply here — segments push the camera into the phone screen.
   if (mobilePrimary) {
-    drawMobilePrimary(ctx, mobileSource, mobileOptions, cw, ch);
+    const phoneZoom = sampleZoom(segments, tMs);
+    drawMobilePrimary(ctx, mobileSource, mobileOptions, cw, ch, phoneZoom, displayWidth, displayHeight);
     return;
   }
 
@@ -1339,7 +1342,7 @@ function drawCameraOverlay(
 const MOBILE_PADDING_RATIO = 0.025;
 
 function mobileSlot(
-  position: CameraPosition,
+  position: MobilePosition,
   cw: number,
   ch: number,
   w: number,
@@ -1357,6 +1360,7 @@ function mobileSlot(
     case 'top-center':    return { x: cx,    y: top };
     case 'top-right':     return { x: right, y: top };
     case 'middle-left':   return { x: left,  y: cy };
+    case 'middle-center': return { x: cx,    y: cy };
     case 'middle-right':  return { x: right, y: cy };
     case 'bottom-left':   return { x: left,  y: bottom };
     case 'bottom-center': return { x: cx,    y: bottom };
@@ -1584,9 +1588,11 @@ function drawMobileOverlay(
 }
 
 /**
- * Centered, large phone for "phone is the recording subject" mode. Ignores
- * the position/size options from `MobileOptions` (position is forced to
- * center, size is computed to fit); finish/showIsland/tilt still apply.
+ * The "phone is the recording subject" layout: the phone frame drawn over the
+ * background. `size` sets the phone height (% of canvas height, 19.5:9 locked),
+ * `position` anchors it (default `middle-center`). An active zoom segment
+ * scales the whole phone in toward the zoom's focus point, mapped onto the
+ * phone's screen — so zoom behaves like a camera push into the screen content.
  */
 function drawMobilePrimary(
   ctx: CanvasRenderingContext2D,
@@ -1594,25 +1600,58 @@ function drawMobilePrimary(
   mobileOptions: MobileOptions | null,
   cw: number,
   ch: number,
+  zoom: ZoomSample,
+  displayW?: number,
+  displayH?: number,
 ): void {
-  // Aim for the phone to fill ~92% of the canvas height. In wide canvases
-  // (16:9) the phone naturally takes a thin vertical strip in the center —
-  // that's the intended cinematic look. In tall canvases (9:16) the phone
-  // fills nearly the whole screen, which is what the user wants.
-  let h = ch * 0.92;
+  // Size is the phone's HEIGHT as % of canvas height. The phone is tall (19.5:9),
+  // so height is its binding dimension in BOTH landscape and portrait canvases —
+  // driving off height keeps the control meaningful everywhere (a width-based
+  // size silently caps to a constant strip on wide canvases).
+  const sizePct = Math.max(20, Math.min(100, Number(mobileOptions?.size) || 85));
+  let h = (sizePct / 100) * ch;
   let w = h / MOBILE_ASPECT;
-  // Don't let the phone exceed 70% of canvas width; in extreme portrait
-  // canvases this caps the phone and adds breathing room either side.
-  if (w > cw * 0.7) {
-    w = cw * 0.7;
+  // Safety for ultra-narrow canvases where the phone would exceed the width.
+  if (w > cw * 0.98) {
+    w = cw * 0.98;
     h = w * MOBILE_ASPECT;
   }
-  const x = (cw - w) / 2;
-  const y = (ch - h) / 2;
+  const pad = Math.max(8, cw * MOBILE_PADDING_RATIO);
+  const { x, y } = mobileSlot(mobileOptions?.position ?? 'middle-center', cw, ch, w, h, pad);
 
   const finish: MobileOptions['finish'] = mobileOptions?.finish ?? 'graphite';
   const showIsland = mobileOptions?.showIsland ?? true;
   const tilt = Math.max(-10, Math.min(10, Number(mobileOptions?.tilt) || 0));
 
+  const zScale = zoom?.scale ?? 1;
+  if (zScale <= 1.001) {
+    drawPhoneFrame(ctx, x, y, w, h, mobileSource, finish, showIsland, tilt);
+    return;
+  }
+
+  // Zoom: scale the whole phone around a focus point so the focal pixel stays
+  // put and the screen content magnifies. The zoom centre (cx,cy) lives in the
+  // recording's display space (default = its centre), so normalise by the
+  // display dims and map that fraction onto the phone's visible screen rect —
+  // a centred zoom lands on the middle of the screen, as expected.
+  const bezel = w * 0.038;
+  const screenX = x + bezel;
+  const screenY = y + bezel;
+  const screenW = w - bezel * 2;
+  const screenH = h - bezel * 2;
+  let fxN = 0.5;
+  let fyN = 0.5;
+  if (zoom.cx != null && zoom.cy != null && displayW && displayH) {
+    fxN = Math.max(0, Math.min(1, zoom.cx / displayW));
+    fyN = Math.max(0, Math.min(1, zoom.cy / displayH));
+  }
+  const fx = screenX + fxN * screenW;
+  const fy = screenY + fyN * screenH;
+
+  ctx.save();
+  ctx.translate(fx, fy);
+  ctx.scale(zScale, zScale);
+  ctx.translate(-fx, -fy);
   drawPhoneFrame(ctx, x, y, w, h, mobileSource, finish, showIsland, tilt);
+  ctx.restore();
 }

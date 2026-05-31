@@ -261,17 +261,23 @@ export interface CameraOptions {
   sizeDuringZoom: number;
 }
 
-export type MobilePosition = CameraPosition;
+/**
+ * Phone placement. Same 8 edge/corner anchors as the camera, plus `middle-center`
+ * — the phone, unlike the webcam disc, is usually the recording's subject and so
+ * sits dead-center by default.
+ */
+export type MobilePosition = CameraPosition | 'middle-center';
 
 export type MobileFinish = 'graphite' | 'silver' | 'gold' | 'black';
 
 export interface MobileOptions {
   hide: boolean;
   position: MobilePosition;
-  /** Width of the phone overlay as % of canvas width (5..35). */
+  /** Phone height as % of canvas height (40..100). Width is locked to 19.5:9. */
   size: number;
-  /** Width % while a zoom is active (mirrors CameraOptions.sizeDuringZoom). */
+  /** Legacy overlay field — kept for back-compat; primary mode zooms via segments. */
   sizeDuringZoom: number;
+  /** Legacy overlay field — kept for back-compat. */
   zoomDifferent: boolean;
   /** Tilt in degrees (-10..+10). Side buttons are skipped when tilt !== 0. */
   tilt: number;
@@ -279,6 +285,11 @@ export interface MobileOptions {
   showIsland: boolean;
   /** Bezel color treatment. */
   finish: MobileFinish;
+  /**
+   * Settings schema version. Older/absent versions had different (or no-op)
+   * position/size semantics, so those fields get reset to defaults on load.
+   */
+  v?: number;
 }
 
 export type AudioFxMode = 'auto' | 'on' | 'off';

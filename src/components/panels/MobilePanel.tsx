@@ -1,21 +1,54 @@
+import { useEffect, useRef, useState } from 'react';
 import type { MobileFinish, MobileOptions, MobilePosition } from '../../types';
+import { MOBILE_ASPECT } from '../../lib/mobile-frame';
 
-export const MOBILE_POSITIONS: ReadonlyArray<ReadonlyArray<MobilePosition | null>> = [
+/** All nine cells are selectable — the phone defaults to dead-center. */
+export const MOBILE_POSITIONS: ReadonlyArray<ReadonlyArray<MobilePosition>> = [
   ['top-left',     'top-center',    'top-right'],
-  ['middle-left',  null,            'middle-right'],
+  ['middle-left',  'middle-center', 'middle-right'],
   ['bottom-left',  'bottom-center', 'bottom-right'],
 ];
 
+/** Current settings schema version. Bump when position/size semantics change. */
+const MOBILE_OPTIONS_VERSION = 3;
+
 export const DEFAULT_MOBILE_OPTIONS: MobileOptions = {
   hide: false,
-  position: 'bottom-left',
-  size: 18,
+  position: 'middle-center',
+  size: 85,
   sizeDuringZoom: 11,
   zoomDifferent: true,
   tilt: 0,
   showIsland: true,
   finish: 'graphite',
+  v: MOBILE_OPTIONS_VERSION,
 };
+
+/**
+ * Bring persisted phone settings up to the current schema. Pre-v2 recordings
+ * stored position/size values that the renderer ignored (the phone was always
+ * centered + auto-fit), so those are reset to the new live defaults — otherwise
+ * a legacy `size: 18` would suddenly render a tiny phone.
+ */
+export function migrateMobileOptions(
+  raw: Partial<MobileOptions> | null | undefined,
+): MobileOptions {
+  const merged: MobileOptions = { ...DEFAULT_MOBILE_OPTIONS, ...(raw ?? {}) };
+  if (!raw || (raw.v ?? 0) < MOBILE_OPTIONS_VERSION) {
+    merged.position = DEFAULT_MOBILE_OPTIONS.position;
+    merged.size = DEFAULT_MOBILE_OPTIONS.size;
+  }
+  merged.v = MOBILE_OPTIONS_VERSION;
+  return merged;
+}
+
+/** Size presets — phone height as % of canvas height. */
+const SIZE_PRESETS: ReadonlyArray<{ key: string; value: number }> = [
+  { key: 'S',  value: 55 },
+  { key: 'M',  value: 70 },
+  { key: 'L',  value: 85 },
+  { key: 'XL', value: 100 },
+];
 
 const FINISH_SWATCHES: ReadonlyArray<{ id: MobileFinish; label: string; color: string }> = [
   { id: 'graphite', label: 'Graphite', color: '#26282e' },
@@ -24,15 +57,31 @@ const FINISH_SWATCHES: ReadonlyArray<{ id: MobileFinish; label: string; color: s
   { id: 'black',    label: 'Black',    color: '#0a0a0c' },
 ];
 
+// Stage geometry — mirrors the renderer so the miniature is WYSIWYG.
+const STAGE_FALLBACK_ASPECT = 9 / 16;  // phone recordings default to portrait
+const STAGE_PAD_RATIO = 0.025;   // matches MOBILE_PADDING_RATIO in renderer.ts
+const STAGE_MIN_PAD = 6;
+const STAGE_MAX_H = 280;         // cap so a portrait stage doesn't dominate the panel
+const MOVE_MS = 380;
+const MOVE_EASING = 'cubic-bezier(0.34, 1.4, 0.64, 1)';
+
 interface MobilePanelProps {
   value: MobileOptions | null | undefined;
   onChange: (next: MobileOptions) => void;
   available?: boolean;
+  /** Output aspect (width/height) so the position preview matches the export. */
+  stageAspect?: number | null;
 }
 
-export default function MobilePanel({ value, onChange, available = true }: MobilePanelProps): JSX.Element {
+export default function MobilePanel({ value, onChange, available = true, stageAspect }: MobilePanelProps): JSX.Element {
   const opts: MobileOptions = { ...DEFAULT_MOBILE_OPTIONS, ...(value ?? {}) };
   const update = (patch: Partial<MobileOptions>): void => onChange({ ...opts, ...patch });
+
+  // Light up the preset nearest the current size so the segmented control still
+  // reflects state when the fine slider lands on an in-between value.
+  const nearestSizeKey = SIZE_PRESETS.reduce((best, p) =>
+    Math.abs(p.value - opts.size) < Math.abs(best.value - opts.size) ? p : best,
+  ).key;
 
   return (
     <div className="panel">
@@ -61,44 +110,67 @@ export default function MobilePanel({ value, onChange, available = true }: Mobil
 
       <div className="panel-section">
         <div className="panel-sublabel">Position</div>
-        <PositionGrid
-          value={opts.position}
+        <PhonePositionStage
+          position={opts.position}
+          sizePct={opts.size}
+          aspect={stageAspect}
+          disabled={opts.hide}
           onChange={(p) => update({ position: p })}
-          disabled={opts.hide}
         />
       </div>
 
       <div className="panel-divider" />
 
       <div className="panel-section">
-        <SliderField
-          label="Size"
-          help="Phone width as % of the canvas. Aspect ratio is locked to 19.5:9."
-          value={opts.size}
-          min={5}
-          max={35}
-          step={1}
-          disabled={opts.hide}
-          onChange={(v) => update({ size: v })}
-          onReset={() => update({ size: DEFAULT_MOBILE_OPTIONS.size })}
-        />
-      </div>
-
-      <div className="panel-section">
-        <SliderField
-          label="Tilt"
-          help="Subtle rotation. Side buttons are skipped at non-zero tilt to avoid odd intersections."
-          value={opts.tilt}
-          min={-10}
-          max={10}
-          step={1}
-          disabled={opts.hide}
-          onChange={(v) => update({ tilt: v })}
-          onReset={() => update({ tilt: DEFAULT_MOBILE_OPTIONS.tilt })}
-        />
+        <div className="panel-sublabel">Size</div>
+        <div className="seg-tabs four cam-size-seg">
+          {SIZE_PRESETS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              className={`seg-tab ${nearestSizeKey === p.key ? 'active' : ''}`}
+              disabled={opts.hide}
+              aria-pressed={nearestSizeKey === p.key}
+              onClick={() => update({ size: p.value })}
+            >
+              {p.key}
+            </button>
+          ))}
+        </div>
+        <div className="cam-fine">
+          <SliderField
+            label="Fine size"
+            help="Phone height as % of the canvas. Aspect ratio is locked to 19.5:9."
+            value={opts.size}
+            min={40}
+            max={100}
+            step={1}
+            unit="%"
+            disabled={opts.hide}
+            onChange={(v) => update({ size: v })}
+            onReset={() => update({ size: DEFAULT_MOBILE_OPTIONS.size })}
+          />
+        </div>
       </div>
 
       <div className="panel-divider" />
+
+      <div className="panel-section">
+        <div className="cam-fine">
+          <SliderField
+            label="Tilt"
+            help="Subtle rotation. Side buttons are skipped at non-zero tilt to avoid odd intersections."
+            value={opts.tilt}
+            min={-10}
+            max={10}
+            step={1}
+            unit="°"
+            disabled={opts.hide}
+            onChange={(v) => update({ tilt: v })}
+            onReset={() => update({ tilt: DEFAULT_MOBILE_OPTIONS.tilt })}
+          />
+        </div>
+      </div>
 
       <div className="panel-section">
         <ToggleRow
@@ -137,25 +209,10 @@ export default function MobilePanel({ value, onChange, available = true }: Mobil
       <div className="panel-divider" />
 
       <div className="panel-section">
-        <div className="panel-sublabel">Phone during zoom</div>
-        <ToggleRow
-          label="Different size during zoom"
-          help="Shrink the phone overlay when a zoom segment is active so it doesn't cover the recording."
-          checked={opts.zoomDifferent}
-          onChange={(v) => update({ zoomDifferent: v })}
-          disabled={opts.hide}
-        />
-        {opts.zoomDifferent && !opts.hide && (
-          <SliderField
-            label="Size during zoom"
-            value={opts.sizeDuringZoom}
-            min={5}
-            max={Math.max(5, opts.size)}
-            step={1}
-            onChange={(v) => update({ sizeDuringZoom: v })}
-            onReset={() => update({ sizeDuringZoom: DEFAULT_MOBILE_OPTIONS.sizeDuringZoom })}
-          />
-        )}
+        <div className="panel-empty">
+          Tip: add a zoom segment on the timeline to push the camera into the
+          phone screen — the zoom focuses on the spot you set.
+        </div>
       </div>
     </div>
   );
@@ -190,34 +247,141 @@ function ToggleRow({ label, help, checked, onChange, disabled }: ToggleRowProps)
   );
 }
 
-interface PositionGridProps {
-  value: MobilePosition;
-  onChange: (next: MobilePosition) => void;
+interface PhonePositionStageProps {
+  position: MobilePosition;
+  sizePct: number;
+  aspect?: number | null;
   disabled?: boolean;
+  onChange: (next: MobilePosition) => void;
 }
 
-function PositionGrid({ value, onChange, disabled }: PositionGridProps): JSX.Element {
+/**
+ * Miniature of the recording canvas with the phone chip living inside it.
+ * Clicking a zone springs the chip to that slot; hovering shows a dotted ghost
+ * of where it would land. The stage matches the output aspect, and the chip's
+ * footprint (width-driven, 19.5:9 locked, height-clamped) tracks the Size
+ * control 1:1 with the renderer, so it's a true preview.
+ */
+function PhonePositionStage({ position, sizePct, aspect, disabled, onChange }: PhonePositionStageProps): JSX.Element {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [wrapW, setWrapW] = useState(0);
+  const [hover, setHover] = useState<MobilePosition | null>(null);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const cw = entries[0]?.contentRect.width;
+      if (cw) setWrapW(cw);
+    });
+    ro.observe(el);
+    setWrapW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  // Stage box: fill the panel width at the output aspect, but cap the height so
+  // a portrait (9:16) canvas doesn't produce an absurdly tall preview.
+  const ar = aspect && aspect > 0 ? aspect : STAGE_FALLBACK_ASPECT; // width/height
+  let stageW = wrapW;
+  let stageH = wrapW / ar;
+  if (stageH > STAGE_MAX_H) {
+    stageH = STAGE_MAX_H;
+    stageW = STAGE_MAX_H * ar;
+  }
+
+  const pad = Math.max(STAGE_MIN_PAD, stageW * STAGE_PAD_RATIO);
+  // Mirror the renderer: height drives the footprint (% of canvas height), width
+  // locks to 19.5:9, with a width safety clamp for ultra-narrow stages.
+  let elemH = (sizePct / 100) * stageH;
+  let elemW = elemH / MOBILE_ASPECT;
+  if (elemW > stageW * 0.98) {
+    elemW = stageW * 0.98;
+    elemH = elemW * MOBILE_ASPECT;
+  }
+  const radius = elemW * 0.16;
+
+  // Mirror renderer.ts mobileSlot(): anchor to the relevant edge, or center.
+  const slot = (p: MobilePosition): { x: number; y: number } => {
+    const [v, h] = p.split('-');
+    const x = h === 'left' ? pad : h === 'right' ? stageW - elemW - pad : (stageW - elemW) / 2;
+    const y = v === 'top' ? pad : v === 'bottom' ? stageH - elemH - pad : (stageH - elemH) / 2;
+    return { x, y };
+  };
+
+  const measured = stageW > 0;
+  const cur = measured ? slot(position) : { x: 0, y: 0 };
+  const ghostActive = !disabled && hover != null && hover !== position;
+  const ghostXY = measured ? slot(ghostActive ? (hover as MobilePosition) : position) : { x: 0, y: 0 };
+
   return (
-    <div className={`position-grid ${disabled ? 'disabled' : ''}`}>
-      {MOBILE_POSITIONS.map((row, ri) =>
-        row.map((cell, ci) => {
-          if (cell == null) return <div key={`${ri}-${ci}`} className="position-cell empty" />;
-          const active = value === cell;
-          return (
-            <button
-              key={cell}
-              type="button"
-              className={`position-cell ${active ? 'active' : ''}`}
-              onClick={() => !disabled && onChange(cell)}
-              aria-label={cell}
-              aria-pressed={active}
-              disabled={disabled}
-            >
-              <span className="position-dot" />
-            </button>
-          );
-        }),
+    <div ref={wrapRef} className="phone-stage-wrap">
+    <div
+      className={`cam-stage ${disabled ? 'disabled' : ''}`}
+      style={{ width: stageW || undefined, height: stageH || undefined }}
+      onMouseLeave={() => setHover(null)}
+    >
+      <div className="cam-stage-screen" aria-hidden />
+      <div className="cam-stage-grid" aria-hidden />
+      <span className="cam-stage-bracket tl" aria-hidden />
+      <span className="cam-stage-bracket tr" aria-hidden />
+      <span className="cam-stage-bracket bl" aria-hidden />
+      <span className="cam-stage-bracket br" aria-hidden />
+
+      {measured && (
+        <>
+          <div
+            className="cam-stage-ghost"
+            aria-hidden
+            style={{
+              left: ghostXY.x,
+              top: ghostXY.y,
+              width: elemW,
+              height: elemH,
+              borderRadius: radius,
+              opacity: ghostActive ? 1 : 0,
+            }}
+          />
+          <div
+            className="cam-stage-cam phone"
+            aria-hidden
+            style={{
+              left: cur.x,
+              top: cur.y,
+              width: elemW,
+              height: elemH,
+              borderRadius: radius,
+              transition:
+                `left ${MOVE_MS}ms ${MOVE_EASING}, top ${MOVE_MS}ms ${MOVE_EASING},` +
+                ' width 180ms ease, height 180ms ease, border-radius 180ms ease',
+            }}
+          >
+            <PhoneGlyph />
+          </div>
+        </>
       )}
+
+      <div className="cam-stage-zones">
+        {MOBILE_POSITIONS.map((row) =>
+          row.map((cell) => {
+            const active = position === cell;
+            return (
+              <button
+                key={cell}
+                type="button"
+                className={`cam-stage-zone ${active ? 'active' : ''}`}
+                aria-label={cell.replace('-', ' ')}
+                aria-pressed={active}
+                disabled={disabled}
+                onMouseEnter={() => setHover(cell)}
+                onFocus={() => setHover(cell)}
+                onBlur={() => setHover(null)}
+                onClick={() => onChange(cell)}
+              />
+            );
+          }),
+        )}
+      </div>
+    </div>
     </div>
   );
 }
@@ -229,12 +393,13 @@ interface SliderFieldProps {
   min: number;
   max: number;
   step: number;
+  unit?: string;
   disabled?: boolean;
   onChange: (next: number) => void;
   onReset?: () => void;
 }
 
-function SliderField({ label, help, value, min, max, step, disabled, onChange, onReset }: SliderFieldProps): JSX.Element {
+function SliderField({ label, help, value, min, max, step, unit, disabled, onChange, onReset }: SliderFieldProps): JSX.Element {
   return (
     <div className={`slider-field ${disabled ? 'disabled' : ''}`}>
       <div className="slider-field-head">
@@ -261,7 +426,10 @@ function SliderField({ label, help, value, min, max, step, disabled, onChange, o
           disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))}
         />
-        <span className="field-value">{Math.round(value)}</span>
+        <span className="field-value mono">
+          {Math.round(value)}
+          {unit && <span className="field-unit">{unit}</span>}
+        </span>
       </div>
     </div>
   );
@@ -270,6 +438,15 @@ function SliderField({ label, help, value, min, max, step, disabled, onChange, o
 function PhonePanelIcon(): JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+      <path d="M11 18.5h2" />
+    </svg>
+  );
+}
+
+function PhoneGlyph(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
       <path d="M11 18.5h2" />
     </svg>
