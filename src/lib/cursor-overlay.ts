@@ -120,7 +120,7 @@ export class PixiCursorOverlay {
     // For SVG shapes that haven't loaded yet, keep showing whatever sprite
     // we already have and trigger a load — the next frame after the load
     // completes will pick up the new texture via this same method.
-    if ((shape === 'svg-bone' || shape === 'svg-hand') && this.pendingShape !== shape) {
+    if (shape.startsWith('svg-') && this.pendingShape !== shape) {
       this.pendingShape = shape;
       void loadCursorSprite(shape).then(() => {
         // No-op: the next render call's `getCursorSprite(shape)` will now

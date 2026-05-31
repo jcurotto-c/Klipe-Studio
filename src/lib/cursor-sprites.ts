@@ -1,7 +1,12 @@
 import { Texture } from 'pixi.js';
 import pointerSvgUrl from '../assets/pointer-cursor.svg';
 import boneSvgUrl from '../assets/cartoon-bone.svg';
-import handSvgUrl from '../assets/pointinghand.svg';
+import handSvgUrl from '../assets/pointinghand_2.svg';
+import resizeEwSvgUrl from '../assets/resizeeastwest.svg';
+import resizeNsSvgUrl from '../assets/resizenorthsouth.svg';
+import moveSvgUrl from '../assets/resizeleftright.svg';
+import zoomInSvgUrl from '../assets/zoomin.svg';
+import zoomOutSvgUrl from '../assets/zoomout.svg';
 
 /**
  * Cursor shapes recognised by the render pipeline.
@@ -12,20 +17,36 @@ import handSvgUrl from '../assets/pointinghand.svg';
  *       use byte-identical paths (renderer.ts:drawCursorShape uses the same
  *       coordinates).
  *
- *   - 'svg-bone' / 'svg-hand'
- *       OS-cursor-type overrides. When the captured `cursorType` is `text`
- *       (typing in a field) we swap to the bone SVG; when it is `pointer`
- *       (hovering a clickable) we swap to the hand SVG. These trump the
- *       user-selected style for the duration of the type.
+ *   - 'svg-*'
+ *       OS-cursor-type overrides, rasterized from the SVG assets in
+ *       src/assets. The captured `cursorType` (electron/main.ts) is mapped to
+ *       one of these by renderer.ts:resolveCursorShape:
+ *         text      → svg-bone       (typing in a field)
+ *         pointer   → svg-hand       (hovering a clickable)
+ *         resize-ew → svg-resize-ew  (↔ horizontal resize)
+ *         resize-ns → svg-resize-ns  (↕ vertical resize)
+ *         move      → svg-move       (4-way move / size-all)
+ *       These trump the user-selected style for the duration of the type.
+ *       'svg-zoom-in' / 'svg-zoom-out' (magnifier glyphs) are registered and
+ *       can be rendered, but nothing resolves to them — Windows has no standard
+ *       zoom cursor to detect, so they are intentionally never triggered.
  */
-export type CursorShape =
+export type ProceduralShape =
   | 'arrow'
   | 'arrow-outline'
   | 'arrow-mini'
   | 'dot'
-  | 'figma'
+  | 'figma';
+
+export type CursorShape =
+  | ProceduralShape
   | 'svg-bone'
-  | 'svg-hand';
+  | 'svg-hand'
+  | 'svg-resize-ew'
+  | 'svg-resize-ns'
+  | 'svg-move'
+  | 'svg-zoom-in'
+  | 'svg-zoom-out';
 
 export interface CursorSprite {
   texture: Texture;
@@ -46,40 +67,65 @@ export interface CursorSprite {
 
 const PROCEDURAL_RESOLUTION = 256;
 
+/** Asset keys for the rasterizable SVG cursors. A `CursorShape` of the form
+ *  `svg-<key>` maps to the entry of the same `<key>` here (see svgKeyForShape). */
+type SvgCursorKey =
+  | 'pointer'
+  | 'bone'
+  | 'hand'
+  | 'resize-ew'
+  | 'resize-ns'
+  | 'move'
+  | 'zoom-in'
+  | 'zoom-out';
+
 // SVG hotspots are tuned for the source viewBox of each asset. Adjust the
-// constants below if the artwork is replaced.
+// constants below if the artwork is replaced. Hotspots are in viewBox units
+// and stored as fractions (x / viewBox.width, y / viewBox.height).
 //
-//   pointer:  618 × 958, tip at (53, 37)
-//   bone:     618 × 1350, vertical I-beam → centred hotspot
-//   hand:     767 × 746, hand pointing up → fingertip near top, slightly
-//             left of horizontal centre
-const SVG_META: Record<'pointer' | 'bone' | 'hand', {
+//   pointer:     618 × 958,     arrow tip at (53, 37)
+//   bone:        618 × 1350,    vertical I-beam → centred hotspot
+//   hand:        618 × 767,     index finger pointing up → fingertip (264, 24)
+//   resize-ew:   400 × 400,     ↔ double arrow → glyph centre
+//   resize-ns:   400 × 400,     ↕ double arrow → glyph centre
+//   move:        618 × 618,     4-way arrow → glyph centre
+//   zoom-in/out: 618 × 618,     magnifier → lens centre (261, 232)
+const SVG_META: Record<SvgCursorKey, {
   url: string;
   viewBox: { width: number; height: number };
   hotspot: { x: number; y: number };
 }> = {
-  pointer: {
-    url: pointerSvgUrl,
-    viewBox: { width: 618, height: 958 },
-    hotspot: { x: 53, y: 37 },
-  },
-  bone: {
-    url: boneSvgUrl,
-    viewBox: { width: 618, height: 1350 },
-    hotspot: { x: 309, y: 675 },
-  },
-  hand: {
-    url: handSvgUrl,
-    viewBox: { width: 767.314286, height: 746 },
-    hotspot: { x: 322, y: 37 },
-  },
+  pointer:     { url: pointerSvgUrl,  viewBox: { width: 618,        height: 958  }, hotspot: { x: 53,  y: 37  } },
+  bone:        { url: boneSvgUrl,     viewBox: { width: 618,        height: 1350 }, hotspot: { x: 309, y: 675 } },
+  hand:        { url: handSvgUrl,     viewBox: { width: 618,        height: 767  }, hotspot: { x: 264, y: 24  } },
+  'resize-ew': { url: resizeEwSvgUrl, viewBox: { width: 400,        height: 400  }, hotspot: { x: 200, y: 200 } },
+  'resize-ns': { url: resizeNsSvgUrl, viewBox: { width: 400,        height: 400  }, hotspot: { x: 200, y: 200 } },
+  move:        { url: moveSvgUrl,     viewBox: { width: 618,        height: 618  }, hotspot: { x: 309, y: 309 } },
+  'zoom-in':   { url: zoomInSvgUrl,   viewBox: { width: 618,        height: 618  }, hotspot: { x: 261, y: 232 } },
+  'zoom-out':  { url: zoomOutSvgUrl,  viewBox: { width: 618,        height: 618  }, hotspot: { x: 261, y: 232 } },
 };
 
-const proceduralCache = new Map<CursorShape, CursorSprite>();
-const svgCache = new Map<'pointer' | 'bone' | 'hand', CursorSprite>();
-const svgPromises = new Map<'pointer' | 'bone' | 'hand', Promise<CursorSprite>>();
+/**
+ * Map an `svg-*` CursorShape to its SVG_META key (`svg-resize-ew` →
+ * `resize-ew`). Returns null for procedural shapes. Note that no CursorShape
+ * resolves to the `pointer` key — it is reached only via loadSvgPointerSprite.
+ */
+function svgKeyForShape(shape: CursorShape): Exclude<SvgCursorKey, 'pointer'> | null {
+  return shape.startsWith('svg-')
+    ? (shape.slice(4) as Exclude<SvgCursorKey, 'pointer'>)
+    : null;
+}
 
-function rasterizeSvg(key: 'pointer' | 'bone' | 'hand'): Promise<CursorSprite> {
+/** Narrow a CursorShape to the procedurally-painted subset. */
+function isProceduralShape(shape: CursorShape): shape is ProceduralShape {
+  return !shape.startsWith('svg-');
+}
+
+const proceduralCache = new Map<CursorShape, CursorSprite>();
+const svgCache = new Map<SvgCursorKey, CursorSprite>();
+const svgPromises = new Map<SvgCursorKey, Promise<CursorSprite>>();
+
+function rasterizeSvg(key: SvgCursorKey): Promise<CursorSprite> {
   const cached = svgPromises.get(key);
   if (cached) return cached;
   const meta = SVG_META[key];
@@ -133,8 +179,8 @@ export function loadSvgPointerSprite(): Promise<CursorSprite> {
  * trip through the image decoder on first request.
  */
 export function loadCursorSprite(shape: CursorShape, tMs = 0): Promise<CursorSprite> {
-  if (shape === 'svg-bone') return rasterizeSvg('bone');
-  if (shape === 'svg-hand') return rasterizeSvg('hand');
+  const key = svgKeyForShape(shape);
+  if (key) return rasterizeSvg(key);
   return Promise.resolve(getCursorSprite(shape, tMs));
 }
 
@@ -144,8 +190,8 @@ export function loadCursorSprite(shape: CursorShape, tMs = 0): Promise<CursorSpr
  * fall back to a procedural shape until then.
  */
 export function getCursorSpriteCached(shape: CursorShape, tMs = 0): CursorSprite | null {
-  if (shape === 'svg-bone') return svgCache.get('bone') ?? null;
-  if (shape === 'svg-hand') return svgCache.get('hand') ?? null;
+  const key = svgKeyForShape(shape);
+  if (key) return svgCache.get(key) ?? null;
   return getCursorSprite(shape, tMs);
 }
 
@@ -237,7 +283,7 @@ function paintProceduralFigma(ctx: CanvasRenderingContext2D, size: number): void
 }
 
 const PROCEDURAL_PAINTERS: Record<
-  Exclude<CursorShape, 'svg-bone' | 'svg-hand'>,
+  ProceduralShape,
   (ctx: CanvasRenderingContext2D, size: number) => void
 > = {
   'arrow':         (ctx, size) => paintProceduralArrow(ctx, size, true),
@@ -255,7 +301,7 @@ const PROCEDURAL_PAINTERS: Record<
 // shrink correspondingly — earlier code reused the full-arrow constants
 // here, which left the click point ~2 px off-tip.
 const PROCEDURAL_META: Record<
-  Exclude<CursorShape, 'svg-bone' | 'svg-hand'>,
+  ProceduralShape,
   { hotspotX: number; hotspotY: number; contentHeight: number }
 > = {
   'arrow':         { hotspotX: 1 / 24,        hotspotY: 1.5 / 24,        contentHeight: PROCEDURAL_RESOLUTION * 21 / 24 },
@@ -266,11 +312,11 @@ const PROCEDURAL_META: Record<
 };
 
 export function getCursorSprite(shape: CursorShape, _tMs = 0): CursorSprite {
-  if (shape === 'svg-bone' || shape === 'svg-hand') {
+  if (!isProceduralShape(shape)) {
     // Synchronous accessor returns the cached SVG if rasterization already
     // finished, otherwise falls back to the procedural arrow so the caller
     // never gets a missing texture.
-    const key = shape === 'svg-bone' ? 'bone' : 'hand';
+    const key = svgKeyForShape(shape)!;
     const cached = svgCache.get(key);
     if (cached) return cached;
     // Kick off the load so the next call has it cached.
@@ -307,8 +353,8 @@ export function getCursorSprite(shape: CursorShape, _tMs = 0): CursorSprite {
 
 /** Returns true once the SVG for the given shape has rasterized at least once. */
 export function isSvgShapeLoaded(shape: CursorShape): boolean {
-  if (shape === 'svg-bone') return svgCache.has('bone');
-  if (shape === 'svg-hand') return svgCache.has('hand');
+  const key = svgKeyForShape(shape);
+  if (key) return svgCache.has(key);
   return true;
 }
 
@@ -318,7 +364,11 @@ export function isSvgShapeLoaded(shape: CursorShape): boolean {
  * Safe to call multiple times — subsequent calls return the cached promise.
  */
 export function preloadSvgShapes(): Promise<void> {
-  return Promise.all([rasterizeSvg('bone'), rasterizeSvg('hand'), rasterizeSvg('pointer')])
+  // Eagerly decode the OS-triggerable shapes so the first time the cursor type
+  // changes we don't flash the procedural fallback. The zoom glyphs are left
+  // lazy — nothing resolves to them.
+  const keys: SvgCursorKey[] = ['pointer', 'bone', 'hand', 'resize-ew', 'resize-ns', 'move'];
+  return Promise.all(keys.map((k) => rasterizeSvg(k)))
     .then(() => undefined)
     .catch((err) => {
       console.warn('[cursor-sprites] preload failed:', err);

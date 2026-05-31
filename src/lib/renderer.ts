@@ -33,7 +33,12 @@ import type {
   ZoomSegment,
 } from '../types';
 import boneSvgUrl from '../assets/cartoon-bone.svg';
-import handSvgUrl from '../assets/pointinghand.svg';
+import handSvgUrl from '../assets/pointinghand_2.svg';
+import resizeEwSvgUrl from '../assets/resizeeastwest.svg';
+import resizeNsSvgUrl from '../assets/resizenorthsouth.svg';
+import moveSvgUrl from '../assets/resizeleftright.svg';
+import zoomInSvgUrl from '../assets/zoomin.svg';
+import zoomOutSvgUrl from '../assets/zoomout.svg';
 import type { CursorShape } from './cursor-sprites';
 import {
   MOBILE_ASPECT,
@@ -281,23 +286,48 @@ interface CursorSvgImage {
   img: HTMLImageElement;
   ready: boolean;
 }
-const cursorSvgCache = new Map<'bone' | 'hand', CursorSvgImage>();
+// Keys for the SVG cursor overrides drawn on the 2D canvas (export path).
+// Mirrors the `svg-*` CursorShape variants, minus `pointer` (which is only
+// reached as the `svg-hand` override, never drawn directly here).
+type CursorSvgKey =
+  | 'bone'
+  | 'hand'
+  | 'resize-ew'
+  | 'resize-ns'
+  | 'move'
+  | 'zoom-in'
+  | 'zoom-out';
 
-function loadCursorSvg(key: 'bone' | 'hand'): CursorSvgImage {
+const CURSOR_SVG_URLS: Record<CursorSvgKey, string> = {
+  bone: boneSvgUrl,
+  hand: handSvgUrl,
+  'resize-ew': resizeEwSvgUrl,
+  'resize-ns': resizeNsSvgUrl,
+  move: moveSvgUrl,
+  'zoom-in': zoomInSvgUrl,
+  'zoom-out': zoomOutSvgUrl,
+};
+
+const cursorSvgCache = new Map<CursorSvgKey, CursorSvgImage>();
+
+function loadCursorSvg(key: CursorSvgKey): CursorSvgImage {
   const existing = cursorSvgCache.get(key);
   if (existing) return existing;
   const img = new Image();
   const entry: CursorSvgImage = { img, ready: false };
   img.onload = () => { entry.ready = true; };
   img.onerror = () => { entry.ready = false; };
-  img.src = key === 'bone' ? boneSvgUrl : handSvgUrl;
+  img.src = CURSOR_SVG_URLS[key];
   cursorSvgCache.set(key, entry);
   return entry;
 }
 // Eager preload — typical case is the user opens the editor, then plays
-// the recording; both SVGs decode well before any text/pointer event fires.
+// the recording; these decode well before any cursor-type event fires.
 loadCursorSvg('bone');
 loadCursorSvg('hand');
+loadCursorSvg('resize-ew');
+loadCursorSvg('resize-ns');
+loadCursorSvg('move');
 
 /**
  * Walk back through the mouse-event timeline from `tMs` and return the most
@@ -317,12 +347,19 @@ function findLatestCursorType(mouse: MouseTrack | null | undefined, tMs: number)
 
 /**
  * Resolve `(style, cursorType)` to a single CursorShape.
- *   - `text`    → `svg-bone` (typing in a field)
- *   - `pointer` → `svg-hand` (hovering a clickable)
- *   - otherwise → user-selected style as-is
+ *   - `text`      → `svg-bone`      (typing in a field)
+ *   - `pointer`   → `svg-hand`      (hovering a clickable)
+ *   - `resize-ew` → `svg-resize-ew` (↔ horizontal resize)
+ *   - `resize-ns` → `svg-resize-ns` (↕ vertical resize)
+ *   - `move`      → `svg-move`      (4-way move / size-all)
+ *   - otherwise   → user-selected style as-is
  *
- * The cursor-type override (text/pointer) wins over the user-selected style
- * so the typing/hover affordance stays consistent across all styles.
+ * The cursor-type override wins over the user-selected style so the
+ * typing/hover/resize affordance stays consistent across all styles.
+ * `crosshair` and `not-allowed` are reported by the OS but have no dedicated
+ * glyph yet, so they fall through to the user's style. There is no zoom
+ * cursor type — Windows has no standard zoom cursor, so the registered
+ * `svg-zoom-in`/`svg-zoom-out` shapes are intentionally never resolved here.
  */
 function resolveCursorShape(
   style: CursorOptions['style'],
@@ -330,6 +367,9 @@ function resolveCursorShape(
 ): CursorShape {
   if (type === 'text') return 'svg-bone';
   if (type === 'pointer') return 'svg-hand';
+  if (type === 'resize-ew') return 'svg-resize-ew';
+  if (type === 'resize-ns') return 'svg-resize-ns';
+  if (type === 'move') return 'svg-move';
   return style;
 }
 
@@ -1001,6 +1041,11 @@ function drawCursorShape(
     case 'figma':         drawFigmaArrow(ctx, targetH); return;
     case 'svg-bone':      drawCursorSvg(ctx, targetH, 'bone'); return;
     case 'svg-hand':      drawCursorSvg(ctx, targetH, 'hand'); return;
+    case 'svg-resize-ew': drawCursorSvg(ctx, targetH, 'resize-ew'); return;
+    case 'svg-resize-ns': drawCursorSvg(ctx, targetH, 'resize-ns'); return;
+    case 'svg-move':      drawCursorSvg(ctx, targetH, 'move'); return;
+    case 'svg-zoom-in':   drawCursorSvg(ctx, targetH, 'zoom-in'); return;
+    case 'svg-zoom-out':  drawCursorSvg(ctx, targetH, 'zoom-out'); return;
     case 'dot':
     default:              drawDot(ctx, targetH); return;
   }
@@ -1010,14 +1055,19 @@ function drawCursorShape(
 // Falls back silently if the image isn't decoded yet — the next frame will
 // pick it up. Caller has already translated the canvas to (px, py), so we
 // draw relative to (0, 0) using width/height matching the cursor radius.
-const SVG_VIEWBOX: Record<'bone' | 'hand', { width: number; height: number; hotspotX: number; hotspotY: number }> = {
+const SVG_VIEWBOX: Record<CursorSvgKey, { width: number; height: number; hotspotX: number; hotspotY: number }> = {
   // hotspot ratios match cursor-sprites.ts so the editor preview and the
   // exported video land on the same anchor pixel.
-  bone: { width: 618,        height: 1350, hotspotX: 309 / 618,        hotspotY: 675 / 1350 },
-  hand: { width: 767.314286, height: 746,  hotspotX: 322 / 767.314286, hotspotY: 37 / 746 },
+  bone:        { width: 618,        height: 1350, hotspotX: 309 / 618,        hotspotY: 675 / 1350 },
+  hand:        { width: 618,        height: 767,  hotspotX: 264 / 618,        hotspotY: 24 / 767 },
+  'resize-ew': { width: 400,        height: 400,  hotspotX: 0.5,              hotspotY: 0.5 },
+  'resize-ns': { width: 400,        height: 400,  hotspotX: 0.5,              hotspotY: 0.5 },
+  move:        { width: 618,        height: 618,  hotspotX: 0.5,              hotspotY: 0.5 },
+  'zoom-in':   { width: 618,        height: 618,  hotspotX: 261 / 618,        hotspotY: 232 / 618 },
+  'zoom-out':  { width: 618,        height: 618,  hotspotX: 261 / 618,        hotspotY: 232 / 618 },
 };
 
-function drawCursorSvg(ctx: CanvasRenderingContext2D, targetH: number, key: 'bone' | 'hand'): void {
+function drawCursorSvg(ctx: CanvasRenderingContext2D, targetH: number, key: CursorSvgKey): void {
   const entry = loadCursorSvg(key);
   if (!entry.ready) {
     // Not decoded yet — fall back to the dot so we never render nothing.

@@ -34,6 +34,7 @@ export type CursorType =
   | 'closed-hand'
   | 'resize-ew'
   | 'resize-ns'
+  | 'move'
   | 'not-allowed';
 
 export interface CursorTypeEvent {
