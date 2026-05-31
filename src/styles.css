@@ -1895,6 +1895,17 @@ select {
   border-color: var(--text-1);
   color: var(--text-0);
 }
+/* Zoom-level quick presets: a fixed 6-up row of compact pills under the slider. */
+.zi-presets {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+.zi-presets .zi-seg {
+  flex: none;
+  padding: 6px 2px;
+  text-align: center;
+}
 .zi-divider {
   height: 1px;
   background: var(--border, rgba(255, 255, 255, 0.08));
@@ -2403,6 +2414,11 @@ select {
 }
 .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .icon-btn.ghost-btn { border-color: var(--border); }
+.icon-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--text-1);
+  color: var(--text-0);
+}
 
 .play-btn {
   width: 38px;

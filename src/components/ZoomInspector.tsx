@@ -13,6 +13,10 @@ interface ZoomInspectorProps {
 
 const EASING_ORDER: ZoomEasing[] = ['spring', 'ease', 'snap', 'linear', 'anticipate'];
 
+// Quick-pick zoom levels (mirrors the reference app's presets). The slider
+// still allows any value in between for fine-tuning.
+const ZOOM_PRESETS: readonly number[] = [1.25, 1.5, 1.8, 2.2, 3.5, 6];
+
 const CAMERA_OPTIONS: ReadonlyArray<{ id: CameraFollowStyle; label: string }> = [
   { id: 'static', label: 'Static' },
   { id: 'follow', label: 'Follow' },
@@ -33,7 +37,6 @@ export default function ZoomInspector({
   const cameraStyle: CameraFollowStyle = zoomDefaults.cameraStyle ?? 'follow';
   const zoomBlur = zoomDefaults.zoomBlur ?? 0;
 
-  const setScale = (v: string): void => onChange({ scale: Number(v) });
   const setDuration = (v: string): void => {
     const ms = Math.max(200, Number(v) * 1000);
     const mid = (segment.tStart + segment.tEnd) / 2;
@@ -58,14 +61,18 @@ export default function ZoomInspector({
           <span className="zi-value">{segment.scale.toFixed(2)}×</span>
         </div>
         <div className="zi-help">How close to zoom on the focus point.</div>
-        <input
-          type="range"
-          min="1"
-          max="5"
-          step="0.05"
-          value={segment.scale}
-          onChange={(e) => setScale(e.target.value)}
-        />
+        <div className="zi-presets">
+          {ZOOM_PRESETS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={`zi-seg ${Math.abs(segment.scale - p) < 0.001 ? 'active' : ''}`}
+              onClick={() => onChange({ scale: p })}
+            >
+              {p}×
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="zi-field">

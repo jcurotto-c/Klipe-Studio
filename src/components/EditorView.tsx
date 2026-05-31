@@ -10,6 +10,7 @@ import SidebarPanel from './SidebarPanel';
 import {
   generateZoomSegments,
   createManualSegment,
+  cursorPositionAt,
   addSegment,
   updateSegment,
   removeSegment,
@@ -688,8 +689,12 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     return `${String(m).padStart(2, '0')}:${r}`;
   };
 
+  // Add a manual zoom at the playhead in one click, focused on wherever the
+  // cursor was at that frame (so it lands on the action, not the screen middle);
+  // falls back to the screen centre when there's no mouse data. Opens it
+  // selected so the level/duration can be tweaked.
   const handleAddZoom = useCallback(() => {
-    const m = outputToSource(fragmentsRef.current, currentTime);
+    const m = outputToSource(fragmentsRef.current, currentTimeRef.current);
     const tMs = (m ? m.srcTime : 0) * 1000;
     const seg = createManualSegment({
       tMs,
@@ -698,12 +703,13 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
       easeOut: zoomDefaults.easeOut,
       scale: zoomDefaults.scale,
       easing: zoomDefaults.easing,
+      center: cursorPositionAt(recording.mouse, tMs) ?? undefined,
       display: recording.display,
     });
     pushHistory();
     setSegments((prev) => addSegment(prev, seg));
     setSelectedId(seg.id);
-  }, [currentTime, zoomDefaults, recording.display, pushHistory]);
+  }, [zoomDefaults, recording.mouse, recording.display, pushHistory]);
 
   const handleCut = useCallback(() => {
     const m = outputToSource(fragmentsRef.current, currentTimeRef.current);
@@ -1647,9 +1653,9 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
               className="icon-btn"
               onClick={handleAddZoom}
               disabled={!duration}
-              title="Add zoom segment at playhead"
+              title="Add a zoom at the playhead"
             >
-              <ZoomInIcon />
+              <AddZoomIcon />
             </button>
             <button
               className="icon-btn"
@@ -2004,11 +2010,16 @@ function MinusIcon(): JSX.Element {
     </svg>
   );
 }
-function ZoomInIcon(): JSX.Element {
+function AddZoomIcon(): JSX.Element {
+  // Camera-style focus frame (corner brackets) with a centre dot — reads as
+  // "focus / zoom here" rather than the magnifier's "enlarge/shrink".
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="11" cy="11" r="7" />
-      <path d="M21 21l-4.5-4.5M11 8v6M8 11h6" />
+      <path d="M4 8V6a2 2 0 0 1 2-2h2" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v2" />
+      <path d="M20 16v2a2 2 0 0 1-2 2h-2" />
+      <path d="M8 20H6a2 2 0 0 1-2-2v-2" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
     </svg>
   );
 }

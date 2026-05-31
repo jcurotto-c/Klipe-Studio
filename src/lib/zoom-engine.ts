@@ -89,6 +89,17 @@ function lookupCursorPos(
 }
 
 /**
+ * Recorded cursor position (in source pixels) at source time `tMs` — the latest
+ * move/click at or before `tMs`, falling back to the first sample. Returns null
+ * when the recording has no usable mouse data. Used to focus a manually-added
+ * zoom on wherever the cursor was at that frame.
+ */
+export function cursorPositionAt(mouse: MouseTrack | null | undefined, tMs: number): Vec2 | null {
+  if (!mouse || !mouse.events || mouse.events.length === 0) return null;
+  return lookupCursorPos(mouse.events, tMs);
+}
+
+/**
  * Walk the click stream and emit one interaction per click, scoring
  * double-clicks and right/middle clicks higher. Mirrors the prior behavior so
  * legacy single-click zooms land on the same focus.
