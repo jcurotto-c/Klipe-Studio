@@ -15,6 +15,8 @@ import { PixiCursorOverlay } from '../lib/cursor-overlay';
 import CropOverlay from './CropOverlay';
 import BlurOverlay from './BlurOverlay';
 import OverlayCanvas from '../overlays/OverlayCanvas';
+import PlatformGuides from './PlatformGuides';
+import type { SafeZones } from '../lib/platforms';
 import type {
   Background,
   BlurRegion,
@@ -74,6 +76,8 @@ interface VideoCanvasProps {
   frameOptions?: FrameOptions | null;
   /** Output aspect ratio (w/h). When null/undefined, falls back to source display ratio. */
   aspectRatio?: number | null;
+  /** Platform safe-zone guides to draw over the preview (editing aid only). */
+  safeZones?: SafeZones | null;
   /** Blur regions to bake into the preview AND the export. */
   blurRegions?: BlurRegion[];
   /** When true, the blur overlay is interactive (draw/move/resize). */
@@ -117,6 +121,7 @@ export default function VideoCanvas({
   suspended = false,
   frameOptions = null,
   aspectRatio = null,
+  safeZones = null,
   blurRegions,
   blurMode = false,
   selectedBlurId = null,
@@ -331,6 +336,7 @@ export default function VideoCanvas({
           onMove={onMoveOverlay}
         />
       )}
+      {safeZones && <PlatformGuides safe={safeZones} />}
       {cropMode && onCropChange && (
         <CropOverlay
           canvasWidth={sourceW}

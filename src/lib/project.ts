@@ -64,6 +64,9 @@ export interface EditDocument {
   micVolume?: number;
   systemVolume?: number;
   aspectRatioId: string;
+  /** Target social platform export preset id (see lib/platforms). Optional for
+   * back-compat with projects saved before the feature existed. */
+  platformId?: string;
   mobileOptions: MobileOptions;
   blurRegions: BlurRegion[];
   overlays: Overlay[];

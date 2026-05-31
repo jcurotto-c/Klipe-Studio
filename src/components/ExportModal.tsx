@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import VideoCanvas from './VideoCanvas';
 import {
   exportVideo,
   getResolution,
@@ -9,6 +10,7 @@ import {
   type QualityName,
   type ResolutionName,
 } from '../lib/exporter';
+import { PLATFORMS, getPlatform, type PlatformId } from '../lib/platforms';
 import type {
   AudioFxOptions,
   Background,
@@ -95,6 +97,28 @@ interface ExportModalProps {
   systemVolume?: number;
   blurRegions?: BlurRegion[] | null;
   overlays?: Overlay[] | null;
+  /** Active social-platform preset id (editor-owned state). */
+  platformId?: string;
+  /** Apply a platform preset upstream (updates the editor's aspect ratio). */
+  onPlatform?: (id: PlatformId) => void;
+  /** Current output aspect (w/h) from the editor; null follows the source. */
+  outputAspect?: number | null;
+  /**
+   * Live-preview wiring. The editor's media elements are reused so the modal
+   * can render the same composition (with the chosen aspect + safe-zone guides)
+   * in a side pane — the editor's own preview is suspended while the modal is
+   * open, so only one canvas renders at a time.
+   */
+  videoRef?: RefObject<HTMLVideoElement> | null;
+  cameraVideoRef?: RefObject<HTMLVideoElement> | null;
+  mobileVideoRef?: RefObject<HTMLVideoElement> | null;
+  /** Editor playhead in output ms, for overlay keyframe sampling in the preview. */
+  previewTimeMs?: number;
+  /** Playback transport for the preview (drives the shared editor <video>). */
+  playing?: boolean;
+  currentTime?: number;
+  onTogglePlay?: () => void;
+  onSeek?: (t: number) => void;
   sourceLabel?: string;
   onClose: () => void;
 }
@@ -125,14 +149,36 @@ export default function ExportModal({
   systemVolume,
   blurRegions,
   overlays,
+  platformId = 'none',
+  onPlatform,
+  outputAspect = null,
+  videoRef = null,
+  cameraVideoRef = null,
+  mobileVideoRef = null,
+  previewTimeMs = 0,
+  playing = false,
+  currentTime = 0,
+  onTogglePlay,
+  onSeek,
   sourceLabel,
   onClose,
 }: ExportModalProps): React.ReactPortal {
   const [stage, setStage] = useState<Stage>('settings');
-  const [format, setFormat] = useState<ExportFormat>('mp4');
+  // Seed format/size from the active platform preset (if any), then let the
+  // user override them freely.
+  const [format, setFormat] = useState<ExportFormat>(() => getPlatform(platformId).format);
   const [fps, setFps] = useState<number>(60);
-  const [size, setSize] = useState<ResolutionName>('1080p');
+  const [size, setSize] = useState<ResolutionName>(() => getPlatform(platformId).resolution);
   const [quality, setQuality] = useState<QualityName>('studio');
+
+  // Picking a platform fills in size/format here and applies its aspect ratio
+  // upstream (the editor owns aspect, so the preview + safe-zone guides react).
+  const handlePlatform = useCallback((id: PlatformId) => {
+    const p = getPlatform(id);
+    setSize(p.resolution);
+    setFormat(p.format);
+    onPlatform?.(id);
+  }, [onPlatform]);
 
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState<ExportProgressStage | ''>('');
@@ -150,6 +196,8 @@ export default function ExportModal({
   const exportSeconds = duration || 0;
 
   const dims = getResolution(size);
+  const previewPlatform = getPlatform(platformId);
+  const hasPreview = !!videoRef;
   const estBytes = useMemo(() => {
     const base = size === '4K' ? 24_000_000 : size === '1080p' ? 12_000_000 : 6_000_000;
     const mult = QUALITY_PRESETS[quality]?.multiplier ?? 1;
@@ -204,6 +252,7 @@ export default function ExportModal({
         crop,
         fragments,
         resolution: size,
+        outputAspect,
         fps,
         format,
         quality,
@@ -263,7 +312,7 @@ export default function ExportModal({
     }
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
-    fragments, size, fps, format, quality, cursorOptions, cameraStyle, zoomBlur, frame, cameraBlob, cameraOptions, mobileOptions, mobilePrimary,
+    fragments, size, outputAspect, fps, format, quality, cursorOptions, cameraStyle, zoomBlur, frame, cameraBlob, cameraOptions, mobileOptions, mobilePrimary,
     audioFx, backgroundMusic, blurRegions, overlays, onClose,
   ]);
 
@@ -274,29 +323,90 @@ export default function ExportModal({
   return createPortal(
     <div className="modal-backdrop" onMouseDown={handleClose}>
       <div
-        className="modal-card export-modal"
+        className={`modal-card export-modal ${stage === 'settings' && hasPreview ? 'has-preview' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label="Export"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {stage === 'settings' && (
-          <ExportSettings
-            format={format}
-            onFormat={setFormat}
-            fps={fps}
-            onFps={setFps}
-            size={size}
-            onSize={setSize}
-            quality={quality}
-            onQuality={setQuality}
-            dims={dims}
-            estBytes={estBytes}
-            estSeconds={exportSeconds}
-            canExport={!!sourceBlob && exportSeconds > 0}
-            onExport={handleExportToFile}
-            onCancel={handleClose}
-          />
+          <div className="export-layout">
+            <div className="export-settings-pane">
+              <ExportSettings
+                platformId={platformId}
+                onPlatform={handlePlatform}
+                format={format}
+                onFormat={setFormat}
+                fps={fps}
+                onFps={setFps}
+                size={size}
+                onSize={setSize}
+                quality={quality}
+                onQuality={setQuality}
+                dims={dims}
+                estBytes={estBytes}
+                estSeconds={exportSeconds}
+                canExport={!!sourceBlob && exportSeconds > 0}
+                onExport={handleExportToFile}
+                onCancel={handleClose}
+              />
+            </div>
+            {hasPreview && videoRef && (
+              <div className="export-preview-pane">
+                <div className="export-preview-label">Preview · {previewPlatform.label}</div>
+                <div className="export-preview-stage">
+                  <VideoCanvas
+                    videoRef={videoRef}
+                    segments={segments}
+                    mouse={mouse}
+                    display={display}
+                    background={background}
+                    crop={crop}
+                    cameraVideoRef={cameraVideoRef}
+                    cameraOptions={cameraOptions ?? null}
+                    mobileVideoRef={mobileVideoRef}
+                    mobileOptions={mobileOptions ?? null}
+                    mobilePrimary={mobilePrimary}
+                    cursorOptions={cursorOptions}
+                    cameraStyle={cameraStyle}
+                    zoomBlur={zoomBlur}
+                    playing={playing}
+                    frameOptions={frame ?? null}
+                    aspectRatio={outputAspect}
+                    safeZones={previewPlatform.safe ?? null}
+                    blurRegions={blurRegions ?? undefined}
+                    overlays={overlays ?? undefined}
+                    overlayTimeMs={previewTimeMs}
+                  />
+                </div>
+                <div className="export-preview-transport">
+                  <button
+                    type="button"
+                    className="pv-play"
+                    onClick={onTogglePlay}
+                    disabled={!onTogglePlay || !(duration > 0)}
+                    aria-label={playing ? 'Pause' : 'Play'}
+                    title={playing ? 'Pause' : 'Play'}
+                  >
+                    {playing ? <PauseIcon /> : <PlayIcon />}
+                  </button>
+                  <span className="pv-time">{fmtTime(currentTime)}</span>
+                  <input
+                    type="range"
+                    className="pv-scrubber"
+                    min={0}
+                    max={duration || 0}
+                    step={0.01}
+                    value={Math.min(currentTime, duration || 0)}
+                    onChange={(e) => onSeek?.(Number(e.target.value))}
+                    disabled={!onSeek || !(duration > 0)}
+                    aria-label="Preview position"
+                  />
+                  <span className="pv-time dim">{fmtTime(duration)}</span>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {stage === 'progress' && (
@@ -325,6 +435,8 @@ export default function ExportModal({
 }
 
 interface ExportSettingsProps {
+  platformId: string;
+  onPlatform: (id: PlatformId) => void;
   format: ExportFormat;
   onFormat: (f: ExportFormat) => void;
   fps: number;
@@ -342,6 +454,7 @@ interface ExportSettingsProps {
 }
 
 function ExportSettings({
+  platformId, onPlatform,
   format, onFormat,
   fps, onFps,
   size, onSize,
@@ -352,6 +465,29 @@ function ExportSettings({
 }: ExportSettingsProps): JSX.Element {
   return (
     <>
+      <div className="export-field full">
+        <div className="export-label">
+          <ShareIcon /> Platform
+        </div>
+        <div className="export-platforms">
+          {PLATFORMS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`platform-btn ${platformId === p.id ? 'active' : ''}`}
+              onClick={() => onPlatform(p.id)}
+              title={p.label}
+              aria-pressed={platformId === p.id}
+            >
+              {p.icon
+                ? <img src={p.icon} alt="" className="platform-icon" draggable={false} />
+                : <CustomPlatformIcon />}
+              <span className="platform-label">{p.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="export-row export-row-top">
         <div className="export-field">
           <div className="export-label">
@@ -524,6 +660,40 @@ function ExportIcon(): JSX.Element {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+function PlayIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+function PauseIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="6" y="5" width="4" height="14" rx="1" />
+      <rect x="14" y="5" width="4" height="14" rx="1" />
+    </svg>
+  );
+}
+function ShareIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.6" y1="13.5" x2="15.4" y2="17.5" />
+      <line x1="15.4" y1="6.5" x2="8.6" y2="10.5" />
+    </svg>
+  );
+}
+function CustomPlatformIcon(): JSX.Element {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v18M3 12h18" />
+      <circle cx="12" cy="12" r="9" />
     </svg>
   );
 }

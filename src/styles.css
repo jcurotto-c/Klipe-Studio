@@ -434,6 +434,37 @@ button.ghost { background: transparent; }
   line-height: 0;
 }
 
+/* Platform safe-zone guides (editing aid; never exported) */
+.platform-guides {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  line-height: normal;
+}
+.platform-guides .pg-zone {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.platform-guides .pg-safe {
+  position: absolute;
+  border: 1px dashed rgba(255, 255, 255, 0.6);
+  border-radius: 2px;
+}
+.platform-guides .pg-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+}
+.platform-guides .pg-label-rot { transform: rotate(90deg); }
+
 .editor-bottom {
   display: grid;
   gap: 10px;
@@ -639,6 +670,100 @@ button.tool.active {
   flex-direction: column;
   gap: 18px;
 }
+/* Side-by-side settings + live preview */
+.export-modal.has-preview { max-width: 960px; }
+.export-layout {
+  display: flex;
+  gap: 24px;
+  align-items: stretch;
+}
+.export-settings-pane {
+  flex: 1 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.export-preview-pane {
+  flex: 0 0 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.export-preview-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+.export-preview-stage {
+  flex: 1;
+  min-height: 380px;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* Pure preview — never interactive. */
+  pointer-events: none;
+}
+/* The modal is portalled out of `.editor`, so the `.editor canvas` sizing
+   rule doesn't reach it; size the preview canvas to fill its wrap here. */
+.export-preview-stage canvas { width: 100%; height: 100%; display: block; }
+.export-preview-transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pv-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-0);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.pv-play svg { flex-shrink: 0; }
+.pv-play:hover:not(:disabled) { background: var(--bg-3); border-color: var(--bg-3); }
+.pv-play:disabled { opacity: 0.45; cursor: default; }
+.pv-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+  min-width: 36px;
+}
+.pv-time.dim { color: var(--text-2); }
+.pv-scrubber {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  appearance: none;
+  background: var(--bg-3);
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+}
+.pv-scrubber:disabled { opacity: 0.5; cursor: default; }
+.pv-scrubber::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
 .export-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -663,6 +788,45 @@ button.tool.active {
   font-weight: 600;
 }
 .export-label svg { color: var(--text-1); }
+
+/* Social-platform preset picker */
+.export-platforms {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.platform-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.platform-btn:hover { background: var(--bg-3); border-color: var(--bg-3); }
+.platform-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--text-1);
+  color: var(--text-0);
+}
+.platform-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  pointer-events: none;
+}
+.platform-label {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+}
 .export-meta {
   font-size: 11.5px;
   color: var(--text-1);

@@ -40,6 +40,7 @@ import { DEFAULT_CURSOR_OPTIONS } from '../lib/cursor-engine';
 import { DEFAULT_FRAME_OPTIONS, WALLPAPER_PRESETS } from '../lib/renderer';
 import { DEFAULT_AUDIO_FX } from '../lib/sound-fx';
 import { useAudioFx } from '../lib/use-audio-fx';
+import { getPlatform, type PlatformId } from '../lib/platforms';
 import type {
   AudioFxOptions,
   Background,
@@ -308,6 +309,10 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const [aspectRatioId, setAspectRatioId] = useState<string>(
     () => initialDoc?.aspectRatioId ?? (recording.mobile ? '9:16' : 'auto'),
   );
+  // Target social platform. Choosing one in the export modal applies its
+  // aspect ratio here, which drives the live preview + the safe-zone guides.
+  const [platformId, setPlatformId] = useState<string>(() => initialDoc?.platformId ?? 'none');
+  const [showGuides, setShowGuides] = useState(true);
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
   const aspectMenuRef = useRef<HTMLDivElement | null>(null);
   const [addLayerMenuOpen, setAddLayerMenuOpen] = useState(false);
@@ -330,6 +335,14 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     () => ASPECT_OPTIONS.find((o) => o.id === aspectRatioId) ?? ASPECT_OPTIONS[0]!,
     [aspectRatioId],
   );
+
+  const activePlatform = useMemo(() => getPlatform(platformId), [platformId]);
+
+  // Apply a platform preset: remember it and switch the canvas to its aspect.
+  const applyPlatform = useCallback((id: PlatformId) => {
+    setPlatformId(id);
+    setAspectRatioId(getPlatform(id).aspectId);
+  }, []);
 
   const previewSurroundStyle = useMemo<CSSProperties>(() => {
     if (background.type === 'color') {
@@ -447,13 +460,14 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     micVolume,
     systemVolume,
     aspectRatioId,
+    platformId,
     mobileOptions,
     blurRegions,
     overlays,
   }), [
     fragments, segments, background, crop, zoomDefaults, cameraOptions,
     cursorOptions, frameOptions, audioFxOptions, backgroundMusic, audioVolume,
-    micVolume, systemVolume, aspectRatioId, mobileOptions, blurRegions, overlays,
+    micVolume, systemVolume, aspectRatioId, platformId, mobileOptions, blurRegions, overlays,
   ]);
 
   const handleSaveProject = useCallback(async (): Promise<void> => {
@@ -1483,6 +1497,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
               suspended={exportOpen}
               frameOptions={frameOptions}
               aspectRatio={aspectOption.value}
+              safeZones={showGuides ? activePlatform.safe ?? null : null}
               blurRegions={blurRegions}
               blurMode={blurMode}
               selectedBlurId={selectedBlurId}
@@ -1668,6 +1683,12 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
                         aria-selected={selected}
                         onClick={() => {
                           setAspectRatioId(opt.id);
+                          // Manually overriding the aspect away from the active
+                          // platform's ratio drops the platform so its safe-zone
+                          // guides don't linger on a mismatched canvas.
+                          if (platformId !== 'none' && activePlatform.aspectId !== opt.id) {
+                            setPlatformId('none');
+                          }
                           setAspectMenuOpen(false);
                         }}
                       >
@@ -1683,6 +1704,15 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
                 </div>
               )}
             </div>
+            {activePlatform.safe && (
+              <button
+                className={`tool-btn ${showGuides ? 'active' : ''}`}
+                onClick={() => setShowGuides((v) => !v)}
+                title={`${showGuides ? 'Hide' : 'Show'} ${activePlatform.label} safe zones`}
+              >
+                <GuidesIcon /> Guides
+              </button>
+            )}
             <button
               className={`tool-btn ${cropMode ? 'active' : ''}`}
               onClick={() => setCropMode((v) => !v)}
@@ -1848,6 +1878,17 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           systemVolume={systemVolume}
           blurRegions={blurRegions}
           overlays={overlays}
+          platformId={platformId}
+          onPlatform={applyPlatform}
+          outputAspect={aspectOption.value}
+          videoRef={videoRef}
+          cameraVideoRef={cameraVideoRef}
+          mobileVideoRef={mobileVideoRef}
+          previewTimeMs={currentTime * 1000}
+          playing={playing}
+          currentTime={currentTime}
+          onTogglePlay={togglePlay}
+          onSeek={seek}
           sourceLabel={recording.name || 'recording'}
           onClose={() => setExportOpen(false)}
         />
@@ -1951,6 +1992,14 @@ function CropIcon(): JSX.Element {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 2v14a2 2 0 0 0 2 2h14" />
       <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+    </svg>
+  );
+}
+function GuidesIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <rect x="7" y="7" width="10" height="10" rx="1" strokeDasharray="2 2" />
     </svg>
   );
 }

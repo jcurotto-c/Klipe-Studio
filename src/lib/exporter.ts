@@ -91,6 +91,39 @@ export function getResolution(name: string | null | undefined): Resolution {
   return RESOLUTIONS['1080p'];
 }
 
+/**
+ * Output canvas dimensions for a given resolution tier and target aspect.
+ *
+ * The resolution presets are all 16:9, so the named tier is treated as a
+ * "short side" budget (720 / 1080 / 2160) and the requested aspect picks how
+ * that budget maps to width × height:
+ *   16:9 @ 1080p → 1920×1080   9:16 @ 1080p → 1080×1920   1:1 @ 1080p → 1080×1080
+ *
+ * Dimensions are rounded to even numbers (H.264 requires it). When no aspect
+ * is supplied we keep the legacy behaviour: native 16:9, swapped to portrait
+ * for phone-primary recordings so the iPhone frame fills the canvas.
+ */
+export function outputDimensions(
+  res: Resolution,
+  aspect: number | null | undefined,
+  mobilePrimary: boolean,
+): Resolution {
+  if (aspect && isFinite(aspect) && aspect > 0) {
+    const shortSide = res.h;
+    let w: number;
+    let h: number;
+    if (aspect >= 1) {
+      h = shortSide;
+      w = Math.round(h * aspect);
+    } else {
+      w = shortSide;
+      h = Math.round(w / aspect);
+    }
+    return { w: w - (w % 2), h: h - (h % 2) };
+  }
+  return mobilePrimary && res.w > res.h ? { w: res.h, h: res.w } : res;
+}
+
 export type ExportFormat = 'webm' | 'mp4';
 
 export type ExportProgressStage = 'encoding' | 'done' | 'starting';
@@ -106,6 +139,12 @@ export interface ExportVideoOptions {
   crop?: Crop | null;
   fragments: Fragment[];
   resolution?: ResolutionName;
+  /**
+   * Target output aspect ratio (w/h). When set, the export canvas is sized to
+   * this ratio (e.g. 9:16 for TikTok); the renderer cover-fits the source.
+   * Null/undefined keeps the legacy behaviour (native 16:9 / phone-portrait).
+   */
+  outputAspect?: number | null;
   fps?: number;
   format?: ExportFormat;
   quality?: QualityName;
@@ -195,6 +234,7 @@ async function exportVideoMp4({
   crop = null,
   fragments,
   resolution = '1080p',
+  outputAspect = null,
   fps = 60,
   format = 'mp4',
   quality = 'social',
@@ -227,12 +267,10 @@ async function exportVideoMp4({
   throwIfAborted();
 
   const baseRes = getResolution(resolution);
-  // Phone-primary recordings are portrait; swap landscape dimensions so
-  // the iPhone frame fills the export. Without this, the phone would be
-  // a tiny stripe centered in a wide canvas.
-  const { w, h } = mobilePrimary && baseRes.w > baseRes.h
-    ? { w: baseRes.h, h: baseRes.w }
-    : baseRes;
+  // Size the export canvas to the requested aspect (e.g. 9:16 for TikTok).
+  // Phone-primary recordings with no explicit aspect fall back to a portrait
+  // swap so the iPhone frame fills the export instead of sitting in a stripe.
+  const { w, h } = outputDimensions(baseRes, outputAspect, mobilePrimary);
   const qMult = QUALITY_PRESETS[quality]?.multiplier ?? 1.0;
   const baseBitrate =
     resolution === '4K' ? 24_000_000 : resolution === '1080p' ? 12_000_000 : 6_000_000;
