@@ -139,7 +139,6 @@ export default function App(): JSX.Element {
           <EditorView
             key={recording.url}
             recording={recording}
-            onNew={handleNewRecording}
             navExtraEl={navExtraEl}
             initialDoc={loadedDoc}
             projectPath={currentProjectPath}

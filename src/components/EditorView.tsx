@@ -144,7 +144,6 @@ function loadAudioFxOptions(): AudioFxOptions {
 
 interface EditorViewProps {
   recording: Recording;
-  onNew: () => void;
   navExtraEl: HTMLElement | null;
   /** When opening a saved .klipestudio project, the edit document to hydrate from. */
   initialDoc?: EditDocument | null;
@@ -180,7 +179,7 @@ const ASPECT_OPTIONS: ReadonlyArray<AspectOption> = [
   { id: '3:4',  label: 'Tall',     ratio: '3:4',  value: 3 / 4 },
 ];
 
-export default function EditorView({ recording, onNew, navExtraEl, initialDoc, projectPath, onProjectSaved }: EditorViewProps): JSX.Element {
+export default function EditorView({ recording, navExtraEl, initialDoc, projectPath, onProjectSaved }: EditorViewProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [sourceDuration, setSourceDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -1768,9 +1767,6 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
             >
               <PlusIcon />
             </button>
-            <button className="icon-btn ghost-btn" onClick={onNew} title="New recording">
-              <RefreshIcon />
-            </button>
           </div>
         </div>
       </div>
@@ -2021,14 +2017,6 @@ function RedoIcon(): JSX.Element {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="15 14 20 9 15 4" />
       <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
-    </svg>
-  );
-}
-function RefreshIcon(): JSX.Element {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="23 4 23 10 17 10" />
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
     </svg>
   );
 }
