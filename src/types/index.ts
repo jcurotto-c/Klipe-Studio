@@ -219,12 +219,25 @@ export type CameraPosition =
   | 'middle-left' | 'middle-right'
   | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
+/**
+ * Footprint of the camera overlay.
+ *   - `circle` — square footprint (1:1); at full roundness, a perfect circle
+ *   - `card`   — landscape rounded rectangle (3:2)
+ *   - `pill`   — wide capsule (5:2)
+ * `roundness` still controls the corner radius; `shape` only sets the
+ * width:height aspect. Absent → `circle` (the legacy square footprint), so
+ * existing recordings render unchanged.
+ */
+export type CameraShape = 'circle' | 'card' | 'pill';
+
 export interface CameraOptions {
   hide: boolean;
   position: CameraPosition;
   mirror: boolean;
   roundness: number;
   size: number;
+  /** Footprint shape. Absent → `circle` (back-compat). */
+  shape?: CameraShape;
   zoomDifferent: boolean;
   sizeDuringZoom: number;
 }

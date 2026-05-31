@@ -2819,3 +2819,199 @@ select {
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
+
+/* ============================================ */
+/* Camera panel — position stage, shape, presets */
+/* ============================================ */
+
+/* Stage: a clean miniature of the recording canvas. No fill/lines at rest. */
+.cam-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cam-stage.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Faint horizontal lines simulating on-screen content — always present. */
+.cam-stage-screen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.035) 0,
+    rgba(255, 255, 255, 0.035) 1px,
+    transparent 1px,
+    transparent 15px
+  );
+}
+
+/* 3×3 positioning guides — revealed only while hovering the stage. */
+.cam-stage-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.10) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.10) 1px, transparent 1px);
+  background-size: 33.333% 33.333%;
+  background-position: 0 0;
+}
+.cam-stage:hover .cam-stage-grid { opacity: 1; }
+
+/* Corner brackets — two borders of an 11×12 square, subtle. */
+.cam-stage-bracket {
+  position: absolute;
+  width: 11px;
+  height: 12px;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+.cam-stage-bracket.tl { top: 6px;    left: 6px;  border-right: none; border-bottom: none; }
+.cam-stage-bracket.tr { top: 6px;    right: 6px; border-left: none;  border-bottom: none; }
+.cam-stage-bracket.bl { bottom: 6px; left: 6px;  border-right: none; border-top: none; }
+.cam-stage-bracket.br { bottom: 6px; right: 6px; border-left: none;  border-top: none; }
+
+/* Ghost preview of the chip's landing slot. Fades only — never slides. */
+.cam-stage-ghost {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border: 1.5px dotted rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+/* The selectable camera chip. Springs to its slot on click. */
+.cam-stage-cam {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--bg-0);
+}
+.cam-stage.disabled .cam-stage-cam { background: var(--text-2); }
+.cam-stage-cam svg {
+  width: 45%;
+  height: 45%;
+  max-width: 16px;
+  max-height: 16px;
+}
+
+/* Click/hover zones — transparent layer mapping thirds to the 8 slots. */
+.cam-stage-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+.cam-stage-zone {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.cam-stage-zone:hover:not(:disabled):not(.center) { background: rgba(255, 255, 255, 0.03); }
+.cam-stage-zone:active:not(:disabled) { transform: none; }
+.cam-stage-zone.center { cursor: default; }
+.cam-stage-zone:disabled { cursor: not-allowed; }
+
+/* Shape selector — icon over label, accent border when active. */
+.cam-shape-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.cam-shape-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.cam-shape-btn:hover:not(:disabled):not(.active) {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+.cam-shape-btn:active:not(:disabled) { transform: none; }
+.cam-shape-btn.active {
+  border-color: var(--text-1);
+  color: var(--text-0);
+  background: rgba(255, 255, 255, 0.06);
+}
+.cam-shape-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cam-shape-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+}
+.cam-shape-label {
+  font-size: 11px;
+  letter-spacing: 0.2px;
+}
+
+/* Fine sliders (Size / Roundness / zoom size): 2px track, 10px round thumb. */
+.cam-fine .slider-field-head label { color: var(--text-1); }
+.cam-fine .slider-field-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.cam-fine .slider-field-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+.cam-fine .slider-field-row input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+.cam-fine .field-value.mono {
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas, monospace;
+}
+.cam-fine .field-unit {
+  color: var(--text-2);
+  margin-left: 2px;
+}
+
+/* Size presets reuse .seg-tab — neutralize the global button press-nudge so
+   they match the no-jump feel of the shape buttons and position zones. */
+.cam-size-seg .seg-tab:active:not(:disabled) { transform: none; }

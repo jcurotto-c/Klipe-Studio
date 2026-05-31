@@ -5,6 +5,7 @@
 
 import { sampleZoom } from './zoom-engine';
 import { computeInsetRect } from './layout';
+import { cameraShapeAspect } from './camera-shape';
 import { sampleCursor, DEFAULT_CURSOR_OPTIONS } from './cursor-engine';
 import {
   applyCursorFollow,
@@ -1150,15 +1151,16 @@ function cameraSlot(
   position: CameraPosition,
   cw: number,
   ch: number,
-  dim: number,
+  w: number,
+  h: number,
   pad: number,
 ): { x: number; y: number } {
   const left = pad;
-  const right = cw - dim - pad;
-  const cx = (cw - dim) / 2;
+  const right = cw - w - pad;
+  const cx = (cw - w) / 2;
   const top = pad;
-  const bottom = ch - dim - pad;
-  const cy = (ch - dim) / 2;
+  const bottom = ch - h - pad;
+  const cy = (ch - h) / 2;
   switch (position) {
     case 'top-left':      return { x: left,  y: top };
     case 'top-center':    return { x: cx,    y: top };
@@ -1187,12 +1189,14 @@ function drawCameraOverlay(
   const blend = cameraOptions.zoomDifferent ? Math.max(0, Math.min(1, zoomP)) : 0;
   const sizePct = baseSize + (zoomSize - baseSize) * blend;
 
-  const dim = Math.max(20, (sizePct / 100) * cw);
+  const w = Math.max(20, (sizePct / 100) * cw);
+  const h = w / cameraShapeAspect(cameraOptions.shape);
   const pad = Math.max(8, cw * CAMERA_PADDING_RATIO);
-  const { x, y } = cameraSlot(cameraOptions.position, cw, ch, dim, pad);
+  const { x, y } = cameraSlot(cameraOptions.position, cw, ch, w, h, pad);
 
-  const roundness = Math.max(0, Math.min(100, Number(cameraOptions.roundness) ?? 100));
-  const radius = (roundness / 100) * (dim / 2);
+  const rRaw = Number(cameraOptions.roundness);
+  const roundness = Math.max(0, Math.min(100, Number.isFinite(rRaw) ? rRaw : 100));
+  const radius = (roundness / 100) * (Math.min(w, h) / 2);
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.45)';
@@ -1200,13 +1204,13 @@ function drawCameraOverlay(
   ctx.shadowOffsetY = 10;
   ctx.fillStyle = '#0b0d12';
   ctx.beginPath();
-  ctx.roundRect(x, y, dim, dim, radius);
+  ctx.roundRect(x, y, w, h, radius);
   ctx.fill();
   ctx.restore();
 
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(x, y, dim, dim, radius);
+  ctx.roundRect(x, y, w, h, radius);
   ctx.clip();
 
   const ready = !!cameraSource
@@ -1217,37 +1221,37 @@ function drawCameraOverlay(
   if (ready && cameraSource) {
     const sw = cameraSource.videoWidth;
     const sh = cameraSource.videoHeight;
-    const scale = Math.max(dim / sw, dim / sh);
+    const scale = Math.max(w / sw, h / sh);
     const dw = sw * scale;
     const dh = sh * scale;
-    const dx = x + (dim - dw) / 2;
-    const dy = y + (dim - dh) / 2;
+    const dx = x + (w - dw) / 2;
+    const dy = y + (h - dh) / 2;
 
     if (cameraOptions.mirror) {
-      const mid = x + dim / 2;
+      const mid = x + w / 2;
       ctx.translate(mid, 0);
       ctx.scale(-1, 1);
       ctx.translate(-mid, 0);
     }
     ctx.drawImage(cameraSource, dx, dy, dw, dh);
   } else {
-    const grad = ctx.createLinearGradient(x, y, x, y + dim);
+    const grad = ctx.createLinearGradient(x, y, x, y + h);
     grad.addColorStop(0, '#2a3142');
     grad.addColorStop(1, '#11141b');
     ctx.fillStyle = grad;
-    ctx.fillRect(x, y, dim, dim);
+    ctx.fillRect(x, y, w, h);
 
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.font = `${Math.round(dim * 0.16)}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+    ctx.font = `${Math.round(Math.min(w, h) * 0.16)}px -apple-system, "Segoe UI", Roboto, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Camera', x + dim / 2, y + dim / 2);
+    ctx.fillText('Camera', x + w / 2, y + h / 2);
   }
   ctx.restore();
 
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(x + 0.5, y + 0.5, dim - 1, dim - 1, Math.max(0, radius - 0.5));
+  ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, Math.max(0, radius - 0.5));
   ctx.strokeStyle = 'rgba(255,255,255,0.18)';
   ctx.lineWidth = 1;
   ctx.stroke();
