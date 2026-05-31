@@ -66,6 +66,10 @@ interface ActiveRecorder {
   rec: RecorderController;
   display: Display;
   autoZoom: boolean;
+  /** Whether the mic / system audio toggles were on when recording started.
+   *  Carried to the editor so it can warn only when a REQUESTED source failed. */
+  micRequested: boolean;
+  systemAudioRequested: boolean;
   /** Set when scrcpy is recording the phone screen in parallel. */
   scrcpy: { filePath: string; serial: string } | null;
 }
@@ -136,7 +140,14 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
         scaleFactor: display.scaleFactor,
       };
       const rec = createRecorder(capture);
-      recorderRef.current = { rec, display: realDisplay, autoZoom, scrcpy };
+      recorderRef.current = {
+        rec,
+        display: realDisplay,
+        autoZoom,
+        micRequested: withMic,
+        systemAudioRequested: systemAudio,
+        scrcpy,
+      };
       await rec.start();
       setRecording(true);
       window.klipeHud?.pushState?.({ recording: true });
@@ -162,7 +173,7 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
 
   const stopRecording = useCallback(async () => {
     if (!recorderRef.current) return;
-    const { rec, display, autoZoom, scrcpy } = recorderRef.current;
+    const { rec, display, autoZoom, micRequested, systemAudioRequested, scrcpy } = recorderRef.current;
     // Claim the recorder immediately so a second stop (double-click, or the
     // global shortcut racing the toolbar button) can't re-enter while we're
     // still finalizing blobs.
@@ -288,6 +299,8 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
       camera,
       mobile,
       hasAudio: result.hasAudio,
+      micRequested,
+      systemAudioRequested,
       micAudio,
       systemAudio,
     });

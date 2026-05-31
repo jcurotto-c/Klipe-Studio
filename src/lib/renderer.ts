@@ -218,7 +218,12 @@ export interface RenderFrameOptions {
   paddingScale?: number;
   showCursor?: boolean;
   crop?: Crop | null;
-  cameraSource?: HTMLVideoElement | null;
+  /**
+   * Webcam image source. `HTMLVideoElement` in the live editor; `VideoFrame`
+   * in the export pipeline (which decodes the recorded camera track via
+   * WebCodecs and feeds the frame matching each output timestamp).
+   */
+  cameraSource?: HTMLVideoElement | VideoFrame | null;
   cameraOptions?: CameraOptions | null;
   /**
    * Phone-screen image source. `HTMLVideoElement` in the live editor;
@@ -1176,7 +1181,7 @@ function cameraSlot(
 
 function drawCameraOverlay(
   ctx: CanvasRenderingContext2D,
-  cameraSource: HTMLVideoElement | null,
+  cameraSource: HTMLVideoElement | VideoFrame | null,
   cameraOptions: CameraOptions | null,
   cw: number,
   ch: number,
@@ -1213,14 +1218,11 @@ function drawCameraOverlay(
   ctx.roundRect(x, y, w, h, radius);
   ctx.clip();
 
-  const ready = !!cameraSource
-    && cameraSource.readyState >= 2
-    && cameraSource.videoWidth > 0
-    && cameraSource.videoHeight > 0;
+  const camDims = videoSourceDims(cameraSource);
 
-  if (ready && cameraSource) {
-    const sw = cameraSource.videoWidth;
-    const sh = cameraSource.videoHeight;
+  if (camDims && cameraSource) {
+    const sw = camDims.w;
+    const sh = camDims.h;
     const scale = Math.max(w / sw, h / sh);
     const dw = sw * scale;
     const dh = sh * scale;
@@ -1306,7 +1308,7 @@ function mobileSlot(
  * loaded) the dimensions are stable, and `drawImage` on a seeking
  * video draws the last decoded frame — better than a blank placeholder.
  */
-function mobileSourceDims(src: HTMLVideoElement | VideoFrame | null): { w: number; h: number } | null {
+function videoSourceDims(src: HTMLVideoElement | VideoFrame | null): { w: number; h: number } | null {
   if (!src) return null;
   if (src instanceof HTMLVideoElement) {
     if (src.videoWidth <= 0 || src.videoHeight <= 0) return null;
@@ -1435,7 +1437,7 @@ function drawPhoneFrame(
   // video; otherwise paint a dark placeholder.
   drawScreen(ctx, x, y, w, h, bodyRadius, bezelThickness,
     (screenX, screenY, screenW, screenH) => {
-      const dims = mobileSourceDims(mobileSource);
+      const dims = videoSourceDims(mobileSource);
       if (dims && mobileSource) {
         const cover = Math.max(screenW / dims.w, screenH / dims.h);
         const dw = dims.w * cover;

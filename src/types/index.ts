@@ -143,6 +143,14 @@ export interface Recording {
   /** Whether the recording captured any audio track (mic and/or system). */
   hasAudio?: boolean;
   /**
+   * Whether the mic / system audio were REQUESTED at record time (their toggles
+   * were on). The editor warns only when a requested source failed to capture,
+   * so an intentionally-silent recording never raises a false alarm. Absent on
+   * recordings loaded from disk — a re-opened project shows no audio warning.
+   */
+  micRequested?: boolean;
+  systemAudioRequested?: boolean;
+  /**
    * Microphone and system audio recorded as SEPARATE tracks so the editor can
    * balance them independently. Absent on legacy recordings, where the audio is
    * baked into the screen blob and controlled only by the master volume.

@@ -219,6 +219,23 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
   const recordedMicAudio = recording.micAudio ?? null;
   const recordedSystemAudio = recording.systemAudio ?? null;
 
+  // Audio-capture warning. Shown ONLY when a source the user actually asked for
+  // failed to record — an intentionally-silent take (both toggles off) raises no
+  // alarm. micAudio/systemAudio are truthy whenever a track was captured (even if
+  // silent), so a null for a REQUESTED source means a genuine acquisition failure
+  // (mic permission denied, no/blocked input device, loopback never attached).
+  // Recordings loaded from disk leave *Requested undefined, so they never warn.
+  const micCaptureFailed = recording.micRequested === true && !recordedMicAudio;
+  const systemCaptureFailed = recording.systemAudioRequested === true && !recordedSystemAudio;
+  const audioWarning: string | null =
+    micCaptureFailed && systemCaptureFailed
+      ? 'No audio was captured. Klipe could not access your microphone or the system audio — check Klipe’s microphone permission (Windows Settings → Privacy → Microphone).'
+      : micCaptureFailed
+        ? 'No microphone audio was captured. Check Klipe’s microphone permission (Windows Settings → Privacy → Microphone) and that the right input device is selected in the toolbar.'
+        : systemCaptureFailed
+          ? 'System audio could not be captured. Make sure an audio output device is active and record again with “System audio” enabled.'
+          : null;
+
   // Recorded mic/system audio playback. New recordings store audio as separate
   // tracks (the screen blob is video-only), so two hidden <audio> elements play
   // them in lockstep with the main <video>, like the camera/mobile videos.
@@ -1420,7 +1437,7 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
       <div className="editor-right">
       <div className="editor-main">
 
-        {recording.hasAudio === false && (
+        {audioWarning && (
           <div
             style={{
               margin: '0 0 8px',
@@ -1432,9 +1449,7 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
               background: 'rgba(229,72,77,0.08)',
             }}
           >
-            🔇 No audio was captured in this recording. Check the microphone
-            permission for Klipe (Windows Settings → Privacy → Microphone), or
-            enable “System audio” in the toolbar before recording.
+            🔇 {audioWarning}
           </div>
         )}
 
@@ -1466,6 +1481,7 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
               cameraStyle={zoomDefaults.cameraStyle}
               zoomBlur={zoomDefaults.zoomBlur}
               playing={playing}
+              suspended={exportOpen}
               frameOptions={frameOptions}
               aspectRatio={aspectOption.value}
               blurRegions={blurRegions}
@@ -1823,6 +1839,8 @@ export default function EditorView({ recording, onNew, navExtraEl, initialDoc, p
           cameraStyle={zoomDefaults.cameraStyle}
           zoomBlur={zoomDefaults.zoomBlur}
           frame={frameOptions}
+          cameraBlob={recordedCamera ? recordedCamera.blob : null}
+          cameraOptions={recordedCamera ? cameraOptions : null}
           mobileOptions={recordedMobile ? mobileOptions : null}
           mobilePrimary={!!recordedMobile}
           audioFx={audioFxOptions}

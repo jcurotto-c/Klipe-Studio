@@ -22,7 +22,7 @@ import {
   playKeystrokeSound,
 } from './sound-fx';
 import { createMp4Encoder, isMp4ExportSupported } from './mp4-encoder';
-import { SourceDecoder } from './source-decoder';
+import { SourceDecoder, CameraFrameProvider } from './source-decoder';
 import { OverlayStage } from '../overlays/engine/OverlayStage';
 import type {
   AudioFxOptions,
@@ -30,6 +30,7 @@ import type {
   BackgroundMusic,
   BlurRegion,
   CameraFollowStyle,
+  CameraOptions,
   Crop,
   CursorOptions,
   Display,
@@ -114,6 +115,10 @@ export interface ExportVideoOptions {
   /** Zoom-transition motion blur intensity 0..1. Absent/0 → off. */
   zoomBlur?: number | null;
   frame?: Partial<FrameOptions> | null;
+  /** Recorded webcam track, composited as the camera disc over each frame. */
+  cameraBlob?: Blob | null;
+  /** Webcam disc styling (size, shape, position, mirror, zoom behaviour). */
+  cameraOptions?: CameraOptions | null;
   /** Phone frame styling, only consulted when `mobilePrimary` is true. */
   mobileOptions?: MobileOptions | null;
   /**
@@ -197,6 +202,8 @@ async function exportVideoMp4({
   cameraStyle = null,
   zoomBlur = null,
   frame = null,
+  cameraBlob = null,
+  cameraOptions = null,
   mobileOptions = null,
   mobilePrimary = false,
   audioFx = null,
@@ -304,6 +311,28 @@ async function exportVideoMp4({
     await overlayStage.setOverlays(overlays);
   }
 
+  // Webcam overlay: the camera was recorded as its own track (a separate blob),
+  // so the export must decode it in parallel and draw the frame matching each
+  // output timestamp — otherwise the disc shows in the editor but not the file.
+  // Skipped for phone-primary exports (no camera disc) and when hidden.
+  let cameraProvider: CameraFrameProvider | null = null;
+  if (!mobilePrimary && cameraBlob && cameraOptions && !cameraOptions.hide) {
+    const provider = new CameraFrameProvider();
+    try {
+      const ok = await provider.init(cameraBlob);
+      if (ok) {
+        cameraProvider = provider;
+        onLog?.('Camera track ready: compositing webcam disc into export');
+      } else {
+        provider.destroy();
+        onLog?.('Camera track had no decodable video — skipping webcam disc');
+      }
+    } catch (e) {
+      provider.destroy();
+      onLog?.(`Camera decode init failed, skipping webcam disc: ${errorMessage(e)}`);
+    }
+  }
+
   const fallbackFrameDur = 1 / fps;
   let elapsedOutput = 0;
   // Mediabunny's CanvasSource enforces strictly increasing timestamps. Across
@@ -316,6 +345,7 @@ async function exportVideoMp4({
 
   const cleanup = async (): Promise<void> => {
     sourceDecoder.destroy();
+    cameraProvider?.destroy();
     overlayStage?.dispose();
     if (overlayCanvas) { overlayCanvas.width = 0; overlayCanvas.height = 0; }
     canvas.width = 0;
@@ -345,6 +375,9 @@ async function exportVideoMp4({
         if (aborted) return;
 
         const tMs = mediaTimeSec * 1000;
+        // Pull the webcam frame for this output time (null when no provider /
+        // before the camera's first frame) and let renderFrame draw the disc.
+        const cameraFrame = cameraProvider ? await cameraProvider.frameAt(mediaTimeSec) : null;
         renderFrame(ctx, videoFrame, {
           tMs,
           segments,
@@ -353,6 +386,8 @@ async function exportVideoMp4({
           displayHeight: display?.height,
           background,
           crop,
+          cameraSource: cameraFrame,
+          cameraOptions,
           cursorState,
           cursorOptions,
           frame,

@@ -193,10 +193,13 @@ export default function FloatingHUD(): JSX.Element {
 
   // Drive the floating camera-preview window — a separate Electron window
   // pinned to the bottom-left of the primary display. The disc is a
-  // recording-time element: it appears with the countdown so the user can
-  // frame themselves, stays through the recording, and goes away the
-  // instant it stops. The editor takes over from there with its own
-  // camera composition baked into the recorded video.
+  // recording indicator/framing guide: it appears with the countdown (so the
+  // user can confirm the feed is live — e.g. that a virtual cam like DroidCam
+  // is actually streaming — right before capture starts), stays through the
+  // recording, and DISAPPEARS the instant recording stops so it never lingers
+  // into the editor. It is excluded from the capture (content-protected), so
+  // it never bleeds into the video; the editor composites the
+  // separately-recorded camera track instead.
   useEffect(() => {
     const hud = window.klipeHud;
     if (!hud) return;

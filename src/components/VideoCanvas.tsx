@@ -62,6 +62,15 @@ interface VideoCanvasProps {
    * otherwise you'd see two cursors (your mouse + the rendered one).
    */
   playing?: boolean;
+  /**
+   * When true, the preview render loop is suspended — no requestAnimationFrame,
+   * no per-frame renderFrame. Set while exporting so the on-screen preview stops
+   * competing with the export pipeline for the main thread + GPU. Without this
+   * the export crawls and stutters whenever the window is focused (the rAF loop
+   * only ticks while the window is visible) and only runs at full speed when the
+   * window is backgrounded — exactly the "freezes when I watch it" symptom.
+   */
+  suspended?: boolean;
   frameOptions?: FrameOptions | null;
   /** Output aspect ratio (w/h). When null/undefined, falls back to source display ratio. */
   aspectRatio?: number | null;
@@ -105,6 +114,7 @@ export default function VideoCanvas({
   cameraStyle = null,
   zoomBlur = null,
   playing = false,
+  suspended = false,
   frameOptions = null,
   aspectRatio = null,
   blurRegions,
@@ -215,6 +225,10 @@ export default function VideoCanvas({
   }, []);
 
   useEffect(() => {
+    // Suspended (e.g. while the export modal is open): don't run the preview
+    // loop at all. A live preview behind the blurred modal is invisible anyway,
+    // and keeping it running starves the export pipeline on the main thread.
+    if (suspended) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -268,7 +282,7 @@ export default function VideoCanvas({
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [videoRef, cameraVideoRef, mobileVideoRef]);
+  }, [videoRef, cameraVideoRef, mobileVideoRef, suspended]);
 
   const sourceW = display?.width || 1920;
   const sourceH = display?.height || 1080;

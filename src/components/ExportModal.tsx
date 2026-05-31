@@ -15,6 +15,7 @@ import type {
   BackgroundMusic,
   BlurRegion,
   CameraFollowStyle,
+  CameraOptions,
   Crop,
   CursorOptions,
   Display,
@@ -75,6 +76,9 @@ interface ExportModalProps {
   cameraStyle?: CameraFollowStyle | null;
   zoomBlur?: number | null;
   frame?: FrameOptions | null;
+  /** Recorded webcam track + its disc styling, composited into the export. */
+  cameraBlob?: Blob | null;
+  cameraOptions?: CameraOptions | null;
   /** Phone-frame styling when in phone-primary mode. */
   mobileOptions?: MobileOptions | null;
   /**
@@ -108,6 +112,8 @@ export default function ExportModal({
   cameraStyle,
   zoomBlur,
   frame,
+  cameraBlob,
+  cameraOptions,
   mobileOptions,
   mobilePrimary,
   audioFx,
@@ -135,6 +141,11 @@ export default function ExportModal({
 
   const startedAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  // Throttle progress re-renders: the exporter fires onProgress once per frame
+  // (thousands of times for a long clip). Re-rendering the modal that often
+  // repaints the blurred backdrop each time, which steals work from the export.
+  const lastFlushRef = useRef(0);
+  const lastPctRef = useRef(-1);
 
   const exportSeconds = duration || 0;
 
@@ -177,6 +188,8 @@ export default function ExportModal({
     setDestPath('');
     setStage('progress');
     startedAtRef.current = performance.now();
+    lastFlushRef.current = 0;
+    lastPctRef.current = -1;
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -198,6 +211,8 @@ export default function ExportModal({
         cameraStyle,
         zoomBlur,
         frame,
+        cameraBlob,
+        cameraOptions,
         mobileOptions,
         mobilePrimary,
         audioFx,
@@ -211,8 +226,16 @@ export default function ExportModal({
         overlays,
         signal: controller.signal,
         onProgress: (s, v) => {
-          setProgressStage(s);
-          setProgress(v);
+          const now = performance.now();
+          const pct = Math.round(v * 100);
+          // Flush at most ~4×/sec, plus on every whole-percent change, plus
+          // always on the terminal 'done' so the bar reliably lands on 100%.
+          if (s === 'done' || pct !== lastPctRef.current || now - lastFlushRef.current > 250) {
+            lastPctRef.current = pct;
+            lastFlushRef.current = now;
+            setProgressStage(s);
+            setProgress(v);
+          }
         },
       });
 
@@ -240,7 +263,7 @@ export default function ExportModal({
     }
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
-    fragments, size, fps, format, quality, cursorOptions, cameraStyle, zoomBlur, frame, mobileOptions, mobilePrimary,
+    fragments, size, fps, format, quality, cursorOptions, cameraStyle, zoomBlur, frame, cameraBlob, cameraOptions, mobileOptions, mobilePrimary,
     audioFx, backgroundMusic, blurRegions, overlays, onClose,
   ]);
 
