@@ -92,11 +92,19 @@ export interface TextOverlay extends OverlayCommon {
   weight?: number;
   letterSpacing?: number;
   align?: 'left' | 'center' | 'right';
+  /** Render the text in UPPERCASE (raw `text` is preserved). */
+  uppercase?: boolean;
+  /** Force the legibility drop-shadow on/off, overriding the stage default
+   * (off for card text, on for body overlays over video). */
+  shadow?: boolean;
   /** Font id from the card font registry (src/overlays/fonts.ts). Takes
    * precedence over `mono`; absent → default (Inter), or JetBrains Mono if
    * `mono` is set (legacy, pre-picker). */
   fontFamily?: string;
   mono?: boolean;
+  /** Card-editor entrance animation id (fade | rise | zoom | blur | typewriter).
+   * Editor metadata — the actual motion lives in `transform`/`typewriter`. */
+  anim?: string;
   typewriter?: Typewriter;
 }
 

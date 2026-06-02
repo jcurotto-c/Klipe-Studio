@@ -282,7 +282,16 @@ function BackgroundMusicSection({ value, onChange }: BackgroundMusicSectionProps
               max={value.durationMs}
               onChange={handleSourceStart}
             />
-            <div className="audio-meta dim">Loops automatically · fades in/out on export</div>
+            <ToggleRow
+              label="Play through cards"
+              checked={value.overCards ?? true}
+              onChange={(v) => onChange({ ...value, overCards: v })}
+            />
+            <div className="audio-meta dim">
+              {(value.overCards ?? true)
+                ? 'Soundtrack over the whole video — plays over intro/outro/mid cards.'
+                : 'Plays only under the recording; silent during cards.'}
+            </div>
           </>
         ) : (
           <>

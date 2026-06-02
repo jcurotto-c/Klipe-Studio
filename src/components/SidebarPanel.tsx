@@ -89,6 +89,7 @@ interface SidebarPanelProps {
   cards: CardSet;
   onCardsChange: (next: CardSet) => void;
   onAddMidCardAtPlayhead: () => void;
+  onCaptureRecordingFrame: (position: 'start' | 'end' | number) => Promise<string | null>;
 }
 
 export default function SidebarPanel({
@@ -128,6 +129,7 @@ export default function SidebarPanel({
   cards,
   onCardsChange,
   onAddMidCardAtPlayhead,
+  onCaptureRecordingFrame,
 }: SidebarPanelProps): JSX.Element {
   const [activeId, setActiveId] = useState<CategoryId>('scene');
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -210,7 +212,14 @@ export default function SidebarPanel({
           />
         );
       case 'introOutro':
-        return <IntroOutroPanel cards={cards} onChange={onCardsChange} onAddMidCardAtPlayhead={onAddMidCardAtPlayhead} />;
+        return (
+          <IntroOutroPanel
+            cards={cards}
+            onChange={onCardsChange}
+            onAddMidCardAtPlayhead={onAddMidCardAtPlayhead}
+            onCaptureRecordingFrame={onCaptureRecordingFrame}
+          />
+        );
       case 'captions':
         return <PlaceholderPanel title="Captions" description="Auto-generated subtitles and styling." />;
       case 'audio':

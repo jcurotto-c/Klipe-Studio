@@ -318,6 +318,14 @@ export interface BackgroundMusic {
   endMs: number;
   durationMs: number;
   sourceStartMs: number;
+  /**
+   * Play the music continuously across intro/outro/mid-roll cards (a soundtrack
+   * for the whole video) instead of going silent during them. The body-time
+   * window still trims it; reaching the body start/end extends it over the
+   * intro/outro. Absent → treated as true. The recording's own audio always
+   * pauses during cards.
+   */
+  overCards?: boolean;
 }
 
 export type BlurStyle = 'gaussian' | 'pixelate';

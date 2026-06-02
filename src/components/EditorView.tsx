@@ -1209,11 +1209,89 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     setSelectedCardItemId(id);
   }, []);
 
+  /**
+   * Grab a still from the recording as a data URL, for use as a card background
+   * ("freeze-frame" intro/outro). `position`: 'start' = first frame, 'end' =
+   * last frame, or a body-output-ms for a mid-roll card. Uses an offscreen
+   * <video> so the live preview isn't disturbed.
+   */
+  const handleCaptureRecordingFrame = useCallback(async (position: 'start' | 'end' | number): Promise<string | null> => {
+    const frags = fragmentsRef.current;
+    if (!frags.length) return null;
+    let srcTime: number;
+    if (position === 'start') srcTime = frags[0]!.srcStart;
+    else if (position === 'end') srcTime = Math.max(0, frags[frags.length - 1]!.srcEnd - 0.05);
+    else {
+      const m = outputToSource(frags, Math.max(0, position / 1000));
+      srcTime = m ? m.srcTime : frags[0]!.srcStart;
+    }
+    try {
+      const v = document.createElement('video');
+      v.src = recording.url;
+      v.muted = true;
+      v.preload = 'auto';
+      // Resolve on the event OR a timeout so a stalled decode can't hang the UI.
+      await new Promise<void>((res) => {
+        v.onloadeddata = () => res();
+        v.onerror = () => res();
+        setTimeout(res, 5000);
+      });
+      if (v.readyState < 2) return null;
+      const target = Math.max(0, Math.min((v.duration || srcTime) - 0.01, srcTime));
+      // Only seek if we're not already there (seeking to the current position is
+      // a no-op that never fires 'seeked' — e.g. the first frame at t=0).
+      let timedOut = false;
+      if (Math.abs(v.currentTime - target) > 1e-3) {
+        await new Promise<void>((res) => {
+          v.onseeked = () => res();
+          setTimeout(() => { timedOut = true; res(); }, 4000);
+          v.currentTime = target;
+        });
+      }
+      // Don't bake a stale/black frame if the seek hasn't actually landed.
+      if (timedOut || v.seeking || v.readyState < 2) return null;
+      // Cap the longest edge so the inline data URL stays small (it's persisted
+      // in the project + re-serialised on every autosave).
+      const vw = v.videoWidth || 1920;
+      const vh = v.videoHeight || 1080;
+      const scale = Math.min(1, 1280 / Math.max(vw, vh));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(vw * scale));
+      c.height = Math.max(1, Math.round(vh * scale));
+      const ctx = c.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(v, 0, 0, c.width, c.height);
+      const url = c.toDataURL('image/jpeg', 0.85);
+      v.removeAttribute('src');
+      v.load();
+      return url;
+    } catch {
+      return null;
+    }
+  }, [recording.url]);
+
   /** Drag a card's text/logo item to a new fractional position (any card it
    * belongs to — ids are unique across intro/outro/mid). */
   const handleMoveCardItem = useCallback((itemId: string, base: { x: number; y: number }) => {
-    const moveIn = (c: Card | null): Card | null =>
-      c ? { ...c, items: c.items.map((o) => (o.id === itemId ? { ...o, base: { ...o.base, x: base.x, y: base.y } } : o)) } : c;
+    const moveIn = (c: Card | null): Card | null => {
+      if (!c) return c;
+      return {
+        ...c,
+        items: c.items.map((o) => {
+          if (o.id !== itemId) return o;
+          // Shift any position-animation track by the drag delta too, so an
+          // item whose motion overrides `base` (e.g. the "rise" entrance) still
+          // follows the cursor instead of snapping back to its baked spot.
+          const dx = base.x - o.base.x;
+          const dy = base.y - o.base.y;
+          const pos = o.transform.position;
+          const shifted = pos
+            ? { ...pos, keys: pos.keys.map((k) => ({ ...k, value: { x: k.value.x + dx, y: k.value.y + dy } })) }
+            : pos;
+          return { ...o, base: { ...o.base, x: base.x, y: base.y }, transform: { ...o.transform, position: shifted } };
+        }),
+      };
+    };
     setCards((prev) => ({
       intro: moveIn(prev.intro),
       outro: moveIn(prev.outro),
@@ -1404,26 +1482,45 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   useEffect(() => {
     const el = bgMusicAudioRef.current;
     if (!el || !backgroundMusic) return;
-    // Background music is authored in body-output-time. Map the global playhead
-    // down to body-time (accounting for every card before it); it freezes during
-    // a card, so the window naturally goes silent there.
     const tl = cardTimelineRef.current;
-    const onCard = resolvePhase(tl, currentTime * 1000).kind !== 'body';
-    const tSec = globalToBodySec(tl, currentTime);
-    const startSec = backgroundMusic.startMs / 1000;
-    const endSec = backgroundMusic.endMs / 1000;
     const sourceStartSec = (backgroundMusic.sourceStartMs || 0) / 1000;
-    const inWindow = !onCard && tSec >= startSec && tSec < endSec;
+    const natural = el.duration && isFinite(el.duration) ? el.duration : 0;
+
+    // "Play through cards" (default): a soundtrack on the GLOBAL clock — the
+    // body-time window maps up to global and extends to the very ends to cover
+    // the intro/outro; it does NOT pause during cards. Otherwise it's body-only
+    // and goes silent during cards.
+    let inWindow: boolean;
+    let elapsedSec: number;
+    let windowSec: number;
+    if (backgroundMusic.overCards ?? true) {
+      const startSec = (backgroundMusic.startMs <= 1 ? 0 : bodyToGlobalMs(tl, backgroundMusic.startMs)) / 1000;
+      const endSec = (backgroundMusic.endMs >= tl.bodyMs - 1 ? tl.totalMs : bodyToGlobalMs(tl, backgroundMusic.endMs)) / 1000;
+      inWindow = currentTime >= startSec && currentTime < endSec;
+      elapsedSec = currentTime - startSec;
+      windowSec = endSec - startSec;
+    } else {
+      const onCard = resolvePhase(tl, currentTime * 1000).kind !== 'body';
+      const tSec = globalToBodySec(tl, currentTime);
+      inWindow = !onCard && tSec >= backgroundMusic.startMs / 1000 && tSec < backgroundMusic.endMs / 1000;
+      elapsedSec = tSec - backgroundMusic.startMs / 1000;
+      windowSec = (backgroundMusic.endMs - backgroundMusic.startMs) / 1000;
+    }
+
     if (playing && inWindow) {
-      // Sync source position: start from sourceStartSec when at the window's
-      // left edge, and loop modulo natural duration if the window outlasts
-      // (natural - sourceStartSec).
-      const natural = el.duration && isFinite(el.duration) ? el.duration : 0;
+      // Mirror the export's fade-in/out gain envelope so the preview matches.
+      const targetVol = Math.max(0, Math.min(1, backgroundMusic.volume));
+      const fadeDur = Math.min(Math.max(0, (backgroundMusic.fadeMs || 0) / 1000), windowSec / 2);
+      let gain = targetVol;
+      if (fadeDur > 0) {
+        const untilEnd = windowSec - elapsedSec;
+        if (elapsedSec < fadeDur) gain = targetVol * Math.max(0, elapsedSec / fadeDur);
+        else if (untilEnd < fadeDur) gain = targetVol * Math.max(0, untilEnd / fadeDur);
+      }
+      el.volume = Math.max(0, Math.min(1, gain));
       if (natural > 0) {
-        const wantTime = (sourceStartSec + (tSec - startSec)) % natural;
-        if (Math.abs(el.currentTime - wantTime) > 0.25) {
-          el.currentTime = wantTime;
-        }
+        const wantTime = (sourceStartSec + Math.max(0, elapsedSec)) % natural;
+        if (Math.abs(el.currentTime - wantTime) > 0.25) el.currentTime = wantTime;
       }
       void el.play().catch(() => { /* user gesture needed */ });
     } else {
@@ -1694,6 +1791,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           cards={cards}
           onCardsChange={handleCardsChange}
           onAddMidCardAtPlayhead={handleAddMidCardAtPlayhead}
+          onCaptureRecordingFrame={handleCaptureRecordingFrame}
         />
       </div>
       <div className="editor-right">

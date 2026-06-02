@@ -313,13 +313,17 @@ async function exportVideoMp4({
 
   // ---- 1) Render audio offline (fast — runs in OfflineAudioContext) -------
   onProgress?.('starting', 0);
+  // "Play through cards" music is a soundtrack over the whole video, so it's
+  // rendered on the GLOBAL clock (below) instead of in the body buffer that the
+  // remap silences during cards.
+  const musicOverCards = backgroundMusic ? (backgroundMusic.overCards ?? true) : false;
   let audioBuffer: AudioBuffer | null = null;
   try {
     audioBuffer = await renderAudioOffline({
       sourceBlob,
       mouse,
       audioFx,
-      backgroundMusic,
+      backgroundMusic: musicOverCards ? null : backgroundMusic,
       sourceVolume: audioVolume,
       micBlob,
       systemBlob,
@@ -328,9 +332,13 @@ async function exportVideoMp4({
       fragments,
       onLog,
     });
-    // Body audio is rendered in body-time; remap it onto the global clock
-    // (silent during cards) when any cards are present.
+    // Recording audio + FX are body-time; remap onto the global clock (silent
+    // during cards, with a short fade at each card boundary).
     if (audioBuffer) audioBuffer = remapBodyAudioToGlobal(audioBuffer, tl);
+    // Background music spanning cards is mixed in on the global clock.
+    if (musicOverCards && backgroundMusic) {
+      audioBuffer = await renderGlobalMusic(audioBuffer, backgroundMusic, tl, onLog);
+    }
   } catch (e) {
     onLog?.(`Audio render skipped: ${errorMessage(e)}`);
   }
@@ -834,29 +842,102 @@ async function renderAudioOffline({
 
 /**
  * Splice a body-time audio buffer onto the global card timeline: each body
- * chunk is copied to its global offset, leaving card segments silent. Returns
- * the input unchanged when there are no cards (single body segment).
+ * chunk is copied to its global offset, leaving card segments silent. A short
+ * fade is applied where a chunk borders a card so the recording audio doesn't
+ * cut abruptly to/from silence. Returns the input unchanged when there are no
+ * cards (single body segment).
  */
 function remapBodyAudioToGlobal(body: AudioBuffer, tl: CardTimeline): AudioBuffer {
   if (!tl.segments.some((s) => s.kind === 'card')) return body;
   const sr = body.sampleRate;
   const outLen = Math.ceil((tl.totalMs / 1000) * sr) + sr; // tail headroom
   const out = new AudioBuffer({ length: outLen, numberOfChannels: body.numberOfChannels, sampleRate: sr });
+  const fadeBase = Math.round(0.025 * sr); // ~25 ms edge fade
   for (const s of tl.segments) {
     if (s.kind !== 'body') continue;
     const srcStart = Math.floor((s.bodyStartMs / 1000) * sr);
     const dstStart = Math.floor((s.gStartMs / 1000) * sr);
     const n = Math.floor((s.bodyEndMs / 1000) * sr) - srcStart;
     if (n <= 0) continue;
+    const fadeN = Math.min(fadeBase, Math.floor(n / 2));
+    const fadeIn = s.gStartMs > 0.5;             // a card precedes this chunk
+    const fadeOut = s.gEndMs < tl.totalMs - 0.5; // a card follows this chunk
     for (let ch = 0; ch < body.numberOfChannels; ch++) {
       const src = body.getChannelData(ch);
       const dst = out.getChannelData(ch);
       for (let i = 0; i < n; i++) {
         const si = srcStart + i;
         const di = dstStart + i;
-        if (si >= 0 && si < src.length && di >= 0 && di < dst.length) dst[di] = src[si] ?? 0;
+        if (si < 0 || si >= src.length || di < 0 || di >= dst.length) continue;
+        let g = 1;
+        if (fadeIn && fadeN > 0 && i < fadeN) g *= i / fadeN;
+        if (fadeOut && fadeN > 0 && i >= n - fadeN) g *= (n - i) / fadeN;
+        dst[di] = (src[si] ?? 0) * g;
       }
     }
   }
   return out;
+}
+
+/**
+ * Mix background music onto the global clock so it plays over cards too. The
+ * body-time trim window maps to global time; reaching the body start/end
+ * extends the music over the intro/outro. The (already global) body buffer is
+ * summed in. Falls back to the body buffer if the track can't be decoded.
+ */
+async function renderGlobalMusic(
+  body: AudioBuffer | null,
+  music: BackgroundMusic,
+  tl: CardTimeline,
+  onLog?: ExportLogCallback,
+): Promise<AudioBuffer | null> {
+  if (!music.src) return body;
+  try {
+    const sr = body?.sampleRate ?? OFFLINE_SAMPLE_RATE;
+    const channels = body?.numberOfChannels ?? OFFLINE_CHANNELS;
+    const length = Math.ceil((tl.totalMs / 1000) * sr) + sr;
+    const ctx = new OfflineAudioContext(channels, length, sr);
+
+    if (body) {
+      const bodySrc = ctx.createBufferSource();
+      bodySrc.buffer = body;
+      bodySrc.connect(ctx.destination);
+      bodySrc.start(0);
+    }
+
+    const res = await fetch(music.src);
+    if (!res.ok) throw new Error(`bgmusic fetch ${res.status}`);
+    const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+
+    // Body-time window → global; extend to the very ends to cover intro/outro.
+    const startSec = (music.startMs <= 1 ? 0 : bodyToGlobalMs(tl, music.startMs)) / 1000;
+    const endSec = (music.endMs >= tl.bodyMs - 1 ? tl.totalMs : bodyToGlobalMs(tl, music.endMs)) / 1000;
+    const windowSec = Math.max(0, endSec - startSec);
+    const targetVol = Math.max(0, Math.min(1, music.volume));
+    if (windowSec <= 0 || targetVol <= 0) return body;
+
+    const fadeSec = Math.max(0, (music.fadeMs || 0) / 1000);
+    const half = windowSec / 2;
+    const inDur = Math.min(fadeSec, half);
+    const outDur = Math.min(fadeSec, half);
+    const sourceStartSec = Math.max(0, (music.sourceStartMs || 0) / 1000);
+
+    const node = ctx.createBufferSource();
+    node.buffer = buf;
+    node.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, 0);
+    gain.gain.setValueAtTime(0, startSec);
+    gain.gain.linearRampToValueAtTime(targetVol, startSec + inDur);
+    gain.gain.setValueAtTime(targetVol, Math.max(startSec + inDur, endSec - outDur));
+    gain.gain.linearRampToValueAtTime(0, endSec);
+    node.connect(gain).connect(ctx.destination);
+    node.start(startSec, sourceStartSec, windowSec + 0.05);
+    node.stop(endSec + 0.1);
+
+    return await ctx.startRendering();
+  } catch (e) {
+    onLog?.(`Background music (over cards) skipped: ${errorMessage(e)}`);
+    return body;
+  }
 }

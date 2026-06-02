@@ -36,6 +36,24 @@ interface OverlayNode {
   sprite: Sprite | null;    // image overlays only — for size updates
   blur: BlurFilter;
   typewriterFullText: string | null;
+  /** Current text drop-shadow state, so patchNode only restyles on change. */
+  shadowOn: boolean;
+}
+
+/** The legibility drop-shadow for text. Spread fresh per Text so Pixi can't
+ * mutate a shared object. */
+const TEXT_SHADOW = { alpha: 0.55, angle: Math.PI / 4, blur: 6, distance: 2, color: 0x000000 };
+
+/** Text as displayed (honours the uppercase option). */
+function displayText(overlay: TextOverlay): string {
+  return overlay.uppercase ? overlay.text.toUpperCase() : overlay.text;
+}
+
+/** Horizontal text anchor for an alignment: left edge / centre / right edge sit
+ * at the item's x. This is what actually MOVES the block (Pixi's `align` style
+ * only justifies multi-line text). */
+function alignAnchorX(align: TextOverlay['align']): number {
+  return align === 'left' ? 0 : align === 'right' ? 1 : 0.5;
 }
 
 export class OverlayStage {
@@ -128,11 +146,13 @@ export class OverlayStage {
         wobbleY = Math.sin((tMs / overlay.idle.periodY) * Math.PI * 2 + overlay.idle.phase + Math.PI / 2) * overlay.idle.ampY;
       }
 
-      const cx = (pos.x + wobbleX) * w;
-      const cy = (pos.y + wobbleY) * h;
-      const { w: lw, h: lh } = this.logicalSize(overlay, h);
+      const { w: lw, h: lh } = this.measuredSize(overlay);
       const sw = lw * scl;
       const sh = lh * scl;
+      // Shift the box for the text anchor so it hugs left/right-aligned text.
+      const ax = overlay.type === 'text' ? alignAnchorX(overlay.align) : 0.5;
+      const cx = (pos.x + wobbleX) * w + (0.5 - ax) * sw;
+      const cy = (pos.y + wobbleY) * h;
 
       if (
         canvasX >= cx - sw / 2 &&
@@ -154,6 +174,24 @@ export class OverlayStage {
       return { w: Math.max(40, longest * charW), h: fontPx * 1.3 };
     }
     return this.imagePixelSize(overlay, canvasH);
+  }
+
+  /**
+   * Real (unscaled) box of a built node — uses Pixi's measured text/sprite size
+   * so the hit-test and selection outline (which offset by the text anchor for
+   * L/R alignment) hug the true edges incl. font width, letterSpacing, uppercase.
+   * Falls back to the estimate before a node exists.
+   */
+  private measuredSize(overlay: Overlay): { w: number; h: number } {
+    const node = this.nodes.get(overlay.id);
+    if (node?.text) {
+      const w = node.typewriterFullText
+        ? CanvasTextMetrics.measureText(node.typewriterFullText, node.text.style).width
+        : node.text.width;
+      return { w, h: node.text.height };
+    }
+    if (node?.sprite) return { w: node.sprite.width, h: node.sprite.height };
+    return this.logicalSize(overlay, this.app.renderer.height);
   }
 
   get isMounted(): boolean { return this.mounted; }
@@ -283,10 +321,11 @@ export class OverlayStage {
           wobbleX = Math.sin((tMs / selOverlay.idle.periodX) * Math.PI * 2 + selOverlay.idle.phase) * selOverlay.idle.ampX;
           wobbleY = Math.sin((tMs / selOverlay.idle.periodY) * Math.PI * 2 + selOverlay.idle.phase + Math.PI / 2) * selOverlay.idle.ampY;
         }
-        const cx = (pos.x + wobbleX) * this.app.renderer.width;
-        const cy = (pos.y + wobbleY) * this.app.renderer.height;
-        const { w: lw, h: lh } = this.logicalSize(selOverlay, this.app.renderer.height);
+        const { w: lw, h: lh } = this.measuredSize(selOverlay);
         const sw = lw * effScale;
+        const ax = selOverlay.type === 'text' ? alignAnchorX(selOverlay.align) : 0.5;
+        const cx = (pos.x + wobbleX) * this.app.renderer.width + (0.5 - ax) * sw;
+        const cy = (pos.y + wobbleY) * this.app.renderer.height;
         const sh = lh * effScale;
         const pad = 10;
         this.selectionOverlay
@@ -308,14 +347,14 @@ export class OverlayStage {
     const h = this.app.renderer.height;
     switch (overlay.type) {
       case 'text': {
-        const { container, text, fullText } = this.buildText(overlay, h);
+        const { container, text, fullText, shadowOn } = this.buildText(overlay, h);
         container.filters = [blur];
-        return { overlay, container, text, sprite: null, blur, typewriterFullText: fullText };
+        return { overlay, container, text, sprite: null, blur, typewriterFullText: fullText, shadowOn };
       }
       case 'image': {
         const { container, sprite } = await this.buildImage(overlay, h);
         container.filters = [blur];
-        return { overlay, container, text: null, sprite, blur, typewriterFullText: null };
+        return { overlay, container, text: null, sprite, blur, typewriterFullText: null, shadowOn: false };
       }
     }
   }
@@ -339,8 +378,18 @@ export class OverlayStage {
       if (style.fontWeight !== desiredWeight) style.fontWeight = desiredWeight;
       style.letterSpacing = overlay.letterSpacing ?? 0;
       style.align = overlay.align ?? 'center';
-      if (!overlay.typewriter && t.text !== overlay.text) t.text = overlay.text;
-      node.typewriterFullText = overlay.typewriter ? overlay.text : null;
+      const ax = alignAnchorX(overlay.align);
+      if (t.anchor.x !== ax) t.anchor.set(ax, 0.5);
+      const full = displayText(overlay);
+      if (!overlay.typewriter && t.text !== full) t.text = full;
+      node.typewriterFullText = overlay.typewriter ? full : null;
+      // Toggle the drop-shadow without a rebuild; only restyle on change so the
+      // text texture isn't re-rasterised every frame.
+      const wantShadow = overlay.shadow ?? this.textShadow;
+      if (node.shadowOn !== wantShadow) {
+        style.dropShadow = wantShadow ? { ...TEXT_SHADOW } : false;
+        node.shadowOn = wantShadow;
+      }
     } else if (overlay.type === 'image' && node.sprite) {
       const target = this.imagePixelSize(overlay, canvasH);
       if (Math.abs(node.sprite.width - target.w) > 0.5) node.sprite.width = target.w;
@@ -352,11 +401,15 @@ export class OverlayStage {
     container: Container;
     text: Text;
     fullText: string | null;
+    shadowOn: boolean;
   } {
     const c = new Container();
     const isTypewriter = Boolean(overlay.typewriter);
-    const initial = isTypewriter ? '' : overlay.text;
+    const full = displayText(overlay);
+    const initial = isTypewriter ? '' : full;
     const fontSize = Math.max(2, Math.round(overlay.sizeRel * canvasH));
+    // Per-item override wins; otherwise the stage default (off for card text).
+    const shadowOn = overlay.shadow ?? this.textShadow;
     const t = new Text({
       text: initial,
       style: {
@@ -367,15 +420,12 @@ export class OverlayStage {
         fill: overlay.color,
         letterSpacing: overlay.letterSpacing ?? 0,
         align: overlay.align ?? 'center',
-        // Legibility shadow over video; omitted for card text on a controlled bg.
-        dropShadow: this.textShadow
-          ? { alpha: 0.55, angle: Math.PI / 4, blur: 6, distance: 2, color: 0x000000 }
-          : false,
+        dropShadow: shadowOn ? { ...TEXT_SHADOW } : false,
       },
     });
-    t.anchor.set(0.5, 0.5);
+    t.anchor.set(alignAnchorX(overlay.align), 0.5);
     c.addChild(t);
-    return { container: c, text: t, fullText: isTypewriter ? overlay.text : null };
+    return { container: c, text: t, fullText: isTypewriter ? full : null, shadowOn };
   }
 
   private async buildImage(overlay: ImageOverlay, canvasH: number): Promise<{

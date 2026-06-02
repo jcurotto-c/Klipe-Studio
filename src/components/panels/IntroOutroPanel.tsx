@@ -7,9 +7,9 @@
  * rebuilds the opacity envelope so the bar always animates in/out cleanly.
  */
 
-import { useState } from 'react';
+import { type CSSProperties, useMemo, useState } from 'react';
 import type { Background } from '../../types';
-import type { ImageOverlay, Overlay, TextOverlay } from '../../overlays/types';
+import type { ImageOverlay, Overlay, OverlayTransform, TextOverlay } from '../../overlays/types';
 import { createImageOverlay, applyAnimation } from '../../overlays/factories';
 import type { Card, CardSet } from '../../cards/types';
 import { MAX_CARD_DURATION_MS, MAX_CARD_TRANSITION_MS, MIN_CARD_DURATION_MS } from '../../cards/types';
@@ -18,13 +18,66 @@ import { CARD_TEMPLATES, buildTemplate } from '../../cards/templates';
 import { FONT_OPTIONS, fontStackById, resolveFontId } from '../../overlays/fonts';
 
 type Side = 'intro' | 'outro' | 'mid';
-type TextAnim = 'fade' | 'typewriter';
+type TextAnim = 'fade' | 'rise' | 'zoom' | 'blur' | 'typewriter';
+
+const TEXT_ANIMS: ReadonlyArray<{ id: TextAnim; label: string }> = [
+  { id: 'fade', label: 'Fade in / out' },
+  { id: 'rise', label: 'Rise (slide up)' },
+  { id: 'zoom', label: 'Zoom in' },
+  { id: 'blur', label: 'Blur in' },
+  { id: 'typewriter', label: 'Typewriter' },
+];
+
+/** CSS background mirroring a card Background, for the template thumbnails. */
+function bgStyle(bg: Background): CSSProperties {
+  if (bg.type === 'gradient') return { background: `linear-gradient(${bg.angle ?? 135}deg, ${bg.from}, ${bg.to})` };
+  if (bg.type === 'image') return { backgroundColor: '#0b0d12', backgroundImage: `url(${bg.src})`, backgroundSize: 'cover', backgroundPosition: 'center' };
+  if (bg.type === 'color') return { background: bg.value || '#0b0d12' };
+  return { background: '#0b0d12' };
+}
+
+/** A 16:9 thumbnail approximating a template (bg + its text), CSS-rendered. */
+function TemplateThumb({ card, label, onClick }: { card: Card; label: string; onClick: () => void }): JSX.Element {
+  return (
+    <button type="button" className="tpl-thumb" onClick={onClick} title={`Apply the “${label}” template`}>
+      <span className="tpl-thumb-bg" style={bgStyle(card.background)} />
+      {card.items
+        .filter((o): o is TextOverlay => o.type === 'text')
+        .map((o) => (
+          <span
+            key={o.id}
+            className="tpl-thumb-text"
+            style={{
+              left: `${o.base.x * 100}%`,
+              top: `${o.base.y * 100}%`,
+              color: o.color,
+              fontFamily: fontStackById(resolveFontId(o.fontFamily, o.mono)),
+              fontWeight: o.weight ?? 700,
+              fontSize: `${o.sizeRel * 100}cqh`,
+              textTransform: o.uppercase ? 'uppercase' : 'none',
+            }}
+          >
+            {o.text}
+          </span>
+        ))}
+      <span className="tpl-thumb-label">{label}</span>
+    </button>
+  );
+}
+
+/** The animation a text item is currently using (for the picker's value). */
+function textAnimOf(item: TextOverlay): TextAnim {
+  if (item.anim && TEXT_ANIMS.some((a) => a.id === item.anim)) return item.anim as TextAnim;
+  return item.typewriter ? 'typewriter' : 'fade';
+}
 
 interface IntroOutroPanelProps {
   cards: CardSet;
   onChange: (next: CardSet) => void;
   /** Insert a mid-roll card at the current playhead (owned by the editor). */
   onAddMidCardAtPlayhead: () => void;
+  /** Capture a recording still as a data URL for a freeze-frame card background. */
+  onCaptureRecordingFrame: (position: 'start' | 'end' | number) => Promise<string | null>;
 }
 
 const FADE_MS = 350;
@@ -36,28 +89,81 @@ const FONT_CATEGORIES: ReadonlyArray<{ id: 'sans' | 'display' | 'mono' | 'serif'
   { id: 'mono', label: 'Mono' },
 ];
 
-/** Recompute a text item's opacity envelope + typewriter for its window. */
+/**
+ * Rebuild a text item's animation for its [from, to] window. Every animation
+ * shares the same opacity envelope (fade in → hold → fade out); the entrance
+ * adds ONE distinguishing track on top: rise→position, zoom→scale, blur→blur.
+ * A fresh transform is built each time so switching animations clears the
+ * previous one's track. Position keys are anchored to the item's current base,
+ * so dragging (which shifts both base and the position track) keeps them aligned.
+ */
 function applyTextTiming(item: TextOverlay, fromMs: number, toMs: number, anim: TextAnim): TextOverlay {
   const span = Math.max(1, toMs - fromMs);
   const fade = Math.min(FADE_MS, span / 3);
+  const enter = Math.min(500, span / 2);
+  const settle = fromMs + enter;
+  const bx = item.base.x;
+  const by = item.base.y;
+
+  const transform: OverlayTransform = {
+    opacity: {
+      keys: [
+        { t: fromMs, value: 0 },
+        { t: fromMs + fade, value: 1, easing: 'easeOutQuint' },
+        { t: Math.max(fromMs + fade, toMs - fade), value: 1 },
+        { t: toMs, value: 0, easing: 'easeOutQuint' },
+      ],
+    },
+  };
+  if (anim === 'rise') {
+    transform.position = {
+      keys: [
+        { t: fromMs, value: { x: bx, y: by + 0.07 } },
+        { t: settle, value: { x: bx, y: by }, easing: 'easeOutQuint' },
+      ],
+    };
+  } else if (anim === 'zoom') {
+    transform.scale = {
+      keys: [
+        { t: fromMs, value: 0.82 },
+        { t: settle, value: 1, easing: 'easeOutBack' },
+      ],
+    };
+  } else if (anim === 'blur') {
+    transform.blur = {
+      keys: [
+        { t: fromMs, value: 16 },
+        { t: settle, value: 0, easing: 'easeOutQuint' },
+      ],
+    };
+  }
+
   return {
     ...item,
+    anim,
     visibleFrom: fromMs,
     visibleTo: toMs,
-    transform: {
-      opacity: {
-        keys: [
-          { t: fromMs, value: 0 },
-          { t: fromMs + fade, value: 1, easing: 'easeOutQuint' },
-          { t: Math.max(fromMs + fade, toMs - fade), value: 1 },
-          { t: toMs, value: 0, easing: 'easeOutQuint' },
-        ],
-      },
-    },
+    transform,
     typewriter: anim === 'typewriter'
       ? { startMs: fromMs, charsPerSecond: Math.max(8, Math.min(60, item.text.length * 4)) }
       : undefined,
   };
+}
+
+/**
+ * Apply an alignment: move the text to the left margin / centre / right margin
+ * of the frame. Sets `align` (which drives the Pixi text ANCHOR — what actually
+ * moves the block) and snaps base.x to the matching margin, shifting any
+ * position-animation track so a "rise" entrance follows.
+ */
+function applyAlign(item: TextOverlay, align: 'left' | 'center' | 'right'): TextOverlay {
+  const x = align === 'left' ? 0.06 : align === 'right' ? 0.94 : 0.5;
+  const dx = x - item.base.x;
+  const pos = item.transform.position;
+  const shifted = pos && dx !== 0
+    ? { ...pos, keys: pos.keys.map((k) => ({ ...k, value: { x: k.value.x + dx, y: k.value.y } })) }
+    : pos;
+  return { ...item, align, base: { ...item.base, x }, transform: { ...item.transform, position: shifted } };
 }
 
 /** Shift every keyframe time of an animation track by `delta` ms (keeps the
@@ -93,9 +199,15 @@ function retimeLogo(item: ImageOverlay, fromMs: number, toMs: number, durationMs
   };
 }
 
-export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhead }: IntroOutroPanelProps): JSX.Element {
+export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhead, onCaptureRecordingFrame }: IntroOutroPanelProps): JSX.Element {
   const [side, setSide] = useState<Side>('intro');
   const [selectedMidId, setSelectedMidId] = useState<string | null>(null);
+  const [capturingFrame, setCapturingFrame] = useState(false);
+  // Build each template once per side for the thumbnail previews.
+  const templatePreviews = useMemo(
+    () => CARD_TEMPLATES.map((t) => ({ t, preview: buildTemplate(t.id, side === 'outro' ? 'outro' : 'intro') })),
+    [side],
+  );
   const midCards = cards.mid ?? [];
   // The card being edited: the intro/outro slot, or the selected mid-roll card.
   const card: Card | null = side === 'mid'
@@ -146,8 +258,7 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
     const next = card.items.map((o) => {
       if (o.type !== 'text') return o;
       const w = windows[wi++]!;
-      const anim: TextAnim = o.typewriter ? 'typewriter' : 'fade';
-      return applyTextTiming(o, w.fromMs, w.toMs, anim);
+      return applyTextTiming(o, w.fromMs, w.toMs, textAnimOf(o));
     });
     setItems(next);
   };
@@ -260,12 +371,12 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
           <div className="section-card">
             <div className="section-head"><span className="section-title">Template</span></div>
             <div className="section-body">
-              <div className="wallpaper-grid-pro">
-                {CARD_TEMPLATES.map((t) => (
-                  <button
+              <div className="tpl-grid">
+                {templatePreviews.map(({ t, preview }) => (
+                  <TemplateThumb
                     key={t.id}
-                    className="seg-tab"
-                    style={{ width: '100%' }}
+                    card={preview}
+                    label={t.label}
                     onClick={() => {
                       const tpl = buildTemplate(t.id, side === 'outro' ? 'outro' : 'intro');
                       // Applying a template to a mid card keeps its identity/anchor.
@@ -273,10 +384,7 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
                         ? { ...tpl, id: card.id, kind: 'mid', atBodyMs: card.atBodyMs }
                         : tpl);
                     }}
-                    title={`Apply the “${t.label}” template`}
-                  >
-                    {t.label}
-                  </button>
+                  />
                 ))}
               </div>
             </div>
@@ -319,6 +427,29 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
             <div className="section-head"><span className="section-title">Background</span></div>
             <div className="section-body">
               <CardBackground value={card.background} onChange={(bg) => updateCard({ background: bg })} />
+              <button
+                type="button"
+                className="upload-btn"
+                disabled={capturingFrame}
+                onClick={() => {
+                  if (!card || capturingFrame) return;
+                  const pos: 'start' | 'end' | number =
+                    side === 'intro' ? 'start' : side === 'outro' ? 'end' : (card.atBodyMs ?? 0);
+                  setCapturingFrame(true);
+                  void onCaptureRecordingFrame(pos)
+                    .then((url) => { if (url) updateCard({ background: { type: 'image', src: url, blur: 0 } }); })
+                    .finally(() => setCapturingFrame(false));
+                }}
+              >
+                <UploadIcon />
+                <span>
+                  {capturingFrame
+                    ? 'Capturing…'
+                    : side === 'intro' ? 'Use first frame of recording'
+                    : side === 'outro' ? 'Use last frame of recording'
+                    : 'Use the frame at this point'}
+                </span>
+              </button>
             </div>
           </div>
 
@@ -431,7 +562,7 @@ interface TextBlockEditorProps {
 }
 
 function TextBlockEditor({ index, item, durationMs, onChange, onRemove }: TextBlockEditorProps): JSX.Element {
-  const anim: TextAnim = item.typewriter ? 'typewriter' : 'fade';
+  const anim = textAnimOf(item);
   const fontId = resolveFontId(item.fontFamily, item.mono);
   const fromMs = item.visibleFrom ?? 0;
   const toMs = item.visibleTo ?? durationMs;
@@ -488,8 +619,9 @@ function TextBlockEditor({ index, item, durationMs, onChange, onRemove }: TextBl
           value={anim}
           onChange={(e) => retime(fromMs, toMs, e.target.value as TextAnim)}
         >
-          <option value="fade">Fade in / out</option>
-          <option value="typewriter">Typewriter</option>
+          {TEXT_ANIMS.map((a) => (
+            <option key={a.id} value={a.id}>{a.label}</option>
+          ))}
         </select>
         <input
           type="color"
@@ -497,6 +629,40 @@ function TextBlockEditor({ index, item, durationMs, onChange, onRemove }: TextBl
           onChange={(e) => onChange({ ...item, color: e.target.value })}
           title="Text color"
         />
+      </div>
+
+      <div className="grad-row">
+        <label>Align</label>
+        <div className="seg-tabs three" style={{ flex: 1 }}>
+          {(['left', 'center', 'right'] as const).map((a) => (
+            <button
+              key={a}
+              className={`seg-tab ${(item.align ?? 'center') === a ? 'active' : ''}`}
+              onClick={() => onChange(applyAlign(item, a))}
+              title={`Align ${a}`}
+            >
+              {a === 'left' ? 'L' : a === 'center' ? 'C' : 'R'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grad-row">
+        <label>Style</label>
+        <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+          <button
+            className={`seg-tab ${item.uppercase ? 'active' : ''}`}
+            style={{ flex: 1 }}
+            onClick={() => onChange({ ...item, uppercase: !item.uppercase })}
+            title="Uppercase"
+          >AA</button>
+          <button
+            className={`seg-tab ${item.shadow ? 'active' : ''}`}
+            style={{ flex: 1 }}
+            onClick={() => onChange({ ...item, shadow: !item.shadow })}
+            title="Drop shadow"
+          >Shadow</button>
+        </div>
       </div>
 
       <NumRow
@@ -507,6 +673,15 @@ function TextBlockEditor({ index, item, durationMs, onChange, onRemove }: TextBl
         max={0.18}
         step={0.005}
         onChange={(v) => onChange({ ...item, sizeRel: v })}
+      />
+      <NumRow
+        label="Spacing"
+        value={item.letterSpacing ?? 0}
+        unit=""
+        min={-2}
+        max={24}
+        step={0.5}
+        onChange={(v) => onChange({ ...item, letterSpacing: v })}
       />
       <NumRow
         label="Start"

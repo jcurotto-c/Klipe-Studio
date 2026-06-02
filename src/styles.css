@@ -2210,6 +2210,46 @@ select {
   gap: 8px;
 }
 
+/* Template thumbnails (card preview grid) */
+.tpl-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.tpl-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
+  container-type: size;
+  background: var(--bg-1, #0f1117);
+}
+.tpl-thumb:hover { border-color: var(--bg-3); }
+.tpl-thumb-bg { position: absolute; inset: 0; }
+.tpl-thumb-text {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  line-height: 1;
+  pointer-events: none;
+}
+.tpl-thumb-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  padding: 2px 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  pointer-events: none;
+}
+
 /* Uploaded-logo preview thumbnail in the panel */
 .logo-preview {
   display: flex;
