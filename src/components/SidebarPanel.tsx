@@ -6,6 +6,7 @@ import CursorPanel from './panels/CursorPanel';
 import AudioPanel from './panels/AudioPanel';
 import ShortcutsPanel from './panels/ShortcutsPanel';
 import PlaceholderPanel from './panels/PlaceholderPanel';
+import IntroOutroPanel from './panels/IntroOutroPanel';
 import type {
   AudioFxOptions,
   Background,
@@ -18,12 +19,14 @@ import type {
   KlipeMouseEvent,
   MobileOptions,
 } from '../types';
+import type { CardSet } from '../cards/types';
 
 type CategoryId =
   | 'scene'
   | 'cursor'
   | 'camera'
   | 'mobile'
+  | 'introOutro'
   | 'captions'
   | 'audio'
   | 'shortcuts'
@@ -39,6 +42,7 @@ const CATEGORIES: Category[] = [
   { id: 'cursor',      label: 'Cursor' },
   { id: 'camera',      label: 'Camera' },
   { id: 'mobile',      label: 'Phone' },
+  { id: 'introOutro',  label: 'Intro / Outro' },
   { id: 'captions',    label: 'Captions' },
   { id: 'audio',       label: 'Audio' },
   { id: 'shortcuts',   label: 'Shortcuts' },
@@ -82,6 +86,9 @@ interface SidebarPanelProps {
   onSelectBlur: (id: string | null) => void;
   onAddBlurAtPlayhead: () => void;
   onRemoveBlur: (id: string) => void;
+  cards: CardSet;
+  onCardsChange: (next: CardSet) => void;
+  onAddMidCardAtPlayhead: () => void;
 }
 
 export default function SidebarPanel({
@@ -118,6 +125,9 @@ export default function SidebarPanel({
   onSelectBlur,
   onAddBlurAtPlayhead,
   onRemoveBlur,
+  cards,
+  onCardsChange,
+  onAddMidCardAtPlayhead,
 }: SidebarPanelProps): JSX.Element {
   const [activeId, setActiveId] = useState<CategoryId>('scene');
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -199,6 +209,8 @@ export default function SidebarPanel({
             stageAspect={mobileStageAspect}
           />
         );
+      case 'introOutro':
+        return <IntroOutroPanel cards={cards} onChange={onCardsChange} onAddMidCardAtPlayhead={onAddMidCardAtPlayhead} />;
       case 'captions':
         return <PlaceholderPanel title="Captions" description="Auto-generated subtitles and styling." />;
       case 'audio':

@@ -4,7 +4,7 @@ import {
   useRef,
   type RefObject,
 } from 'react';
-import { renderFrame, computeFramePaddingScale, type CursorPlacement } from '../lib/renderer';
+import { renderFrame, computeFramePaddingScale, drawCardBackground, type CursorPlacement } from '../lib/renderer';
 import { createCursorState, resetCursorState } from '../lib/cursor-engine';
 import {
   createCursorFollowState,
@@ -33,6 +33,9 @@ import type {
   ZoomSegment,
 } from '../types';
 import type { Overlay } from '../overlays/types';
+
+/** Stable empty array so an idle OverlayCanvas doesn't re-run setOverlays each render. */
+const EMPTY_OVERLAYS: Overlay[] = [];
 
 interface VideoCanvasProps {
   videoRef: RefObject<HTMLVideoElement>;
@@ -102,6 +105,32 @@ interface VideoCanvasProps {
   onSelectOverlay?: (id: string | null) => void;
   /** Called while an overlay is being dragged. Coordinates are fractional. */
   onMoveOverlay?: (id: string, base: { x: number; y: number }) => void;
+  // --- Intro/outro cards ---------------------------------------------------
+  /** Mount a dedicated overlay canvas for card items (kept mounted to avoid
+   * re-init flashes when scrubbing across phases). */
+  hasCards?: boolean;
+  /** True while the playhead is inside an intro/outro card. The base canvas
+   * then draws the card background instead of the video, and body overlays +
+   * cursor are hidden. */
+  cardActive?: boolean;
+  /** Background to fill while `cardActive`. */
+  cardBackground?: Background | string | null;
+  /** Card overlay items (text/logo), authored in card-local time. */
+  cardItems?: Overlay[];
+  /** Card-local time in ms — drives card item keyframes. */
+  cardTimeMs?: number;
+  /** True while a card is crossfading with the recording (body phase). The
+   * video plays underneath and the card background/items are composited on top
+   * at `cardTransitionAlpha`. */
+  cardTransition?: boolean;
+  /** Card-layer opacity (0..1) during a crossfade. */
+  cardTransitionAlpha?: number;
+  /** Allow direct manipulation (drag) of card items while parked on a full card. */
+  cardEditable?: boolean;
+  selectedCardItemId?: string | null;
+  onSelectCardItem?: (id: string | null) => void;
+  /** Called while dragging a card item; coordinates are fractional. */
+  onMoveCardItem?: (id: string, base: { x: number; y: number }) => void;
 }
 
 export default function VideoCanvas({
@@ -140,9 +169,25 @@ export default function VideoCanvas({
   selectedOverlayId = null,
   onSelectOverlay,
   onMoveOverlay,
+  hasCards = false,
+  cardActive = false,
+  cardBackground = null,
+  cardItems,
+  cardTimeMs = 0,
+  cardTransition = false,
+  cardTransitionAlpha = 0,
+  cardEditable = false,
+  selectedCardItemId = null,
+  onSelectCardItem,
+  onMoveCardItem,
 }: VideoCanvasProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // The card (background + items) is one group-opacity layer so it crossfades
+  // as a SINGLE composited image — matching the export's pre-baked frame and
+  // avoiding double-alpha muddiness on text/logos.
+  const cardLayerRef = useRef<HTMLDivElement | null>(null);
+  const cardBgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number>(0);
   const cursorStateRef = useRef(createCursorState());
@@ -153,10 +198,10 @@ export default function VideoCanvas({
     shape: 'arrow', contentTargetHeight: 0,
   });
   const propsRef = useRef({
-    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode, cardActive, cardBackground, cardTransition, cardTransitionAlpha,
   });
   propsRef.current = {
-    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode, cardActive, cardBackground, cardTransition, cardTransitionAlpha,
   };
 
   useEffect(() => {
@@ -250,9 +295,34 @@ export default function VideoCanvas({
       rafRef.current = requestAnimationFrame(tick);
       if (now - last < minDelta) return;
       last = now;
+      const p = propsRef.current;
+      const cardBg = cardBgCanvasRef.current;
+      const cardBgCtx = cardBg ? cardBg.getContext('2d') : null;
+      const cardLayer = cardLayerRef.current;
+      // Keep the card buffer at the same resolution/aspect as the body canvas
+      // (DPR-scaled OUTPUT dims) so gradient/image card backgrounds match the
+      // export pixel-for-pixel instead of stretching the source aspect.
+      if (cardBg && (cardBg.width !== canvas.width || cardBg.height !== canvas.height)) {
+        cardBg.width = canvas.width;
+        cardBg.height = canvas.height;
+      }
+      // Full intro/outro card phase: the <video> is paused upstream. Paint the
+      // card background on the dedicated group-opacity layer (fully opaque,
+      // covering video + cursor + body overlays) and keep the OS-cursor sprite
+      // hidden. The card's text/logo render on the OverlayCanvas INSIDE the same
+      // layer, so it composites background + items as a single image.
+      if (p.cardActive) {
+        if (cardBg && cardBgCtx) {
+          drawCardBackground(cardBgCtx, cardBg.width, cardBg.height, p.cardBackground);
+        }
+        if (cardLayer && cardLayer.style.opacity !== '1') cardLayer.style.opacity = '1';
+        if (overlayRef.current) {
+          overlayRef.current.render({ ...cursorOutputRef.current, visible: false });
+        }
+        return;
+      }
       const video = videoRef.current;
       if (!video) return;
-      const p = propsRef.current;
       const tMs = video.currentTime * 1000;
       const lastSample = cursorStateRef.current.lastTms;
       if (lastSample != null && Math.abs(tMs - lastSample) > 150) {
@@ -288,6 +358,21 @@ export default function VideoCanvas({
       });
       if (overlayActive) {
         overlayRef.current!.render(cursorOutputRef.current);
+      }
+      // Card crossfade: an intro dissolving out over the body start, or an
+      // outro dissolving in over the body end. The whole card LAYER (bg + items)
+      // fades over the live recording as one composited image. While the
+      // boundary seek into the body is still in flight, hold the card fully
+      // opaque so a stale decoded frame can't flash through.
+      if (cardLayer && cardBg && cardBgCtx) {
+        if (p.cardTransition) {
+          const a = video.seeking ? 1 : Math.min(1, Math.max(0, p.cardTransitionAlpha));
+          const s = String(a);
+          if (cardLayer.style.opacity !== s) cardLayer.style.opacity = s;
+          drawCardBackground(cardBgCtx, cardBg.width, cardBg.height, p.cardBackground);
+        } else if (cardLayer.style.opacity !== '0') {
+          cardLayer.style.opacity = '0';
+        }
       }
     };
 
@@ -334,15 +419,38 @@ export default function VideoCanvas({
       {overlays && (
         <OverlayCanvas
           hostRef={wrapRef}
-          overlays={overlays}
+          overlays={cardActive ? EMPTY_OVERLAYS : overlays}
           timeMs={overlayTimeMs}
-          interactive={overlays.length > 0 && !cropMode && !blurMode}
+          interactive={!cardActive && overlays.length > 0 && !cropMode && !blurMode}
           selectedId={selectedOverlayId}
           onSelect={onSelectOverlay}
           onMove={onMoveOverlay}
         />
       )}
-      {safeZones && <PlatformGuides safe={safeZones} />}
+      {hasCards && (
+        <div
+          ref={cardLayerRef}
+          style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none' }}
+        >
+          <canvas
+            ref={cardBgCanvasRef}
+            width={sourceW}
+            height={sourceH}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+          />
+          <OverlayCanvas
+            hostRef={wrapRef}
+            overlays={(cardActive || cardTransition) ? (cardItems ?? EMPTY_OVERLAYS) : EMPTY_OVERLAYS}
+            timeMs={cardTimeMs}
+            interactive={cardEditable && cardActive && !cropMode && !blurMode}
+            textShadow={false}
+            selectedId={selectedCardItemId}
+            onSelect={onSelectCardItem}
+            onMove={onMoveCardItem}
+          />
+        </div>
+      )}
+      {safeZones && !cardActive && <PlatformGuides safe={safeZones} />}
       {cropMode && onCropChange && (
         <CropOverlay
           canvasWidth={sourceW}

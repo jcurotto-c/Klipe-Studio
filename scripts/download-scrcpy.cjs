@@ -3,12 +3,12 @@
 
 /**
  * Downloads the pinned scrcpy Windows release and extracts it (flat) into
- * `binaries/` at the project root. Runs as part of `npm install` via the
+ * `binaries/` at the project root. Runs as part of `pnpm install` via the
  * `postinstall` script.
  *
  * Idempotent — if `binaries/scrcpy.exe` already exists, exits immediately.
- * Network failure → prints a warning, exits 0 so `npm install` itself
- * succeeds. The user can re-run `npm run setup:scrcpy` to retry.
+ * Network failure → prints a warning, exits 0 so `pnpm install` itself
+ * succeeds. The user can re-run `pnpm setup:scrcpy` to retry.
  *
  * To upgrade scrcpy: bump SCRCPY_VERSION below and delete `binaries/`.
  */
@@ -23,7 +23,7 @@ const SCRCPY_VERSION = 'v2.7';
 const SCRCPY_WIN64_URL = `https://github.com/Genymobile/scrcpy/releases/download/${SCRCPY_VERSION}/scrcpy-win64-${SCRCPY_VERSION}.zip`;
 
 // SHA-256 hashes of the three binaries extracted from the official Genymobile release.
-// To update: bump SCRCPY_VERSION, delete binaries/, run `npm run setup:scrcpy`, then
+// To update: bump SCRCPY_VERSION, delete binaries/, run `pnpm setup:scrcpy`, then
 // run `node -e "const c=require('crypto'),f=require('fs');
 //   ['scrcpy.exe','adb.exe','scrcpy-server'].forEach(n=>
 //     console.log(n, c.createHash('sha256').update(f.readFileSync('binaries/'+n)).digest('hex').toUpperCase()))"
@@ -121,8 +121,8 @@ async function main() {
   } catch (err) {
     console.warn('[scrcpy-setup] WARNING: failed to install scrcpy.');
     console.warn('   Reason:', err && err.message ? err.message : err);
-    console.warn('   Phone recording will be disabled until you run `npm run setup:scrcpy` again.');
-    // Exit 0 — don't fail `npm install` on a network hiccup.
+    console.warn('   Phone recording will be disabled until you run `pnpm setup:scrcpy` again.');
+    // Exit 0 — don't fail `pnpm install` on a network hiccup.
   }
 }
 

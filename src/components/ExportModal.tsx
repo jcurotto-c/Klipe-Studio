@@ -29,6 +29,7 @@ import type {
   ZoomSegment,
 } from '../types';
 import type { Overlay } from '../overlays/types';
+import type { CardSet } from '../cards/types';
 
 interface FormatDef {
   id: ExportFormat;
@@ -98,6 +99,17 @@ interface ExportModalProps {
   systemVolume?: number;
   blurRegions?: BlurRegion[] | null;
   overlays?: Overlay[] | null;
+  /** Intro/outro title cards (exported + previewed). */
+  cards?: CardSet | null;
+  /** Card preview wiring — mirrors the editor so the modal preview shows cards
+   * (the editor's own preview is suspended while the modal is open). */
+  hasCards?: boolean;
+  cardActive?: boolean;
+  cardBackground?: Background | string | null;
+  cardItems?: Overlay[];
+  cardTimeMs?: number;
+  cardTransition?: boolean;
+  cardTransitionAlpha?: number;
   /** Active social-platform preset id (editor-owned state). */
   platformId?: string;
   /** Apply a platform preset upstream (updates the editor's aspect ratio). */
@@ -153,6 +165,14 @@ export default function ExportModal({
   systemVolume,
   blurRegions,
   overlays,
+  cards = null,
+  hasCards = false,
+  cardActive = false,
+  cardBackground = null,
+  cardItems,
+  cardTimeMs = 0,
+  cardTransition = false,
+  cardTransitionAlpha = 0,
   platformId = 'none',
   onPlatform,
   outputAspect = null,
@@ -279,6 +299,7 @@ export default function ExportModal({
         systemVolume,
         blurRegions,
         overlays,
+        cards,
         signal: controller.signal,
         onProgress: (s, v) => {
           const now = performance.now();
@@ -319,7 +340,7 @@ export default function ExportModal({
   }, [
     sourceBlob, exportSeconds, mouse, segments, display, background, crop,
     fragments, size, outputAspect, fitMode, fps, format, quality, cursorOptions, cameraStyle, zoomBlur, frame, cameraBlob, cameraOptions, mobileOptions, mobilePrimary,
-    audioFx, backgroundMusic, blurRegions, overlays, onClose,
+    audioFx, backgroundMusic, blurRegions, overlays, cards, onClose,
   ]);
 
   const handleStop = useCallback(() => {
@@ -384,6 +405,13 @@ export default function ExportModal({
                     blurRegions={blurRegions ?? undefined}
                     overlays={overlays ?? undefined}
                     overlayTimeMs={previewTimeMs}
+                    hasCards={hasCards}
+                    cardActive={cardActive}
+                    cardBackground={cardBackground}
+                    cardItems={cardItems}
+                    cardTimeMs={cardTimeMs}
+                    cardTransition={cardTransition}
+                    cardTransitionAlpha={cardTransitionAlpha}
                   />
                 </div>
                 <div className="export-preview-transport">

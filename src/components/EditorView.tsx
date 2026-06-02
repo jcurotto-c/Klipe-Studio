@@ -71,6 +71,17 @@ import {
 import OverlayInspector from '../overlays/components/OverlayInspector';
 import OverlayLayerList from '../overlays/components/OverlayLayerList';
 import { saveProject, saveProjectDoc, type EditDocument } from '../lib/project';
+import type { Card, CardSet } from '../cards/types';
+import { createMidCard } from '../cards/factories';
+import {
+  buildCardTimeline,
+  resolvePhase,
+  resolveTransition,
+  activeSegment,
+  globalToBodyMs,
+  globalToBodySec,
+  bodyToGlobalMs,
+} from '../cards/timeline';
 
 const DEFAULTS_KEY = 'klipe.zoomDefaults';
 const CAMERA_OPTIONS_KEY = 'klipe.cameraOptions';
@@ -161,6 +172,7 @@ interface HistorySnapshot {
   segments: ZoomSegment[];
   blurRegions: BlurRegion[];
   overlays: Overlay[];
+  cards: CardSet;
 }
 
 const HISTORY_LIMIT = 100;
@@ -332,6 +344,8 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const [blurMode, setBlurMode] = useState<boolean>(false);
   const [overlays, setOverlays] = useState<Overlay[]>(() => initialDoc?.overlays ?? []);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
+  const [cards, setCards] = useState<CardSet>(() => initialDoc?.cards ?? { intro: null, outro: null });
+  const [selectedCardItemId, setSelectedCardItemId] = useState<string | null>(null);
   const [savingProject, setSavingProject] = useState(false);
 
   const exportCrop: Crop | null = isFullCrop(crop) ? null : crop;
@@ -423,7 +437,50 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     [segments, selectedId],
   );
 
-  const duration = useMemo(() => totalOutputDuration(fragments), [fragments]);
+  // Body = the recording itself (output-time). The GLOBAL timeline splices in
+  // an intro, an outro, and any number of mid-roll cards, so `duration` (what
+  // the timeline, transport and export consume) spans every segment. Body
+  // content is mapped to/from the global clock via globalToBody/bodyToGlobal,
+  // which account for EVERY card before a point (not a single intro offset).
+  const bodyDuration = useMemo(() => totalOutputDuration(fragments), [fragments]);
+  const cardTimeline = useMemo(() => buildCardTimeline(cards, bodyDuration), [cards, bodyDuration]);
+  const duration = cardTimeline.totalMs / 1000;
+  const phase = useMemo(
+    () => resolvePhase(cardTimeline, currentTime * 1000),
+    [cardTimeline, currentTime],
+  );
+  const cardActive = phase.kind !== 'body';
+  // Crossfades live INSIDE the body phase (a card dissolving in/out over the
+  // adjacent body), so `cardActive` (full card) and `cardTransition` (crossfade)
+  // are mutually exclusive.
+  const transition = useMemo(
+    () => resolveTransition(cardTimeline, currentTime * 1000),
+    [cardTimeline, currentTime],
+  );
+  const cardTransition = !cardActive && transition !== null;
+  const cardTransitionAlpha = transition?.alpha ?? 0;
+  // The card whose background/items the canvas should show right now: the
+  // active full card, else the card being crossfaded.
+  const visualCard = cardActive ? phase.card : (transition?.card ?? null);
+  const cardBackground = visualCard?.background ?? null;
+  const cardItems = visualCard?.items ?? undefined;
+  // Card-local time: full card → phase-local; a fade samples the card at the
+  // frame the transition froze (enter → first frame, exit → last frame).
+  const cardLocalMs = cardActive ? phase.localMs : (transition?.localMs ?? 0);
+  const hasCards = !!(cards.intro || cards.outro || (cards.mid && cards.mid.length > 0));
+  // Body output-seconds for the current global playhead. Drives body overlay
+  // sampling, audio FX, and source mapping; during a card it freezes at the
+  // card's body anchor.
+  const bodySec = globalToBodySec(cardTimeline, currentTime);
+
+  // Drop the card-item selection once it's no longer valid (left the card, or
+  // scrubbed to a different card) so the preview doesn't show a stale "move"
+  // cursor / phantom selection.
+  useEffect(() => {
+    if (selectedCardItemId == null) return;
+    const stillValid = cardActive && !!visualCard?.items.some((i) => i.id === selectedCardItemId);
+    if (!stillValid) setSelectedCardItemId(null);
+  }, [cardActive, visualCard, selectedCardItemId]);
 
   const fragmentsRef = useRef<Fragment[]>(fragments);
   fragmentsRef.current = fragments;
@@ -437,6 +494,13 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   currentTimeRef.current = currentTime;
   const playingRef = useRef(playing);
   playingRef.current = playing;
+  const cardsRef = useRef<CardSet>(cards);
+  cardsRef.current = cards;
+  const cardTimelineRef = useRef(cardTimeline);
+  cardTimelineRef.current = cardTimeline;
+  /** Wall-clock of the previous RAF tick — advances the global clock during
+   * card phases, when the <video> is paused and can't drive time. */
+  const lastTickRef = useRef(0);
 
   const historyRef = useRef<{ past: HistorySnapshot[]; future: HistorySnapshot[] }>({
     past: [],
@@ -456,6 +520,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     segments: segmentsRef.current,
     blurRegions: blurRegionsRef.current,
     overlays: overlaysRef.current,
+    cards: cardsRef.current,
   }), []);
 
   // The full editor state, gathered for project persistence. Mirrors the
@@ -480,10 +545,11 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     mobileOptions,
     blurRegions,
     overlays,
+    cards,
   }), [
     fragments, segments, background, crop, zoomDefaults, cameraOptions,
     cursorOptions, frameOptions, audioFxOptions, backgroundMusic, audioVolume,
-    micVolume, systemVolume, aspectRatioId, fitMode, platformId, mobileOptions, blurRegions, overlays,
+    micVolume, systemVolume, aspectRatioId, fitMode, platformId, mobileOptions, blurRegions, overlays, cards,
   ]);
 
   const handleSaveProject = useCallback(async (): Promise<void> => {
@@ -565,10 +631,12 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     segmentsRef.current = snap.segments;
     blurRegionsRef.current = snap.blurRegions;
     overlaysRef.current = snap.overlays;
+    cardsRef.current = snap.cards;
     setFragments(snap.fragments);
     setSegments(snap.segments);
     setBlurRegions(snap.blurRegions);
     setOverlays(snap.overlays);
+    setCards(snap.cards);
   }, []);
 
   const undo = useCallback((): void => {
@@ -612,54 +680,121 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     };
   }, [recording]);
 
-  // Drive playback through fragments. Each frame, derive output-time from the
-  // <video> element's source-time + the active fragment's start offset; when the
-  // source crosses the fragment's srcEnd, advance to the next fragment.
+  // Drive playback on the GLOBAL clock built from segments (intro · body chunks
+  // · mid-roll cards · outro). In a body chunk the <video> plays freely and we
+  // map its source-time → body-output → global; when the chunk ends (a mid-card
+  // anchor or the body end) we pause and hand off to the next segment. In a card
+  // segment the <video> is paused and the global clock is advanced by wall-time
+  // so the card animates with no leaked frames/audio; when it ends we resume the
+  // next body chunk (or stop).
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     let raf = 0;
-    const tick = (): void => {
+    const tick = (now: number): void => {
       raf = requestAnimationFrame(tick);
       const frags = fragmentsRef.current;
       if (!frags.length) return;
-      const out = currentTimeRef.current;
-      const m = outputToSource(frags, out);
-      if (!m) return;
-      if (!playingRef.current || v.paused) return;
+      if (!playingRef.current) { lastTickRef.current = now; return; }
 
-      const src = v.currentTime;
-      if (src >= m.fragment.srcEnd - 0.01) {
-        const nextIdx = m.index + 1;
-        if (nextIdx >= frags.length) {
+      const tl = cardTimelineRef.current;
+      const globalMs = currentTimeRef.current * 1000;
+      const ph = resolvePhase(tl, globalMs);
+      const seg = activeSegment(tl, globalMs);
+
+      if (ph.kind === 'body' && seg.kind === 'body') {
+        if (v.paused) void v.play().catch(() => { /* retry next tick */ });
+        const bodyOutSec = globalToBodySec(tl, currentTimeRef.current);
+        const m = outputToSource(frags, bodyOutSec);
+        if (!m) { lastTickRef.current = now; return; }
+        const src = v.currentTime;
+        const offset = Math.max(0, src - m.fragment.srcStart);
+        const curBodySec = m.fragOutputStart + offset;
+        const fragEndBodyMs = (m.fragOutputStart + fragmentDuration(m.fragment)) * 1000;
+        const atFragEnd = src >= m.fragment.srcEnd - 0.01;
+        lastTickRef.current = now;
+
+        // End of THIS body chunk (a mid-card anchor or the body end): pause and
+        // hand off to the next segment. Checked BEFORE the fragment advance so a
+        // fragment edge that coincides with the chunk boundary rolls into the
+        // card instead of skipping ahead.
+        const lastFrag = m.index + 1 >= frags.length;
+        if (curBodySec * 1000 >= seg.bodyEndMs - 5
+          || (atFragEnd && (lastFrag || fragEndBodyMs >= seg.bodyEndMs - 1))) {
           v.pause();
-          setPlaying(false);
-          setCurrentTime(totalOutputDuration(frags));
-        } else {
-          const nf = frags[nextIdx]!;
-          v.currentTime = nf.srcStart;
-          setCurrentTime(m.fragOutputStart + fragmentDuration(m.fragment));
+          currentTimeRef.current = seg.gEndMs / 1000;
+          setCurrentTime(seg.gEndMs / 1000);
+          if (seg.gEndMs >= tl.totalMs) setPlaying(false);
+          return;
         }
+        // Fragment boundary strictly inside the chunk: jump to the next fragment.
+        // Map within the ACTIVE segment so the new time can't fall back onto a
+        // preceding card boundary.
+        if (atFragEnd) {
+          const nf = frags[m.index + 1]!;
+          v.currentTime = nf.srcStart;
+          const g = (seg.gStartMs + (fragEndBodyMs - seg.bodyStartMs)) / 1000;
+          currentTimeRef.current = g;
+          setCurrentTime(g);
+          return;
+        }
+        if (src < m.fragment.srcStart - 0.05) {
+          v.currentTime = m.fragment.srcStart;
+          return;
+        }
+        const g = (seg.gStartMs + (curBodySec * 1000 - seg.bodyStartMs)) / 1000;
+        setCurrentTime(g);
         return;
       }
-      if (src < m.fragment.srcStart - 0.05) {
-        v.currentTime = m.fragment.srcStart;
+
+      // Card segment: keep the <video> paused, advance the global clock by dt.
+      if (!v.paused) v.pause();
+      const dt = Math.max(0, now - lastTickRef.current);
+      lastTickRef.current = now;
+      const nextMs = globalMs + dt;
+      const segEnd = seg.gEndMs;
+
+      if (nextMs >= segEnd) {
+        if (segEnd >= tl.totalMs) {
+          currentTimeRef.current = tl.totalMs / 1000;
+          setCurrentTime(tl.totalMs / 1000);
+          setPlaying(false);
+          return;
+        }
+        // Hand off to whatever follows the card.
+        const nextPh = resolvePhase(tl, segEnd + 0.5);
+        if (nextPh.kind === 'body') {
+          const m2 = outputToSource(frags, Math.max(0, globalToBodySec(tl, segEnd / 1000 + 0.0005)));
+          if (m2) v.currentTime = m2.srcTime;
+          void v.play().catch(() => { /* retry next tick */ });
+        }
+        currentTimeRef.current = segEnd / 1000;
+        setCurrentTime(segEnd / 1000);
         return;
       }
-      const offset = Math.max(0, src - m.fragment.srcStart);
-      setCurrentTime(m.fragOutputStart + offset);
+      currentTimeRef.current = nextMs / 1000;
+      setCurrentTime(nextMs / 1000);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // Seek on the GLOBAL clock. In the body we map global → body → source-time
+  // onto the <video>; in a card phase we just pause the <video> (it must not
+  // play under a card) and park the global clock at the requested time.
   const seek = useCallback((outputT: number): void => {
     const v = videoRef.current;
     if (!v) return;
-    const total = totalOutputDuration(fragmentsRef.current);
-    const t = Math.max(0, Math.min(total, outputT));
-    const m = outputToSource(fragmentsRef.current, t);
-    if (m) v.currentTime = m.srcTime;
+    const tl = cardTimelineRef.current;
+    const t = Math.max(0, Math.min(tl.totalMs / 1000, outputT));
+    const ph = resolvePhase(tl, t * 1000);
+    if (ph.kind === 'body') {
+      const m = outputToSource(fragmentsRef.current, globalToBodySec(tl, t));
+      if (m) v.currentTime = m.srcTime;
+    } else if (!v.paused) {
+      v.pause();
+    }
+    lastTickRef.current = performance.now();
     currentTimeRef.current = t;
     setCurrentTime(t);
   }, []);
@@ -667,15 +802,21 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const togglePlay = (): void => {
     const v = videoRef.current;
     if (!v) return;
-    if (v.paused) {
-      const total = totalOutputDuration(fragmentsRef.current);
-      if (currentTimeRef.current >= total - 0.02) {
+    if (!playingRef.current) {
+      const tl = cardTimelineRef.current;
+      if (currentTimeRef.current >= tl.totalMs / 1000 - 0.02) {
         seek(0);
-      } else {
-        const m = outputToSource(fragmentsRef.current, currentTimeRef.current);
-        if (m) v.currentTime = m.srcTime;
       }
-      v.play();
+      lastTickRef.current = performance.now();
+      const ph = resolvePhase(tl, currentTimeRef.current * 1000);
+      if (ph.kind === 'body') {
+        const m = outputToSource(fragmentsRef.current, globalToBodySec(tl, currentTimeRef.current));
+        if (m) v.currentTime = m.srcTime;
+        void v.play().catch(() => { /* retry next tick */ });
+      } else if (!v.paused) {
+        // Resuming inside a card: the global clock (RAF) drives it; keep paused.
+        v.pause();
+      }
       setPlaying(true);
     } else {
       v.pause();
@@ -694,7 +835,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   // falls back to the screen centre when there's no mouse data. Opens it
   // selected so the level/duration can be tweaked.
   const handleAddZoom = useCallback(() => {
-    const m = outputToSource(fragmentsRef.current, currentTimeRef.current);
+    const m = outputToSource(fragmentsRef.current, globalToBodySec(cardTimelineRef.current, currentTimeRef.current));
     const tMs = (m ? m.srcTime : 0) * 1000;
     const seg = createManualSegment({
       tMs,
@@ -712,7 +853,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   }, [zoomDefaults, recording.mouse, recording.display, pushHistory]);
 
   const handleCut = useCallback(() => {
-    const m = outputToSource(fragmentsRef.current, currentTimeRef.current);
+    const m = outputToSource(fragmentsRef.current, globalToBodySec(cardTimelineRef.current, currentTimeRef.current));
     if (!m) return;
     const next = cutFragmentAtSource(fragmentsRef.current, m.index, m.srcTime);
     if (next === fragmentsRef.current) return;
@@ -752,13 +893,39 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     const next = removeFragmentAt(prev, idx);
     if (next === prev) return;
     pushHistory();
-    const newTotal = next.reduce((acc, f) => acc + fragmentDuration(f), 0);
-    const out = Math.min(currentTimeRef.current, newTotal);
-    const m = outputToSource(next, out);
+    const newBodyTotal = next.reduce((acc, f) => acc + fragmentDuration(f), 0);
+
+    // The deleted fragment's body-output span: everything authored after it
+    // shifts earlier by its length. Re-anchor mid cards so each keeps pointing
+    // at the same recorded moment (cards inside the deleted span snap to the
+    // join point) instead of silently drifting / colliding via the clamp.
+    let delStart = 0;
+    for (let i = 0; i < idx; i++) delStart += fragmentDuration(prev[i]!);
+    const delLen = fragmentDuration(prev[idx]!);
+    const delStartMs = delStart * 1000;
+    const delLenMs = delLen * 1000;
+    const remapMid = (at: number): number => {
+      if (at <= delStartMs) return at;
+      if (at >= delStartMs + delLenMs) return at - delLenMs;
+      return delStartMs; // inside the deleted span → the join point
+    };
+    const curCards = cardsRef.current;
+    const newMid = (curCards.mid ?? []).map((c) => ({
+      ...c,
+      atBodyMs: Math.max(0, Math.min(newBodyTotal * 1000, remapMid(c.atBodyMs ?? 0))),
+    }));
+    const newCards: CardSet = { ...curCards, mid: newMid };
+
+    const bodyOut = Math.min(globalToBodySec(cardTimelineRef.current, currentTimeRef.current), newBodyTotal);
+    const m = outputToSource(next, bodyOut);
     const v = videoRef.current;
     if (v && m) v.currentTime = m.srcTime;
-    currentTimeRef.current = out;
-    setCurrentTime(out);
+    // Re-anchor the playhead in body-time against the post-delete timeline.
+    const newTl = buildCardTimeline(newCards, newBodyTotal);
+    const g = bodyToGlobalMs(newTl, bodyOut * 1000) / 1000;
+    currentTimeRef.current = g;
+    setCurrentTime(g);
+    setCards(newCards);
     setFragments(next);
     setSelectedFragmentId(null);
   }, [selectedFragmentId, pushHistory]);
@@ -814,9 +981,9 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   // Map current output time → source time once per render so the overlay,
   // inspector, and any blur action invoked from the panel all agree.
   const currentSrcMs = useMemo<number>(() => {
-    const m = outputToSource(fragments, currentTime);
+    const m = outputToSource(fragments, bodySec);
     return (m ? m.srcTime : 0) * 1000;
-  }, [fragments, currentTime]);
+  }, [fragments, bodySec]);
 
   const sourceDurationMs = useMemo<number>(
     () => Math.max(0, sourceDuration * 1000),
@@ -919,14 +1086,15 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const defaultVisibility = useCallback((): { visibleFrom: number; visibleTo: number } => {
     const DEFAULT_MS = 3000;
     const MIN_MS = 500;
-    const totalMs = Math.max(0, Math.round(duration * 1000));
-    let fromMs = Math.round(currentTimeRef.current * 1000);
+    // Body overlays live in body-output-time, so map the global playhead down.
+    const totalMs = Math.max(0, Math.round(bodyDuration * 1000));
+    let fromMs = Math.max(0, Math.round(globalToBodyMs(cardTimelineRef.current, currentTimeRef.current * 1000)));
     let toMs = Math.min(fromMs + DEFAULT_MS, totalMs);
     if (toMs - fromMs < MIN_MS) {
       fromMs = Math.max(0, toMs - MIN_MS);
     }
     return { visibleFrom: fromMs, visibleTo: toMs };
-  }, [duration]);
+  }, [bodyDuration]);
 
   const handleAddTextOverlay = useCallback(() => {
     pushHistory();
@@ -1002,6 +1170,57 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     setOverlays((prev) => prev.map((o) => (o.id === id ? applyAnimation(o, kind) : o)));
   }, [pushHistory]);
 
+  // ---------------------------------------------------------------------------
+  // Intro / outro cards
+  // ---------------------------------------------------------------------------
+
+  const handleCardsChange = useCallback((next: CardSet) => {
+    pushHistory();
+    setCards(next);
+  }, [pushHistory]);
+
+  /** Seek into a card (timeline cap click) by its global start time. */
+  const handleSelectCard = useCallback((globalSec: number) => {
+    seek(Math.max(0, globalSec + 0.001));
+  }, [seek]);
+
+  /** Insert a mid-roll interstitial at the current playhead's body-time. */
+  const handleAddMidCardAtPlayhead = useCallback(() => {
+    const tl = cardTimelineRef.current;
+    const bodyMs = Math.round(globalToBodyMs(tl, currentTimeRef.current * 1000));
+    // Keep it a true mid-roll (not coincident with the very start/end).
+    const at = Math.max(1, Math.min(Math.round(tl.bodyMs) - 1, bodyMs));
+    if (!isFinite(at) || at <= 0) return;
+    pushHistory();
+    setCards((prev) => ({ ...prev, mid: [...(prev.mid ?? []), createMidCard(at)] }));
+  }, [pushHistory]);
+
+  /** Drag a mid-roll card to a new body-time (history pushed on drag start). */
+  const handleMoveMidCard = useCallback((cardId: string, atBodyMs: number) => {
+    setCards((prev) => ({
+      ...prev,
+      mid: (prev.mid ?? []).map((c) =>
+        c.id === cardId ? { ...c, atBodyMs: Math.max(0, Math.round(atBodyMs)) } : c,
+      ),
+    }));
+  }, []);
+
+  const handleSelectCardItem = useCallback((id: string | null) => {
+    setSelectedCardItemId(id);
+  }, []);
+
+  /** Drag a card's text/logo item to a new fractional position (any card it
+   * belongs to — ids are unique across intro/outro/mid). */
+  const handleMoveCardItem = useCallback((itemId: string, base: { x: number; y: number }) => {
+    const moveIn = (c: Card | null): Card | null =>
+      c ? { ...c, items: c.items.map((o) => (o.id === itemId ? { ...o, base: { ...o.base, x: base.x, y: base.y } } : o)) } : c;
+    setCards((prev) => ({
+      intro: moveIn(prev.intro),
+      outro: moveIn(prev.outro),
+      mid: (prev.mid ?? []).map((c) => moveIn(c)!),
+    }));
+  }, []);
+
   // Editor keyboard shortcuts. Defined after every handler it calls so the deps
   // can reference them safely. Typing in text inputs is never hijacked.
   useEffect(() => {
@@ -1046,7 +1265,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           break;
         case 'End':
           e.preventDefault();
-          seek(totalOutputDuration(fragmentsRef.current));
+          seek(cardTimelineRef.current.totalMs / 1000);
           break;
         case 'c':
         case 'C':
@@ -1164,7 +1383,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
         setBackgroundMusic((prev) => {
           if (!prev || prev.src !== el!.src) return prev;
           if (prev.durationMs === natural && prev.endMs > prev.startMs) return prev;
-          const clipMs = duration * 1000;
+          const clipMs = bodyDuration * 1000;
           const defaultEnd = clipMs > 0
             ? Math.min(natural || clipMs, clipMs)
             : (natural || prev.endMs);
@@ -1180,16 +1399,21 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     return () => {
       // Note: don't tear down here — only on unmount or src change above.
     };
-  }, [backgroundMusic, duration]);
+  }, [backgroundMusic, bodyDuration]);
 
   useEffect(() => {
     const el = bgMusicAudioRef.current;
     if (!el || !backgroundMusic) return;
-    const tSec = currentTime;
+    // Background music is authored in body-output-time. Map the global playhead
+    // down to body-time (accounting for every card before it); it freezes during
+    // a card, so the window naturally goes silent there.
+    const tl = cardTimelineRef.current;
+    const onCard = resolvePhase(tl, currentTime * 1000).kind !== 'body';
+    const tSec = globalToBodySec(tl, currentTime);
     const startSec = backgroundMusic.startMs / 1000;
     const endSec = backgroundMusic.endMs / 1000;
     const sourceStartSec = (backgroundMusic.sourceStartMs || 0) / 1000;
-    const inWindow = tSec >= startSec && tSec < endSec;
+    const inWindow = !onCard && tSec >= startSec && tSec < endSec;
     if (playing && inWindow) {
       // Sync source position: start from sourceStartSec when at the window's
       // left edge, and loop modulo natural duration if the window outlasts
@@ -1223,8 +1447,8 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     mouse: recording.mouse,
     fragments,
     options: audioFxOptions,
-    playing,
-    currentTime,
+    playing: playing && !cardActive,
+    currentTime: bodySec,
   });
 
   // Camera source for the editor preview. If the recording has baked-in
@@ -1467,6 +1691,9 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           onSelectBlur={handleSelectBlur}
           onAddBlurAtPlayhead={handleAddBlurAtPlayhead}
           onRemoveBlur={handleRemoveBlur}
+          cards={cards}
+          onCardsChange={handleCardsChange}
+          onAddMidCardAtPlayhead={handleAddMidCardAtPlayhead}
         />
       </div>
       <div className="editor-right">
@@ -1530,10 +1757,21 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
               onCommitBlurRect={handleCommitBlurRect}
               onCreateBlur={handleCreateBlur}
               overlays={overlays}
-              overlayTimeMs={currentTime * 1000}
+              overlayTimeMs={bodySec * 1000}
               selectedOverlayId={selectedOverlayId}
               onSelectOverlay={handleSelectOverlay}
               onMoveOverlay={handleMoveOverlay}
+              hasCards={hasCards}
+              cardActive={cardActive}
+              cardBackground={cardBackground}
+              cardItems={cardItems}
+              cardTimeMs={cardLocalMs}
+              cardTransition={cardTransition}
+              cardTransitionAlpha={cardTransitionAlpha}
+              cardEditable
+              selectedCardItemId={selectedCardItemId}
+              onSelectCardItem={handleSelectCardItem}
+              onMoveCardItem={handleMoveCardItem}
             />
             <video
               ref={cameraVideoRef}
@@ -1879,6 +2117,9 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
             selectedOverlayId={selectedOverlayId}
             onSelectOverlay={handleSelectOverlay}
             onUpdateOverlay={handleUpdateOverlay}
+            cardTimeline={cardTimeline}
+            onSelectCard={handleSelectCard}
+            onMoveMidCard={handleMoveMidCard}
           />
         ) : (
           <div className="empty">Loading clip…</div>
@@ -1930,6 +2171,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           systemVolume={systemVolume}
           blurRegions={blurRegions}
           overlays={overlays}
+          cards={cards}
           platformId={platformId}
           onPlatform={applyPlatform}
           outputAspect={aspectOption.value}
@@ -1937,11 +2179,18 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           videoRef={videoRef}
           cameraVideoRef={cameraVideoRef}
           mobileVideoRef={mobileVideoRef}
-          previewTimeMs={currentTime * 1000}
+          previewTimeMs={bodySec * 1000}
           playing={playing}
           currentTime={currentTime}
           onTogglePlay={togglePlay}
           onSeek={seek}
+          hasCards={hasCards}
+          cardActive={cardActive}
+          cardBackground={cardBackground}
+          cardItems={cardItems}
+          cardTimeMs={cardLocalMs}
+          cardTransition={cardTransition}
+          cardTransitionAlpha={cardTransitionAlpha}
           sourceLabel={recording.name || 'recording'}
           onClose={() => setExportOpen(false)}
         />

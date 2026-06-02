@@ -18,6 +18,7 @@ import {
   Application,
   Assets,
   BlurFilter,
+  CanvasTextMetrics,
   Container,
   Graphics,
   Sprite,
@@ -25,6 +26,7 @@ import {
   Texture,
 } from 'pixi.js';
 import type { ImageOverlay, Overlay, TextOverlay } from '../types';
+import { fontStack, snapWeight } from '../fonts';
 import { sampleNumber, sampleVec } from './sample';
 
 interface OverlayNode {
@@ -47,11 +49,15 @@ export class OverlayStage {
   private destroyed = false;
   /** Bumped whenever rebuildIfStale() detects a structural diff. */
   private builtKey = '';
+  /** Whether text gets the legibility drop-shadow. On for body overlays (over
+   * video); off for card text, which sits on a user-controlled background. */
+  private readonly textShadow: boolean;
 
-  constructor() {
+  constructor(opts: { textShadow?: boolean } = {}) {
     this.app = new Application();
     this.overlayRoot = new Container();
     this.selectionOverlay = new Graphics();
+    this.textShadow = opts.textShadow ?? true;
   }
 
   async mount(canvas: HTMLCanvasElement, width: number, height: number): Promise<void> {
@@ -78,6 +84,15 @@ export class OverlayStage {
 
   setSelected(id: string | null): void {
     this.selectedId = id;
+  }
+
+  /**
+   * Force the next `setOverlays` to rebuild every node. Pixi caches a Text's
+   * rasterised texture by style key, so once web fonts finish decoding a plain
+   * re-render is a no-op — the nodes must be rebuilt to pick up the real face.
+   */
+  invalidate(): void {
+    this.builtKey = '';
   }
 
   resize(width: number, height: number): void {
@@ -225,7 +240,19 @@ export class OverlayStage {
       }
 
       node.container.position.set((pos.x + wobbleX) * w, (pos.y + wobbleY) * h);
-      node.container.scale.set(scl);
+      // Auto-fit to the frame width: keep the authored size while it fits, and
+      // shrink only when it would overflow (e.g. text authored in 16:9 then
+      // viewed in 9:16). Measures the FULL text so a typewriter reveal doesn't
+      // make the scale jump as characters appear.
+      let fit = 1;
+      const naturalW = node.text
+        ? (node.typewriterFullText
+          ? CanvasTextMetrics.measureText(node.typewriterFullText, node.text.style).width
+          : node.text.width)
+        : (node.sprite ? node.sprite.width : 0);
+      const maxW = w * 0.92;
+      if (naturalW > maxW && maxW > 0) fit = maxW / naturalW;
+      node.container.scale.set(scl * fit);
       node.container.rotation = rot;
       node.container.alpha = op;
 
@@ -248,7 +275,9 @@ export class OverlayStage {
       if (selOverlay && selNode && selNode.container.visible) {
         const tx = selOverlay.transform;
         const pos = sampleVec(tx.position, tMs, selOverlay.base.x, selOverlay.base.y);
-        const scl = sampleNumber(tx.scale, tMs, selOverlay.base.scale);
+        // Use the scale actually applied to the node (includes the auto-fit
+        // shrink) so the outline hugs the rendered item.
+        const effScale = selNode.container.scale.x;
         let wobbleX = 0, wobbleY = 0;
         if (selOverlay.idle) {
           wobbleX = Math.sin((tMs / selOverlay.idle.periodX) * Math.PI * 2 + selOverlay.idle.phase) * selOverlay.idle.ampX;
@@ -257,8 +286,8 @@ export class OverlayStage {
         const cx = (pos.x + wobbleX) * this.app.renderer.width;
         const cy = (pos.y + wobbleY) * this.app.renderer.height;
         const { w: lw, h: lh } = this.logicalSize(selOverlay, this.app.renderer.height);
-        const sw = lw * scl;
-        const sh = lh * scl;
+        const sw = lw * effScale;
+        const sh = lh * effScale;
         const pad = 10;
         this.selectionOverlay
           .rect(cx - sw / 2 - pad, cy - sh / 2 - pad, sw + pad * 2, sh + pad * 2)
@@ -303,11 +332,9 @@ export class OverlayStage {
       const style = t.style;
       if (style.fontSize !== desiredSize) style.fontSize = desiredSize;
       if (style.fill !== overlay.color) style.fill = overlay.color;
-      const desiredFamily = overlay.mono
-        ? 'JetBrains Mono, Menlo, Consolas, monospace'
-        : 'Inter, system-ui, -apple-system, sans-serif';
+      const desiredFamily = fontStack(overlay.fontFamily, overlay.mono);
       if (style.fontFamily !== desiredFamily) style.fontFamily = desiredFamily;
-      const desiredWeight = String(overlay.weight ?? 700) as
+      const desiredWeight = String(snapWeight(overlay.fontFamily, overlay.mono, overlay.weight)) as
         'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
       if (style.fontWeight !== desiredWeight) style.fontWeight = desiredWeight;
       style.letterSpacing = overlay.letterSpacing ?? 0;
@@ -333,22 +360,17 @@ export class OverlayStage {
     const t = new Text({
       text: initial,
       style: {
-        fontFamily: overlay.mono
-          ? 'JetBrains Mono, Menlo, Consolas, monospace'
-          : 'Inter, system-ui, -apple-system, sans-serif',
+        fontFamily: fontStack(overlay.fontFamily, overlay.mono),
         fontSize,
-        fontWeight: String(overlay.weight ?? 700) as
+        fontWeight: String(snapWeight(overlay.fontFamily, overlay.mono, overlay.weight)) as
           | 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900',
         fill: overlay.color,
         letterSpacing: overlay.letterSpacing ?? 0,
         align: overlay.align ?? 'center',
-        dropShadow: {
-          alpha: 0.55,
-          angle: Math.PI / 4,
-          blur: 6,
-          distance: 2,
-          color: 0x000000,
-        },
+        // Legibility shadow over video; omitted for card text on a controlled bg.
+        dropShadow: this.textShadow
+          ? { alpha: 0.55, angle: Math.PI / 4, blur: 6, distance: 2, color: 0x000000 }
+          : false,
       },
     });
     t.anchor.set(0.5, 0.5);

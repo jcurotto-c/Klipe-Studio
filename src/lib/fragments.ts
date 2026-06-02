@@ -45,7 +45,12 @@ export function outputToSource(
   for (let i = 0; i < fragments.length; i++) {
     const f = fragments[i]!;
     const d = fragmentDuration(f);
-    if (t <= acc + d + EPS || i === fragments.length - 1) {
+    // End-EXCLUSIVE: an output time exactly on a fragment boundary resolves to
+    // the LATER fragment (the one playback is entering). Critical when a body
+    // chunk resumes after a mid-roll card whose anchor sits on a fragment edge —
+    // otherwise the lookup returns the prior fragment and playback stalls. The
+    // last fragment is inclusive so the very end still maps to it.
+    if (t < acc + d || i === fragments.length - 1) {
       const offset = Math.min(d, Math.max(0, t - acc));
       return {
         index: i,

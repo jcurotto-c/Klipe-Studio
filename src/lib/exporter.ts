@@ -10,7 +10,7 @@
  *      supports best)
  */
 
-import { renderFrame } from './renderer';
+import { renderFrame, drawCardBackground, ensureBackgroundReady } from './renderer';
 import { createCursorState } from './cursor-engine';
 import { createCursorFollowState, resolveCameraFollow } from './cursor-follow-camera';
 import { fragmentDuration, totalOutputDuration } from './fragments';
@@ -42,6 +42,10 @@ import type {
   ZoomSegment,
 } from '../types';
 import type { Overlay } from '../overlays/types';
+import type { Card, CardSet } from '../cards/types';
+import type { CardSegment, CardTimeline } from '../cards/timeline';
+import { buildCardTimeline, resolveTransition, bodyToGlobalMs } from '../cards/timeline';
+import { ensureFontsReady } from '../overlays/fonts';
 
 export interface Resolution {
   w: number;
@@ -183,6 +187,8 @@ export interface ExportVideoOptions {
   blurRegions?: BlurRegion[] | null;
   /** Text/image overlay layers to composite over each frame. */
   overlays?: Overlay[] | null;
+  /** Intro/outro title cards prepended/appended to the recording. */
+  cards?: CardSet | null;
   signal?: AbortSignal;
   onProgress?: ExportProgressCallback;
   onLog?: ExportLogCallback;
@@ -262,6 +268,7 @@ async function exportVideoMp4({
   systemVolume = 1,
   blurRegions = null,
   overlays = null,
+  cards = null,
   signal,
   onProgress,
   onLog,
@@ -293,7 +300,16 @@ async function exportVideoMp4({
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Failed to acquire 2D canvas context');
 
-  const total = Math.max(0.05, totalOutputDuration(fragments));
+  // Cards splice into and EXTEND the global timeline: intro before the body,
+  // outro after it, and mid-roll cards that split the recording. Everything is
+  // a list of segments; body content maps to/from the global clock via the
+  // timeline helpers (which account for every card before a point).
+  const bodyTotal = Math.max(0.05, totalOutputDuration(fragments));
+  const tl = buildCardTimeline(cards, bodyTotal);
+  const total = tl.totalMs / 1000;
+  const introSeg = tl.segments.find((s): s is CardSegment => s.kind === 'card' && s.slot === 'intro') ?? null;
+  const outroSeg = tl.segments.find((s): s is CardSegment => s.kind === 'card' && s.slot === 'outro') ?? null;
+  const midSegs = tl.segments.filter((s): s is CardSegment => s.kind === 'card' && s.slot === 'mid');
 
   // ---- 1) Render audio offline (fast — runs in OfflineAudioContext) -------
   onProgress?.('starting', 0);
@@ -312,6 +328,9 @@ async function exportVideoMp4({
       fragments,
       onLog,
     });
+    // Body audio is rendered in body-time; remap it onto the global clock
+    // (silent during cards) when any cards are present.
+    if (audioBuffer) audioBuffer = remapBodyAudioToGlobal(audioBuffer, tl);
   } catch (e) {
     onLog?.(`Audio render skipped: ${errorMessage(e)}`);
   }
@@ -340,6 +359,11 @@ async function exportVideoMp4({
   let aborted = false;
   const onAbort = (): void => { aborted = true; };
   if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+  // Self-hosted fonts must be decoded BEFORE any Pixi Text is constructed —
+  // Pixi rasterises/measures text on creation, so a font that loads later would
+  // leave the body overlays baked with a fallback face.
+  await ensureFontsReady();
 
   // Spin up a dedicated Pixi overlay stage on a separate offscreen canvas
   // so it doesn't collide with the export canvas's 2D context. Composited
@@ -379,7 +403,9 @@ async function exportVideoMp4({
   }
 
   const fallbackFrameDur = 1 / fps;
-  let elapsedOutput = 0;
+  // Body output-time consumed so far (0 at the first recorded frame). The global
+  // timestamp for each frame is derived from this via bodyToGlobalMs.
+  let elapsedBody = 0;
   // Mediabunny's CanvasSource enforces strictly increasing timestamps. Across
   // fragments our outSec calculation already increases monotonically (each new
   // fragment starts at fragOutStart = previous elapsedOutput). Within a
@@ -388,21 +414,119 @@ async function exportVideoMp4({
   // float rounding — guard against it by nudging by 1 µs.
   let lastTimestampSec = -1;
 
+  // Dedicated Pixi stage for card text/logo, lazily created. Separate from the
+  // body overlay stage so the two never fight over one canvas.
+  let cardStage: OverlayStage | null = null;
+  let cardCanvas: HTMLCanvasElement | null = null;
+  const ensureCardStage = async (): Promise<OverlayStage> => {
+    if (!cardStage) {
+      cardCanvas = document.createElement('canvas');
+      cardCanvas.width = w;
+      cardCanvas.height = h;
+      // No text drop-shadow on cards (matches the editor preview).
+      cardStage = new OverlayStage({ textShadow: false });
+      await cardStage.mount(cardCanvas, w, h);
+    }
+    return cardStage;
+  };
+
+  // Encode a card's frames at a fixed cadence (fps × duration). Each frame
+  // redraws the solid/gradient/image background then composites the card's
+  // text/logo sampled at card-local time. Timestamps share lastTimestampSec so
+  // the intro → body → outro stream stays strictly increasing.
+  const encodeCardFrames = async (card: Card, startOutSec: number): Promise<void> => {
+    const durSec = card.durationMs / 1000;
+    const frameCount = Math.max(1, Math.round(durSec * fps));
+    const hasItems = card.items.length > 0;
+    if (hasItems) {
+      const stage = await ensureCardStage();
+      await stage.setOverlays(card.items);
+    }
+    for (let i = 0; i < frameCount; i++) {
+      if (aborted) break;
+      const localMs = (i / fps) * 1000;
+      drawCardBackground(ctx, w, h, card.background);
+      if (hasItems && cardStage && cardCanvas) {
+        cardStage.renderAt(localMs);
+        ctx.drawImage(cardCanvas, 0, 0);
+      }
+      let outSec = startOutSec + i / fps;
+      if (outSec <= lastTimestampSec) outSec = lastTimestampSec + 1e-6;
+      lastTimestampSec = outSec;
+      await encoder.addFrame(outSec, 1 / fps);
+      onProgress?.('encoding', Math.min(0.99, outSec / total));
+    }
+  };
+
+  // Bake a single card frame (background + items at `localMs`) into a detached
+  // canvas. Used for crossfades: the card layer is frozen at one frame and
+  // alpha-blended over the live recording, so we render it just once.
+  const bakeCardFrame = async (card: Card, localMs: number): Promise<HTMLCanvasElement> => {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const cctx = c.getContext('2d');
+    if (cctx) {
+      drawCardBackground(cctx, w, h, card.background);
+      if (card.items.length > 0) {
+        const stage = await ensureCardStage();
+        await stage.setOverlays(card.items);
+        stage.renderAt(localMs);
+        if (cardCanvas) cctx.drawImage(cardCanvas, 0, 0);
+      }
+    }
+    return c;
+  };
+
+  // Frozen card frames for crossfades, keyed by `${cardId}:${localMs}`. A card
+  // is frozen at its FIRST frame while dissolving IN ("enter", local 0) and at
+  // its LAST frame while dissolving OUT ("exit", local duration). Matches
+  // resolveTransition's localMs so the body loop can look them up by key.
+  const bakedFrames = new Map<string, HTMLCanvasElement>();
+  const bakedKey = (card: Card, localMs: number): string => `${card.id}:${Math.round(localMs)}`;
+
   const cleanup = async (): Promise<void> => {
     sourceDecoder.destroy();
     cameraProvider?.destroy();
     overlayStage?.dispose();
+    cardStage?.dispose();
     if (overlayCanvas) { overlayCanvas.width = 0; overlayCanvas.height = 0; }
+    if (cardCanvas) { cardCanvas.width = 0; cardCanvas.height = 0; }
+    for (const c of bakedFrames.values()) { c.width = 0; c.height = 0; }
+    bakedFrames.clear();
     canvas.width = 0;
     canvas.height = 0;
     if (signal) signal.removeEventListener('abort', onAbort);
   };
 
+  // Pre-bake the frozen crossfade frames for every card that has a body chunk
+  // beside it (enter over the body before, exit over the body after). Card
+  // frames are baked synchronously, so also decode any image backgrounds first.
+  const prebakeCrossfades = async (): Promise<void> => {
+    const segs = tl.segments;
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i]!;
+      if (s.kind !== 'card') continue;
+      await ensureBackgroundReady(s.card.background);
+      if ((s.card.transitionMs ?? 0) <= 0) continue;
+      const before = i > 0 && segs[i - 1]!.kind === 'body' && segs[i - 1]!.gEndMs > segs[i - 1]!.gStartMs;
+      const after = i < segs.length - 1 && segs[i + 1]!.kind === 'body' && segs[i + 1]!.gEndMs > segs[i + 1]!.gStartMs;
+      if (before) bakedFrames.set(bakedKey(s.card, 0), await bakeCardFrame(s.card, 0));
+      if (after) bakedFrames.set(bakedKey(s.card, s.card.durationMs), await bakeCardFrame(s.card, s.card.durationMs));
+    }
+  };
+
   // ---- 4) Drive frames through the pipeline, fragment by fragment ---------
+  let nextMid = 0;
   try {
+    await prebakeCrossfades();
+
+    // Intro card (synthetic frames before the recording).
+    if (introSeg) await encodeCardFrames(introSeg.card, 0);
+
     for (const frag of fragments) {
       if (aborted) break;
-      const fragOutStart = elapsedOutput;
+      const fragOutStartBody = elapsedBody;
       const fragDur = fragmentDuration(frag);
 
       // SourceDecoder.decodeRange yields decoded VideoFrames serially in
@@ -418,6 +542,18 @@ async function exportVideoMp4({
       // audio track.
       await sourceDecoder.decodeRange(frag.srcStart, frag.srcEnd, async (videoFrame, mediaTimeSec, durationSec) => {
         if (aborted) return;
+
+        // Body-output-time for this frame, and its position on the global clock
+        // (which already includes every intro/mid card before it).
+        const bodySec = fragOutStartBody + Math.max(0, mediaTimeSec - frag.srcStart);
+        const bodyMsNow = bodySec * 1000;
+
+        // Flush any mid-roll cards whose anchor we've now reached, full-screen,
+        // BEFORE this body frame — so the intro→...→outro stream stays ordered.
+        while (nextMid < midSegs.length && bodyMsNow >= midSegs[nextMid]!.atBodyMs) {
+          await encodeCardFrames(midSegs[nextMid]!.card, midSegs[nextMid]!.gStartMs / 1000);
+          nextMid++;
+        }
 
         const tMs = mediaTimeSec * 1000;
         // Pull the webcam frame for this output time (null when no provider /
@@ -450,15 +586,29 @@ async function exportVideoMp4({
           mobileOptions,
         });
 
-        let outSec = fragOutStart + Math.max(0, mediaTimeSec - frag.srcStart);
+        let outSec = bodyToGlobalMs(tl, bodyMsNow) / 1000;
         if (outSec <= lastTimestampSec) outSec = lastTimestampSec + 1e-6;
         lastTimestampSec = outSec;
 
-        // Composite text/image overlays on top — sampled at output-time so
+        // Composite text/image overlays on top — sampled at BODY output-time so
         // their keyframes line up with what the user authored in the editor.
         if (overlayStage && overlayCanvas) {
-          overlayStage.renderAt(outSec * 1000);
+          overlayStage.renderAt(bodySec * 1000);
           ctx.drawImage(overlayCanvas, 0, 0);
+        }
+
+        // Crossfade the adjacent card over the live frame (a card dissolving in
+        // over the body before it, or out over the body after it). Mirrors the
+        // editor preview exactly.
+        const trans = resolveTransition(tl, outSec * 1000);
+        if (trans) {
+          const baked = bakedFrames.get(bakedKey(trans.card, trans.localMs));
+          if (baked) {
+            ctx.save();
+            ctx.globalAlpha = Math.min(1, Math.max(0, trans.alpha));
+            ctx.drawImage(baked, 0, 0);
+            ctx.restore();
+          }
         }
 
         const dur = durationSec > 0 ? durationSec : fallbackFrameDur;
@@ -469,8 +619,18 @@ async function exportVideoMp4({
         }
       });
 
-      elapsedOutput += fragDur;
+      elapsedBody += fragDur;
     }
+
+    // Any mid-roll cards anchored at/after the body end (e.g. clamped to the
+    // tail) that the per-frame flush didn't reach.
+    while (!aborted && nextMid < midSegs.length) {
+      await encodeCardFrames(midSegs[nextMid]!.card, midSegs[nextMid]!.gStartMs / 1000);
+      nextMid++;
+    }
+
+    // Outro card (synthetic frames after the recording).
+    if (!aborted && outroSeg) await encodeCardFrames(outroSeg.card, outroSeg.gStartMs / 1000);
 
     if (aborted) {
       await encoder.abort();
@@ -536,7 +696,10 @@ async function renderAudioOffline({
   fragments,
   onLog,
 }: OfflineAudioInput): Promise<AudioBuffer | null> {
-  const total = Math.max(0.05, totalOutputDuration(fragments));
+  // Rendered purely in BODY-output-time; remapBodyAudioToGlobal later splices in
+  // the (silent) card gaps so the audio lines up with the segmented timeline.
+  const bodyTotal = Math.max(0.05, totalOutputDuration(fragments));
+  const total = bodyTotal;
   const length = Math.ceil(total * OFFLINE_SAMPLE_RATE) + OFFLINE_SAMPLE_RATE; // tail headroom
   const offlineCtx = new OfflineAudioContext(OFFLINE_CHANNELS, length, OFFLINE_SAMPLE_RATE);
 
@@ -560,7 +723,7 @@ async function renderAudioOffline({
     const gain = offlineCtx.createGain();
     gain.gain.value = gainValue;
     gain.connect(offlineCtx.destination);
-    let outAt = 0;
+    let outAt = 0; // body-output-time
     for (const f of fragments) {
       const dur = fragmentDuration(f);
       if (dur <= 0) continue;
@@ -599,8 +762,9 @@ async function renderAudioOffline({
       const buf = await offlineCtx.decodeAudioData(ab);
       const targetVol = Math.max(0, Math.min(1, backgroundMusic.volume));
       const fadeSec = Math.max(0, (backgroundMusic.fadeMs || 0) / 1000);
-      const startSec = Math.max(0, Math.min(total, backgroundMusic.startMs / 1000));
-      const endSec = Math.max(startSec, Math.min(total, backgroundMusic.endMs / 1000));
+      // Window is body-output-time, clamped to the body length.
+      const startSec = Math.max(0, Math.min(bodyTotal, backgroundMusic.startMs / 1000));
+      const endSec = Math.max(startSec, Math.max(0, Math.min(bodyTotal, backgroundMusic.endMs / 1000)));
       const windowSec = Math.max(0, endSec - startSec);
       const halfWindow = windowSec / 2;
       const inDur = Math.min(fadeSec, halfWindow);
@@ -641,7 +805,7 @@ async function renderAudioOffline({
       const fxBus = createSoundFxBus(offlineCtx.destination as unknown as AudioNode);
       if (fxBus) {
         await loadSoundFxSamples(fxBus);
-        let outAt = 0;
+        let outAt = 0; // body-output-time
         for (const f of fragments) {
           const startMs = f.srcStart * 1000;
           const endMs = f.srcEnd * 1000;
@@ -666,4 +830,33 @@ async function renderAudioOffline({
 
   if (!scheduled) return null;
   return await offlineCtx.startRendering();
+}
+
+/**
+ * Splice a body-time audio buffer onto the global card timeline: each body
+ * chunk is copied to its global offset, leaving card segments silent. Returns
+ * the input unchanged when there are no cards (single body segment).
+ */
+function remapBodyAudioToGlobal(body: AudioBuffer, tl: CardTimeline): AudioBuffer {
+  if (!tl.segments.some((s) => s.kind === 'card')) return body;
+  const sr = body.sampleRate;
+  const outLen = Math.ceil((tl.totalMs / 1000) * sr) + sr; // tail headroom
+  const out = new AudioBuffer({ length: outLen, numberOfChannels: body.numberOfChannels, sampleRate: sr });
+  for (const s of tl.segments) {
+    if (s.kind !== 'body') continue;
+    const srcStart = Math.floor((s.bodyStartMs / 1000) * sr);
+    const dstStart = Math.floor((s.gStartMs / 1000) * sr);
+    const n = Math.floor((s.bodyEndMs / 1000) * sr) - srcStart;
+    if (n <= 0) continue;
+    for (let ch = 0; ch < body.numberOfChannels; ch++) {
+      const src = body.getChannelData(ch);
+      const dst = out.getChannelData(ch);
+      for (let i = 0; i < n; i++) {
+        const si = srcStart + i;
+        const di = dstStart + i;
+        if (si >= 0 && si < src.length && di >= 0 && di < dst.length) dst[di] = src[si] ?? 0;
+      }
+    }
+  }
+  return out;
 }

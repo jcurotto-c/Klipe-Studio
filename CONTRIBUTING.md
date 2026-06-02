@@ -17,23 +17,26 @@ project under **GPL-3.0-or-later** — contributions are very welcome.
 
 ## Setup
 
+This project uses **pnpm** (11+). `corepack enable` will provide the pinned
+version automatically.
+
 ```bash
 git clone https://github.com/<your-fork>/Klipe-Studio.git
 cd Klipe-Studio
-npm install      # postinstall downloads + verifies scrcpy/adb (Windows only)
-npm run dev      # Vite + Electron with hot reload
+pnpm install     # postinstall downloads + verifies scrcpy/adb (Windows only)
+pnpm dev         # Vite + Electron with hot reload
 ```
 
 ## Useful scripts
 
-| Command                | What it does                                |
-| ---------------------- | ------------------------------------------- |
-| `npm run dev`          | Run the app (Vite + Electron) with HMR      |
-| `npm run typecheck`    | Type-check the whole project                |
-| `npm run build`        | Full production build → NSIS installer      |
-| `npm run setup:scrcpy` | Re-download/verify the scrcpy + adb binaries |
+| Command              | What it does                                |
+| -------------------- | ------------------------------------------- |
+| `pnpm dev`           | Run the app (Vite + Electron) with HMR      |
+| `pnpm typecheck`     | Type-check the whole project                |
+| `pnpm build`         | Full production build → NSIS installer      |
+| `pnpm setup:scrcpy`  | Re-download/verify the scrcpy + adb binaries |
 
-Please run `npm run typecheck` before opening a PR — it must pass.
+Please run `pnpm typecheck` before opening a PR — it must pass.
 
 ## Where things live
 

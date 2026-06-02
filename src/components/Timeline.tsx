@@ -12,6 +12,8 @@ import {
 } from '../lib/fragments';
 import type { BackgroundMusic, Fragment, KlipeMouseEvent, ZoomSegment } from '../types';
 import type { Overlay } from '../overlays/types';
+import type { CardTimeline } from '../cards/timeline';
+import { bodyToGlobalMs, globalToBodySec } from '../cards/timeline';
 import { FragmentFilmstrip } from './FragmentFilmstrip';
 
 const fmt = (s: number): string => {
@@ -31,7 +33,8 @@ type DragState =
   | { kind: 'fragEdge'; index: number; edge: 'start' | 'end'; startX: number; origSrc: number }
   | { kind: 'seg' | 'segStart' | 'segEnd'; id: string; startX: number; origStart: number; origEnd: number }
   | { kind: 'audioMove' | 'audioStart' | 'audioEnd'; startX: number; origStart: number; origEnd: number }
-  | { kind: 'ovMove' | 'ovStart' | 'ovEnd'; id: string; startX: number; origStart: number; origEnd: number };
+  | { kind: 'ovMove' | 'ovStart' | 'ovEnd'; id: string; startX: number; origStart: number; origEnd: number }
+  | { kind: 'midMove'; id: string; startX: number; origAt: number; gStartSec: number; armed: boolean };
 
 interface TimelineProps {
   duration: number;
@@ -56,6 +59,13 @@ interface TimelineProps {
   selectedOverlayId?: string | null;
   onSelectOverlay?: (id: string | null) => void;
   onUpdateOverlay?: (id: string, patch: Partial<Overlay>) => void;
+  /** Segmented card timeline. Body content is positioned on the global clock via
+   * its body chunks; coloured caps mark intro / mid-roll / outro cards. */
+  cardTimeline?: CardTimeline;
+  /** Seek into a card (cap click) by its global start time, in seconds. */
+  onSelectCard?: (globalSec: number) => void;
+  /** Drag a mid-roll card to a new body-output-time (ms). */
+  onMoveMidCard?: (id: string, atBodyMs: number) => void;
 }
 
 interface FragmentLayout {
@@ -88,10 +98,29 @@ export default function Timeline({
   selectedOverlayId = null,
   onSelectOverlay,
   onUpdateOverlay,
+  cardTimeline,
+  onSelectCard,
+  onMoveMidCard,
 }: TimelineProps): JSX.Element {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+  // Live left (% of track) of a mid-roll cap while it's dragged, so it tracks
+  // the cursor smoothly even when crossing another card reorders the segments.
+  const [dragMidLeftPct, setDragMidLeftPct] = useState<number | null>(null);
+
+  // Body content (fragments, zoom, overlays, music) lives in body-output-time;
+  // on the GLOBAL timeline it is spliced around the cards. `bodyLeft` maps a
+  // body-second to a global percentage (accounting for every card before it);
+  // `toBodySec` maps a global pointer second back into body-time; `bodyMs`
+  // bounds drag clamps.
+  const cardSegs = cardTimeline?.segments ?? null;
+  const bodyMs = cardTimeline ? cardTimeline.bodyMs : duration * 1000;
+  const bodySec = bodyMs / 1000;
+  const toBodySec = useCallback(
+    (globalSec: number): number => (cardTimeline ? globalToBodySec(cardTimeline, globalSec) : globalSec),
+    [cardTimeline],
+  );
 
   const layouts = useMemo<FragmentLayout[]>(() => {
     const out: FragmentLayout[] = [];
@@ -124,7 +153,7 @@ export default function Timeline({
 
   useEffect(() => {
     if (!drag) return;
-    let armed = drag.kind === 'fragMove' ? drag.armed : false;
+    let armed = drag.kind === 'fragMove' || drag.kind === 'midMove' ? drag.armed : false;
     const move = (e: MouseEvent): void => {
       if (drag.kind === 'playhead') {
         onSeek(xToOutputTime(e.clientX));
@@ -136,7 +165,7 @@ export default function Timeline({
           armed = true;
           onBeginEdit?.();
         }
-        const t = xToOutputTime(e.clientX);
+        const t = toBodySec(xToOutputTime(e.clientX)); // body-relative
         let target = fragments.length;
         for (let i = 0; i < layouts.length; i++) {
           const l = layouts[i]!;
@@ -153,13 +182,31 @@ export default function Timeline({
         onFragmentEdge(drag.index, drag.edge, ns);
         return;
       }
-      const tMs = xToOutputTime(e.clientX) * 1000;
+      if (drag.kind === 'midMove') {
+        if (!armed) {
+          if (Math.abs(e.clientX - drag.startX) < FRAG_DRAG_THRESHOLD_PX) return;
+          armed = true;
+          onBeginEdit?.();
+        }
+        const w = trackRef.current!.getBoundingClientRect().width;
+        const dx = e.clientX - drag.startX;
+        const dMs = (dx / w) * duration * 1000;
+        const at = Math.max(0, Math.min(bodyMs, drag.origAt + dMs));
+        // Position the cap from the cursor (not the rebuilt gStart) so it doesn't
+        // jump by another card's duration when their order swaps.
+        setDragMidLeftPct((drag.gStartSec / Math.max(0.001, duration)) * 100 + (dx / w) * 100);
+        onMoveMidCard?.(drag.id, at);
+        return;
+      }
+      // Body content is authored in body-output-time, so map the pointer into
+      // that space (accounting for every card before it) and clamp to the body.
+      const tMs = toBodySec(xToOutputTime(e.clientX)) * 1000;
       if (drag.kind === 'seg') {
         const dx = e.clientX - drag.startX;
         const dMs = (dx / trackRef.current!.getBoundingClientRect().width) * duration * 1000;
         const len = drag.origEnd - drag.origStart;
         let ns = drag.origStart + dMs;
-        ns = Math.max(0, Math.min(duration * 1000 - len, ns));
+        ns = Math.max(0, Math.min(bodyMs - len, ns));
         onUpdateSegment(drag.id, { tStart: ns, tEnd: ns + len });
       } else if (drag.kind === 'segStart') {
         let ns = tMs;
@@ -167,14 +214,14 @@ export default function Timeline({
         onUpdateSegment(drag.id, { tStart: ns });
       } else if (drag.kind === 'segEnd') {
         let ne = tMs;
-        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(duration * 1000, ne));
+        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(bodyMs, ne));
         onUpdateSegment(drag.id, { tEnd: ne });
       } else if (drag.kind === 'audioMove' && onUpdateBackgroundMusic) {
         const dx = e.clientX - drag.startX;
         const dMs = (dx / trackRef.current!.getBoundingClientRect().width) * duration * 1000;
         const len = drag.origEnd - drag.origStart;
         let ns = drag.origStart + dMs;
-        ns = Math.max(0, Math.min(duration * 1000 - len, ns));
+        ns = Math.max(0, Math.min(bodyMs - len, ns));
         onUpdateBackgroundMusic({ startMs: ns, endMs: ns + len });
       } else if (drag.kind === 'audioStart' && onUpdateBackgroundMusic) {
         let ns = tMs;
@@ -182,14 +229,14 @@ export default function Timeline({
         onUpdateBackgroundMusic({ startMs: ns });
       } else if (drag.kind === 'audioEnd' && onUpdateBackgroundMusic) {
         let ne = tMs;
-        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(duration * 1000, ne));
+        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(bodyMs, ne));
         onUpdateBackgroundMusic({ endMs: ne });
       } else if (drag.kind === 'ovMove' && onUpdateOverlay) {
         const dx = e.clientX - drag.startX;
         const dMs = (dx / trackRef.current!.getBoundingClientRect().width) * duration * 1000;
         const len = drag.origEnd - drag.origStart;
         let ns = drag.origStart + dMs;
-        ns = Math.max(0, Math.min(duration * 1000 - len, ns));
+        ns = Math.max(0, Math.min(bodyMs - len, ns));
         onUpdateOverlay(drag.id, { visibleFrom: ns, visibleTo: ns + len });
       } else if (drag.kind === 'ovStart' && onUpdateOverlay) {
         let ns = tMs;
@@ -197,7 +244,7 @@ export default function Timeline({
         onUpdateOverlay(drag.id, { visibleFrom: ns });
       } else if (drag.kind === 'ovEnd' && onUpdateOverlay) {
         let ne = tMs;
-        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(duration * 1000, ne));
+        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(bodyMs, ne));
         onUpdateOverlay(drag.id, { visibleTo: ne });
       }
     };
@@ -206,7 +253,10 @@ export default function Timeline({
         const next = reorderFragment(fragments, drag.index, dropIndex);
         if (next !== fragments) onUpdateFragments(next);
       }
+      // A mid-card cap pressed without dragging is a click → seek into it.
+      if (drag.kind === 'midMove' && !armed) onSelectCard?.(drag.gStartSec);
       setDropIndex(null);
+      setDragMidLeftPct(null);
       setDrag(null);
     };
     window.addEventListener('mousemove', move);
@@ -217,9 +267,9 @@ export default function Timeline({
     };
   }, [
     drag, onSeek, onUpdateSegment, onUpdateFragments, onFragmentEdge, onBeginEdit,
-    onUpdateBackgroundMusic, onUpdateOverlay,
+    onUpdateBackgroundMusic, onUpdateOverlay, onMoveMidCard, onSelectCard,
     xToOutputTime, xDeltaToSeconds, duration, sourceDuration,
-    fragments, layouts, dropIndex,
+    fragments, layouts, dropIndex, toBodySec, bodyMs,
   ]);
 
   const onTrackMouseDown = (e: ReactMouseEvent<HTMLDivElement>): void => {
@@ -377,6 +427,17 @@ export default function Timeline({
 
   const pct = (t: number): string => `${(t / Math.max(0.001, duration)) * 100}%`;
   const wPct = (a: number, b: number): string => `${((b - a) / Math.max(0.001, duration)) * 100}%`;
+  // Body content positions on the GLOBAL timeline: map a body-second up through
+  // the segmented clock (accounts for the intro + every mid-roll card before it).
+  const bodyLeft = (bodySecVal: number): string =>
+    pct(cardTimeline ? bodyToGlobalMs(cardTimeline, bodySecVal * 1000) / 1000 : bodySecVal);
+  // Width of a body span in GLOBAL space — a block straddling a mid card must
+  // grow by the card's duration, so measure end−start on the global clock.
+  const bodyWidth = (aSec: number, bSec: number): string => {
+    if (!cardTimeline) return wPct(aSec, bSec);
+    const gw = (bodyToGlobalMs(cardTimeline, bSec * 1000) - bodyToGlobalMs(cardTimeline, aSec * 1000)) / 1000;
+    return `${(gw / Math.max(0.001, duration)) * 100}%`;
+  };
 
   // Map a source time → output time via the first fragment containing it.
   const sourceToOutputTime = useCallback(
@@ -420,9 +481,9 @@ export default function Timeline({
 
   const dropMarkerOutput = useMemo(() => {
     if (drag?.kind !== 'fragMove' || dropIndex == null) return null;
-    if (dropIndex >= layouts.length) return duration;
+    if (dropIndex >= layouts.length) return bodySec; // body end (body-relative)
     return layouts[dropIndex]!.outputStart;
-  }, [drag, dropIndex, layouts, duration]);
+  }, [drag, dropIndex, layouts, bodySec]);
 
   return (
     <div className="timeline pro">
@@ -457,8 +518,8 @@ export default function Timeline({
                 key={l.fragment.id}
                 className={`fragment ${isSel ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
                 style={{
-                  left: pct(l.outputStart),
-                  width: wPct(l.outputStart, l.outputEnd),
+                  left: bodyLeft(l.outputStart),
+                  width: bodyWidth(l.outputStart, l.outputEnd),
                 }}
                 title={`Fragment ${l.index + 1} · src ${l.fragment.srcStart.toFixed(2)}s → ${l.fragment.srcEnd.toFixed(2)}s`}
                 onMouseDown={(e) => onFragmentMouseDown(e, l)}
@@ -489,15 +550,42 @@ export default function Timeline({
               <div
                 key={i}
                 className="marker"
-                style={{ left: pct(ot) }}
+                style={{ left: bodyLeft(ot) }}
                 title={`Click @ ${(c.t / 1000).toFixed(2)}s (source)`}
               />
             );
           })}
 
           {dropMarkerOutput != null && (
-            <div className="fragment-drop-indicator" style={{ left: pct(dropMarkerOutput) }} />
+            <div className="fragment-drop-indicator" style={{ left: bodyLeft(dropMarkerOutput) }} />
           )}
+
+          {cardSegs?.map((s) => {
+            if (s.kind !== 'card') return null;
+            const isMid = s.slot === 'mid';
+            const gStartSec = s.gStartMs / 1000;
+            const label = s.slot === 'intro' ? 'Intro' : s.slot === 'outro' ? 'Outro' : 'Card';
+            const dragging = isMid && drag?.kind === 'midMove' && drag.id === s.card.id;
+            const leftStyle = dragging && dragMidLeftPct != null ? `${dragMidLeftPct}%` : pct(gStartSec);
+            return (
+              <div
+                key={`card-${s.card.id}`}
+                className={`card-cap ${s.slot} ${dragging ? 'dragging' : ''}`}
+                style={{ left: leftStyle, width: pct(s.card.durationMs / 1000) }}
+                title={isMid ? 'Mid-roll card — drag to move, click to edit' : `${label} card — click to edit`}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  if (isMid) {
+                    setDrag({ kind: 'midMove', id: s.card.id, startX: e.clientX, origAt: s.atBodyMs, gStartSec, armed: false });
+                  } else {
+                    onSelectCard?.(gStartSec);
+                  }
+                }}
+              >
+                <span className="card-cap-label">{label}</span>
+              </div>
+            );
+          })}
 
           <div className="playhead" style={{ left: pct(currentTime) }} />
         </div>
@@ -510,8 +598,8 @@ export default function Timeline({
                 key={b.key}
                 className={`zoom-seg ${isSel ? 'selected' : ''} ${b.seg.source === 'manual' ? 'manual' : 'auto'}`}
                 style={{
-                  left: pct(b.outStart),
-                  width: wPct(b.outStart, b.outEnd),
+                  left: bodyLeft(b.outStart),
+                  width: bodyWidth(b.outStart, b.outEnd),
                 }}
                 title={`Zoom ${b.seg.scale.toFixed(2)}x · ${b.seg.source}`}
                 onMouseDown={(e) => onSegMouseDown(e, b.seg)}
@@ -546,8 +634,8 @@ export default function Timeline({
                   key={ov.id}
                   className={`overlay-seg ${ov.type} ${isSel ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
                   style={{
-                    left: pct(start / 1000),
-                    width: wPct(start / 1000, end / 1000),
+                    left: bodyLeft(start / 1000),
+                    width: bodyWidth(start / 1000, end / 1000),
                   }}
                   title={`${label} · ${(start / 1000).toFixed(2)}s → ${(end / 1000).toFixed(2)}s`}
                   onMouseDown={(e) => onOverlayMouseDown(e, ov)}
@@ -575,8 +663,8 @@ export default function Timeline({
             <div
               className={`audio-block ${drag?.kind?.startsWith('audio') ? 'dragging' : ''}`}
               style={{
-                left: pct(backgroundMusic.startMs / 1000),
-                width: wPct(backgroundMusic.startMs / 1000, backgroundMusic.endMs / 1000),
+                left: bodyLeft(backgroundMusic.startMs / 1000),
+                width: bodyWidth(backgroundMusic.startMs / 1000, backgroundMusic.endMs / 1000),
               }}
               title={`${backgroundMusic.name} · ${(backgroundMusic.startMs / 1000).toFixed(2)}s → ${(backgroundMusic.endMs / 1000).toFixed(2)}s`}
               onMouseDown={onAudioMouseDown}

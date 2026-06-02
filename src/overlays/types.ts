@@ -92,6 +92,10 @@ export interface TextOverlay extends OverlayCommon {
   weight?: number;
   letterSpacing?: number;
   align?: 'left' | 'center' | 'right';
+  /** Font id from the card font registry (src/overlays/fonts.ts). Takes
+   * precedence over `mono`; absent → default (Inter), or JetBrains Mono if
+   * `mono` is set (legacy, pre-picker). */
+  fontFamily?: string;
   mono?: boolean;
   typewriter?: Typewriter;
 }

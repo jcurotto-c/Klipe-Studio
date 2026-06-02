@@ -1,0 +1,6 @@
+# pnpm settings (pnpm 11 reads these here, not from package.json's "pnpm" field).
+# Allow these dependencies to run their install/build scripts: electron's
+# postinstall downloads the Electron binary; esbuild's sets up its native binary.
+allowBuilds:
+  electron: true
+  esbuild: true

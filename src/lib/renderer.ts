@@ -211,6 +211,40 @@ function drawBackground(
   if (blurPx > 0) ctx.restore();
 }
 
+/**
+ * Fill a canvas with an intro/outro card background. Reuses the exact same
+ * `drawBackground` routine the main composition uses, so a card's solid
+ * color / gradient / image matches the body pixel-for-pixel in both the live
+ * preview and the export.
+ */
+export function drawCardBackground(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  bg: Background | string | null | undefined,
+): void {
+  drawBackground(ctx, w, h, normalizeBackground(bg));
+}
+
+/**
+ * Resolve once a background's image (if any) has finished decoding. No-op for
+ * color/gradient/wallpaper backgrounds. The export bakes card frames in one
+ * synchronous pass, so without this an image background can be drawn blank on a
+ * cold cache; await this first. Resolves even on error so callers never hang.
+ */
+export async function ensureBackgroundReady(bg: Background | string | null | undefined): Promise<void> {
+  const norm = normalizeBackground(bg);
+  if (norm.type !== 'image' || !norm.src) return;
+  const entry = getCachedImage(norm.src);
+  if (!entry) return;
+  if (entry.ready || entry.img.complete) return;
+  await new Promise<void>((resolve) => {
+    const { img } = entry;
+    img.addEventListener('load', () => resolve(), { once: true });
+    img.addEventListener('error', () => resolve(), { once: true });
+  });
+}
+
 export interface RenderFrameOptions {
   tMs: number;
   segments?: ZoomSegment[];

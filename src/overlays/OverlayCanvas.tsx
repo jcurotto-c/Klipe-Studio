@@ -19,6 +19,7 @@
 
 import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import { OverlayStage } from './engine/OverlayStage';
+import { ensureFontsReady } from './fonts';
 import type { Overlay } from './types';
 
 const DRAG_THRESHOLD_PX = 3;
@@ -40,6 +41,8 @@ interface OverlayCanvasProps {
   timeMs: number;
   /** When true, the overlay canvas captures pointer events. */
   interactive?: boolean;
+  /** Whether text gets the legibility drop-shadow (off for card text). */
+  textShadow?: boolean;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
   /** Called while dragging — `{ x, y }` are fractional canvas units. */
@@ -51,6 +54,7 @@ export default function OverlayCanvas({
   overlays,
   timeMs,
   interactive = false,
+  textShadow = true,
   selectedId = null,
   onSelect,
   onMove,
@@ -89,7 +93,7 @@ export default function OverlayCanvas({
     };
     const initial = measure();
     let cancelled = false;
-    const stage = new OverlayStage();
+    const stage = new OverlayStage({ textShadow });
     stageRef.current = stage;
     void stage.mount(canvas, initial.w, initial.h).then(() => {
       if (cancelled) { stage.dispose(); return; }
@@ -108,6 +112,16 @@ export default function OverlayCanvas({
       void stage.setOverlays(overlays).then(() => {
         if (cancelled) return;
         stage.renderAt(timeMs);
+        // Once self-hosted fonts decode, REBUILD the nodes (a plain re-render
+        // can't re-rasterise cached Text) so the first frame isn't stuck with a
+        // fallback face.
+        void ensureFontsReady().then(() => {
+          if (cancelled || !mountedRef.current) return;
+          stage.invalidate();
+          void stage.setOverlays(overlaysRef.current).then(() => {
+            if (!cancelled && mountedRef.current) stage.renderAt(timeRef.current);
+          });
+        });
       });
     });
     return () => {

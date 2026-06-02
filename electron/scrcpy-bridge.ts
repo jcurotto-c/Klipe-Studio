@@ -158,7 +158,7 @@ export async function spawnScrcpy({ serial, filePath }: SpawnArgs): Promise<Spaw
     return { ok: false, error: 'already-recording' };
   }
   if (!binariesAvailable()) {
-    return { ok: false, error: 'scrcpy binaries not installed — run `npm run setup:scrcpy`' };
+    return { ok: false, error: 'scrcpy binaries not installed — run `pnpm setup:scrcpy`' };
   }
 
   // Defensive: make sure the target directory exists and the file doesn't yet.

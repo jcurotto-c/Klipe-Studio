@@ -60,20 +60,21 @@ On Windows this maps to **Media Foundation** for encode/decode — the same
 ## Getting started
 
 **Requirements:** Windows 10/11 (x64), [Node.js](https://nodejs.org) 18+,
+[pnpm](https://pnpm.io) 11+ (`corepack enable` will provide the pinned version),
 PowerShell (built-in). For phone mirroring you also need an Android device with
 **USB debugging** enabled — scrcpy/adb are downloaded automatically on install.
 
 ```bash
-npm install     # also runs postinstall → downloads + verifies scrcpy/adb
-npm run dev     # boots Vite (renderer) and Electron together with HMR
+pnpm install    # also runs postinstall → downloads + verifies scrcpy/adb
+pnpm dev        # boots Vite (renderer) and Electron together with HMR
 ```
 
-If Electron exits before Vite is ready on the first launch, just rerun `npm run dev`.
+If Electron exits before Vite is ready on the first launch, just rerun `pnpm dev`.
 
 To produce a Windows installer:
 
 ```bash
-npm run build   # typecheck → vite build → electron build → NSIS installer
+pnpm build      # typecheck → vite build → electron build → NSIS installer
 ```
 
 Output is written to `release/` as an NSIS installer (`.exe`).
@@ -111,14 +112,14 @@ during recording or export, and uploads nothing.
 
 ## Scripts
 
-| Command                | What it does                                            |
-| ---------------------- | ------------------------------------------------------- |
-| `npm run dev`          | Vite + Electron together, with HMR                      |
-| `npm run build`        | Typecheck, build the renderer, package a Windows installer |
-| `npm run preview`      | Vite preview (renderer only, no Electron)               |
-| `npm run typecheck`    | `tsc --build` across all tsconfigs                      |
-| `npm run setup:scrcpy` | Re-download and verify the scrcpy/adb binaries          |
-| `npm run audit:check`  | `npm audit --audit-level=high`                          |
+| Command              | What it does                                            |
+| -------------------- | ------------------------------------------------------- |
+| `pnpm dev`           | Vite + Electron together, with HMR                      |
+| `pnpm build`         | Typecheck, build the renderer, package a Windows installer |
+| `pnpm preview`       | Vite preview (renderer only, no Electron)               |
+| `pnpm typecheck`     | `tsc --build` across all tsconfigs                      |
+| `pnpm setup:scrcpy`  | Re-download and verify the scrcpy/adb binaries          |
+| `pnpm audit:check`   | `pnpm audit --audit-level=high`                         |
 
 ---
 

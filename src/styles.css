@@ -2179,6 +2179,56 @@ select {
   z-index: 3;
 }
 
+/* Intro/outro/mid card text block — consistent rows + aligned label column */
+.card-text-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.card-text-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-text-index {
+  font-size: 11px;
+  color: var(--text-1);
+  opacity: 0.55;
+  flex: 0 0 auto;
+}
+/* Unify the label column + row gap across grad-rows and num-rows inside the
+   block so every control's left edge lines up. */
+.card-text-block .grad-row label,
+.card-text-block .num-row-label {
+  flex: 0 0 68px;
+}
+.card-text-block .grad-row,
+.card-text-block .num-row {
+  gap: 8px;
+}
+
+/* Uploaded-logo preview thumbnail in the panel */
+.logo-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background:
+    repeating-conic-gradient(rgba(255, 255, 255, 0.05) 0% 25%, transparent 0% 50%) 0 / 16px 16px,
+    var(--bg-1, #0f1117);
+  overflow: hidden;
+}
+.logo-preview img {
+  max-width: 92%;
+  max-height: 84%;
+  object-fit: contain;
+}
+
 /* Wallpaper / image tab block */
 .wallpaper-block {
   display: flex;
@@ -2714,6 +2764,53 @@ select {
   pointer-events: none;
   z-index: 4;
   margin-left: -1.5px;
+}
+
+/* Intro/outro/mid-roll cards on the main clip track. Opaque base so a mid-roll
+   card reads as its OWN solid block splitting the recording — not a transparent
+   overlay letting the filmstrip show through. */
+.timeline .card-cap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #15171f;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.12),
+    rgba(255, 255, 255, 0.12) 6px,
+    rgba(255, 255, 255, 0.05) 6px,
+    rgba(255, 255, 255, 0.05) 12px
+  );
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 5px;
+  cursor: pointer;
+  z-index: 4;
+  overflow: hidden;
+}
+.timeline .card-cap:hover {
+  background-color: #1d2030;
+}
+.timeline .card-cap.intro { border-left-width: 3px; }
+.timeline .card-cap.outro { border-right-width: 3px; }
+.timeline .card-cap.mid {
+  border-left-width: 3px;
+  border-right-width: 3px;
+  cursor: grab;
+}
+.timeline .card-cap.mid:active,
+.timeline .card-cap.dragging { cursor: grabbing; background-color: #232739; }
+.timeline .card-cap-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-1, #fff);
+  opacity: 0.85;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 /* Danger icon button (delete fragment) */

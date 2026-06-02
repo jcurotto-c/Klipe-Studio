@@ -1,7 +1,7 @@
 // One-off generator: rasterize the brand SVG into a multi-size Windows .ico
 // (plus a 256px PNG) using Electron's bundled Chromium — no extra dependencies.
 //
-//   npm run make:icon      (or: npx electron scripts/make-icon.cjs)
+//   pnpm make:icon      (or: npx electron scripts/make-icon.cjs)
 //
 // Re-run whenever src/assets/branding/klipe-icon.svg changes.
 const { app, BrowserWindow } = require('electron');

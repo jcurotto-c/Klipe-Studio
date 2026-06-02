@@ -43,6 +43,7 @@ import type {
   ZoomSegment,
 } from '../types';
 import type { Overlay } from '../overlays/types';
+import type { CardSet } from '../cards/types';
 
 export const PROJECT_VERSION = 1;
 
@@ -74,6 +75,13 @@ export interface EditDocument {
   mobileOptions: MobileOptions;
   blurRegions: BlurRegion[];
   overlays: Overlay[];
+  /**
+   * Intro / outro title cards. Absent on projects saved before the feature —
+   * `reconstructProject` leaves it undefined and the editor loads it as
+   * `{ intro: null, outro: null }`. Card backgrounds + logo images are stored
+   * inline as data URLs (same convention as overlays), so no extra media files.
+   */
+  cards?: CardSet;
 }
 
 interface MediaRef {
