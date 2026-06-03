@@ -220,11 +220,29 @@ export interface BackgroundImage {
   src: string | null;
   blur?: number;
 }
+/**
+ * Looping video background. `src` is a volatile object URL (a `blob:` ref to the
+ * picked file in-session, or rebuilt from disk bytes on reopen) — NOT inlined.
+ * The clip's bytes persist as a separate project media file (`bgvideo.<ext>`)
+ * and `src` is stripped on save, mirroring `BackgroundMusic`, so a multi-MB clip
+ * never bloats project.json or its re-serialization on every autosave.
+ *
+ * The clip is drawn cover-fit behind the recording, muted and looped. In the
+ * live preview a single shared <video> element (renderer-owned) drives it; the
+ * export decodes the same source via Mediabunny and samples the frame for each
+ * output time so the bake is deterministic.
+ */
+export interface BackgroundVideo {
+  type: 'video';
+  src: string | null;
+  blur?: number;
+}
 export type Background =
   | BackgroundWallpaper
   | BackgroundGradient
   | BackgroundColor
-  | BackgroundImage;
+  | BackgroundImage
+  | BackgroundVideo;
 
 export interface FrameOptions {
   shadow: number;

@@ -114,6 +114,13 @@ export interface ProjectManifest {
     music: MediaRef | null;
     micAudio?: MediaRef | null;
     systemAudio?: MediaRef | null;
+    /**
+     * Looping video-background clip, if the document uses one. Stored as a
+     * separate file (like `music`) rather than inline so a multi-MB clip never
+     * bloats project.json or its re-serialization on every autosave. Absent on
+     * projects saved before the feature.
+     */
+    bgVideo?: MediaRef | null;
   };
 }
 
@@ -199,17 +206,44 @@ async function readMusicMedia(
   }
 }
 
+/**
+ * Read the looping video-background bytes from its volatile object URL, if the
+ * document uses a video background. Same volatile-URL → stored-file pattern as
+ * {@link readMusicMedia}, so the clip survives reopen without living inline in
+ * project.json.
+ */
+async function readBgVideoMedia(
+  doc: EditDocument,
+): Promise<{ ref: MediaRef; bytes: Uint8Array } | null> {
+  if (doc.background?.type !== 'video' || !doc.background.src) return null;
+  try {
+    const res = await fetch(doc.background.src);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const mimeType = res.headers.get('content-type') || 'video/mp4';
+    return { ref: { file: `bgvideo.${extFor(mimeType, 'mp4')}`, mimeType }, bytes };
+  } catch {
+    return null;
+  }
+}
+
 function buildManifest(
   recording: Recording,
   doc: EditDocument,
   musicRef: MediaRef | null,
+  bgVideoRef: MediaRef | null,
 ): ProjectManifest {
   const refs = mediaRefsFor(recording);
-  // Strip the volatile background-music object URL from the persisted doc;
-  // open() rebuilds it from the stored music file.
-  const docToStore = doc.backgroundMusic
-    ? { ...doc, backgroundMusic: { ...doc.backgroundMusic, src: '' } }
-    : doc;
+  // Strip volatile object URLs (background music + video background) from the
+  // persisted doc; open() rebuilds them from their stored media files. Keeping
+  // the video clip out of the JSON is what stops a multi-MB clip from being
+  // re-serialized on every autosave.
+  let docToStore = doc;
+  if (docToStore.backgroundMusic) {
+    docToStore = { ...docToStore, backgroundMusic: { ...docToStore.backgroundMusic, src: '' } };
+  }
+  if (docToStore.background?.type === 'video' && docToStore.background.src) {
+    docToStore = { ...docToStore, background: { ...docToStore.background, src: null } };
+  }
   return {
     klipeProject: true,
     version: PROJECT_VERSION,
@@ -226,6 +260,7 @@ function buildManifest(
       music: musicRef,
       micAudio: refs.micAudio,
       systemAudio: refs.systemAudio,
+      bgVideo: bgVideoRef,
     },
   };
 }
@@ -260,8 +295,10 @@ export async function saveProject(
   }
   const music = await readMusicMedia(doc);
   if (music) media.push({ name: music.ref.file, bytes: music.bytes });
+  const bgVideo = await readBgVideoMedia(doc);
+  if (bgVideo) media.push({ name: bgVideo.ref.file, bytes: bgVideo.bytes });
 
-  const manifest = buildManifest(recording, doc, music?.ref ?? null);
+  const manifest = buildManifest(recording, doc, music?.ref ?? null, bgVideo?.ref ?? null);
   return bridge.save({
     manifestJson: JSON.stringify(manifest),
     media,
@@ -282,11 +319,15 @@ export async function saveProjectDoc(
   const bridge = window.klipe?.project;
   if (!bridge?.saveDoc) return { ok: false, error: 'Project saving is unavailable in this build.' };
   const music = await readMusicMedia(doc);
-  const manifest = buildManifest(recording, doc, music?.ref ?? null);
+  const bgVideo = await readBgVideoMedia(doc);
+  const manifest = buildManifest(recording, doc, music?.ref ?? null, bgVideo?.ref ?? null);
+  const media: Array<{ name: string; bytes: Uint8Array }> = [];
+  if (music) media.push({ name: music.ref.file, bytes: music.bytes });
+  if (bgVideo) media.push({ name: bgVideo.ref.file, bytes: bgVideo.bytes });
   return bridge.saveDoc({
     projectPath,
     manifestJson: JSON.stringify(manifest),
-    media: music ? [{ name: music.ref.file, bytes: music.bytes }] : [],
+    media,
   });
 }
 
@@ -319,10 +360,15 @@ function reconstructProject(result: ReadResult | null): OpenedProject | null {
   const music = blobFor(manifest.media.music);
   const micAudio = blobFor(manifest.media.micAudio ?? null);
   const systemAudio = blobFor(manifest.media.systemAudio ?? null);
+  const bgVideo = blobFor(manifest.media.bgVideo ?? null);
 
   const doc: EditDocument = { ...manifest.doc };
   if (doc.backgroundMusic) {
     doc.backgroundMusic = { ...doc.backgroundMusic, src: music?.url ?? '' };
+  }
+  // Rebuild the video background's volatile object URL from its stored clip.
+  if (doc.background?.type === 'video') {
+    doc.background = { ...doc.background, src: bgVideo?.url ?? null };
   }
 
   const recording: Recording = {

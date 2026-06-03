@@ -130,6 +130,71 @@ function getCachedImage(src: string | null | undefined): ImageCacheEntry | null 
   return entry;
 }
 
+/**
+ * Single-slot cache for the live-preview video background. Unlike images we keep
+ * just ONE element: a playing <video> keeps a decoder alive, so switching the
+ * background must tear the previous one down rather than leak decoders. The
+ * element autoplays muted + looped; the preview's rAF loop draws its current
+ * frame each tick. The EXPORT pipeline never touches this — it samples frames
+ * deterministically via Mediabunny (see BackgroundVideoProvider) instead.
+ */
+interface BgVideoSlot {
+  src: string;
+  el: HTMLVideoElement;
+}
+let bgVideoSlot: BgVideoSlot | null = null;
+
+/**
+ * Tear down the live-preview bg-video element (pause + drop its src) so its
+ * decoder stops. Called when the background changes to a different video, away
+ * from video entirely, or has its clip cleared — otherwise the element keeps
+ * decoding/playing forever in the background. A no-op when nothing is cached.
+ */
+function releaseBgVideo(): void {
+  if (!bgVideoSlot) return;
+  try {
+    bgVideoSlot.el.pause();
+    bgVideoSlot.el.removeAttribute('src');
+    bgVideoSlot.el.load();
+  } catch { /* ignore */ }
+  bgVideoSlot = null;
+}
+
+function getCachedBgVideo(src: string | null | undefined): HTMLVideoElement | null {
+  if (!src) return null;
+  if (bgVideoSlot && bgVideoSlot.src === src) return bgVideoSlot.el;
+  // Different source (or first use): release the previous element's decoder.
+  releaseBgVideo();
+  const el = document.createElement('video');
+  el.crossOrigin = 'anonymous';
+  el.muted = true;
+  el.loop = true;
+  el.autoplay = true;
+  el.playsInline = true;
+  el.preload = 'auto';
+  el.src = src;
+  // Autoplay should fire on its own (muted), but call play() too in case a
+  // gesture-policy quirk holds it back; ignore the promise rejection.
+  void el.play().catch(() => { /* will retry as the loop ticks */ });
+  bgVideoSlot = { src, el };
+  return el;
+}
+
+function drawCoverSource(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  src: CanvasImageSource,
+  iw: number,
+  ih: number,
+): void {
+  if (!iw || !ih) return;
+  const scale = Math.max(w / iw, h / ih);
+  const dw = iw * scale;
+  const dh = ih * scale;
+  ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+}
+
 type BackgroundLike = Background | string | null | undefined;
 
 function normalizeBackground(bg: BackgroundLike): Background {
@@ -168,20 +233,35 @@ function drawCoverImage(
   h: number,
   img: HTMLImageElement,
 ): void {
-  const iw = img.naturalWidth || img.width;
-  const ih = img.naturalHeight || img.height;
-  if (!iw || !ih) return;
-  const scale = Math.max(w / iw, h / ih);
-  const dw = iw * scale;
-  const dh = ih * scale;
-  ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  drawCoverSource(ctx, w, h, img, img.naturalWidth || img.width, img.naturalHeight || img.height);
 }
 
+/** Width/height of any drawable source (image, <video>, or WebCodecs frame). */
+function sourceDims(src: CanvasImageSource): { w: number; h: number } {
+  if (src instanceof HTMLVideoElement) return { w: src.videoWidth, h: src.videoHeight };
+  if (typeof VideoFrame !== 'undefined' && src instanceof VideoFrame) {
+    return { w: src.displayWidth, h: src.displayHeight };
+  }
+  const anySrc = src as unknown as { width?: number; height?: number };
+  return { w: anySrc.width ?? 0, h: anySrc.height ?? 0 };
+}
+
+/**
+ * Paint the chosen background to fill `w×h`.
+ *
+ * `videoFrame` only matters for `type: 'video'`:
+ *   - `undefined` → preview path: draw the renderer-owned looping <video>'s
+ *                   current frame (or a dark base while it's still loading).
+ *   - a value     → export path: draw this exact decoded frame.
+ *   - `null`      → export path with no frame ready yet: dark base only (never
+ *                   falls back to the live element, which would be off-clock).
+ */
 function drawBackground(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
   bg: Background,
+  videoFrame?: CanvasImageSource | null,
 ): void {
   const blurPx = Math.max(0, Number(bg.blur ?? 0) || 0);
 
@@ -203,6 +283,23 @@ function drawBackground(
     ctx.fillRect(0, 0, w, h);
     const entry = getCachedImage(bg.src);
     if (entry && entry.ready) drawCoverImage(ctx, w, h, entry.img);
+  } else if (bg.type === 'video') {
+    // Dark base first so the frame is never transparent (blur/letterbox edges).
+    ctx.fillStyle = '#0b0d12';
+    ctx.fillRect(0, 0, w, h);
+    let frame: CanvasImageSource | null = null;
+    if (videoFrame !== undefined) {
+      // Export path: use exactly what was supplied (frame or, if null, nothing).
+      frame = videoFrame;
+    } else {
+      // Preview path: pull the renderer-owned looping element if it has data.
+      const el = getCachedBgVideo(bg.src);
+      if (el && el.readyState >= 2 && el.videoWidth > 0) frame = el;
+    }
+    if (frame) {
+      const { w: iw, h: ih } = sourceDims(frame);
+      drawCoverSource(ctx, w, h, frame, iw, ih);
+    }
   } else {
     const preset = WALLPAPER_PRESETS[bg.value] ?? WALLPAPER_PRESETS['default']!;
     fillLinearGradient(ctx, w, h, preset.from, preset.to, 135);
@@ -252,6 +349,14 @@ export interface RenderFrameOptions {
   displayWidth?: number;
   displayHeight?: number;
   background?: BackgroundLike;
+  /**
+   * Decoded frame for a `type: 'video'` background, supplied by the export
+   * pipeline (one VideoFrame per output time). Omit in the live preview — the
+   * renderer then drives its own looping <video> element. A value of `null`
+   * means "video background, but no frame is ready yet" → a dark base is drawn
+   * (and the live element is NOT used, so the export stays deterministic).
+   */
+  backgroundFrame?: CanvasImageSource | null;
   paddingScale?: number;
   showCursor?: boolean;
   crop?: Crop | null;
@@ -454,6 +559,7 @@ export function renderFrame(
     displayWidth,
     displayHeight,
     background = 'default',
+    backgroundFrame,
     paddingScale,
     showCursor = true,
     crop = null,
@@ -497,11 +603,21 @@ export function renderFrame(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
+  const normBg = normalizeBackground(background);
   if (!fOpts.removeBackground) {
-    drawBackground(ctx, cw, ch, normalizeBackground(background));
+    drawBackground(ctx, cw, ch, normBg, backgroundFrame);
   } else {
     ctx.clearRect(0, 0, cw, ch);
   }
+  // Release the live-preview bg-video decoder whenever this frame doesn't draw
+  // it via the preview path — i.e. the background isn't a video, has no clip, is
+  // hidden by removeBackground, or the caller (export) supplied its own frame.
+  // This is the ONLY release site: it lives in renderFrame, not drawBackground,
+  // so the card-background path (which shares this module slot during a
+  // crossfade) never tears the body's element down. No-op when nothing cached.
+  const usesPreviewBgVideo =
+    normBg.type === 'video' && !!normBg.src && backgroundFrame === undefined && !fOpts.removeBackground;
+  if (!usesPreviewBgVideo) releaseBgVideo();
 
   // Phone-primary mode: the phone is the recording's main subject. Render
   // the phone frame on the background; skip the screen source, cursor, camera,

@@ -49,6 +49,53 @@ export function binariesAvailable(): boolean {
   } catch { return false; }
 }
 
+// ─── stray-process recovery ────────────────────────────────────────────
+// scrcpy runs as a child process; if Klipe crashes hard while recording a
+// phone, that child can be orphaned and keep holding the device. We record the
+// live PID to a file and, on the next launch, kill whatever it points at —
+// surgically, via taskkill's IMAGENAME filter so PID reuse can never hit an
+// unrelated process.
+
+function scrcpyPidFile(): string {
+  return path.join(app.getPath('temp'), 'klipe-scrcpy.pid');
+}
+
+function writeScrcpyPid(pid: number | undefined): void {
+  if (!pid) return;
+  try { fs.writeFileSync(scrcpyPidFile(), String(pid)); } catch { /* best-effort */ }
+}
+
+function clearScrcpyPid(): void {
+  try { fs.rmSync(scrcpyPidFile(), { force: true }); } catch { /* best-effort */ }
+}
+
+/**
+ * Kill a scrcpy process orphaned by a previous crashed session, then clear the
+ * stale PID file. Safe no-op when there's nothing to clean. Windows-only (adb
+ * phone capture only ships on Windows today).
+ */
+export function killStrayScrcpyFromPreviousSession(): void {
+  if (process.platform !== 'win32') return;
+  let pid = 0;
+  try {
+    const raw = fs.readFileSync(scrcpyPidFile(), 'utf8').trim();
+    pid = Number(raw);
+  } catch { return; /* no pid file → nothing stranded */ }
+  if (!Number.isInteger(pid) || pid <= 0) { clearScrcpyPid(); return; }
+  // /FI "IMAGENAME eq scrcpy.exe" guarantees we only terminate the PID if it is
+  // actually scrcpy — protects against PID reuse killing something else.
+  execFile(
+    'taskkill',
+    ['/F', '/PID', String(pid), '/FI', 'IMAGENAME eq scrcpy.exe'],
+    { timeout: 4000, windowsHide: true },
+    (err) => {
+      if (err) console.info('[scrcpy-bridge] no stray scrcpy to reap (or already gone)');
+      else console.warn(`[scrcpy-bridge] reaped stray scrcpy PID ${pid} from a previous session`);
+    },
+  );
+  clearScrcpyPid();
+}
+
 // ─── adb device listing ────────────────────────────────────────────────
 
 export interface AdbDevice {
@@ -161,6 +208,30 @@ export async function spawnScrcpy({ serial, filePath }: SpawnArgs): Promise<Spaw
     return { ok: false, error: 'scrcpy binaries not installed — run `pnpm setup:scrcpy`' };
   }
 
+  // Validate renderer-supplied inputs before they reach spawn argv / the FS.
+  // serial is concatenated into scrcpy's --serial argument; constrain it to the
+  // characters adb serials actually use (alnum, dot, colon, underscore, dash).
+  if (typeof serial !== 'string' || !/^[A-Za-z0-9._:-]+$/.test(serial)) {
+    return { ok: false, error: 'invalid device serial' };
+  }
+  // filePath must resolve strictly inside the OS temp dir (it's minted by
+  // makeTempMobilePath); reject anything else so the renderer can't aim the
+  // recording write at an arbitrary location.
+  if (typeof filePath !== 'string') {
+    return { ok: false, error: 'invalid output path' };
+  }
+  const tempRoot = path.resolve(app.getPath('temp'));
+  const resolvedOut = path.resolve(filePath);
+  if (resolvedOut !== tempRoot && !resolvedOut.startsWith(tempRoot + path.sep)) {
+    return { ok: false, error: 'output path must be inside the temp dir' };
+  }
+  // Cross-check the serial against currently-attached devices: a value that
+  // passes the regex but isn't a real device should never reach spawn.
+  const attached = await listAdbDevices();
+  if (!attached.some((d) => d.serial === serial)) {
+    return { ok: false, error: 'device not found' };
+  }
+
   // Defensive: make sure the target directory exists and the file doesn't yet.
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -222,6 +293,7 @@ export async function spawnScrcpy({ serial, filePath }: SpawnArgs): Promise<Spaw
         const reason = (stderrTail.split('\n').filter(Boolean).pop() || 'unknown').slice(0, 240);
         emitDisconnect(wasActive.serial, reason);
         active = null;
+        clearScrcpyPid();
       }
     }
     exitResolve({ exitCode: code });
@@ -239,6 +311,7 @@ export async function spawnScrcpy({ serial, filePath }: SpawnArgs): Promise<Spaw
     expectingExit: false,
     stderrTail: '',
   };
+  writeScrcpyPid(proc.pid);
 
   // Give scrcpy a brief moment to fail fast (e.g. binary missing, phone
   // disappeared between listDevices and now). If it exits within 1.2s, the
@@ -249,6 +322,7 @@ export async function spawnScrcpy({ serial, filePath }: SpawnArgs): Promise<Spaw
   ]);
   if (fastFail.done) {
     active = null;
+    clearScrcpyPid();
     const tail = stderrTail.split('\n').filter(Boolean).pop() || `exit ${fastFail.exitCode}`;
     return { ok: false, error: tail.slice(0, 240) };
   }
@@ -298,6 +372,7 @@ export async function stopScrcpy(): Promise<StopResult> {
 
   const final = await cur.exited;
   active = null;
+  clearScrcpyPid();
 
   // Log the resulting file size for debugging; a tiny file means the
   // muxer didn't flush.
@@ -336,9 +411,16 @@ function sendCtrlCToScrcpy(pid: number): Promise<void> {
 }
 
 export async function readScrcpyFile(filePath: string): Promise<ArrayBuffer> {
-  const buf = await fs.promises.readFile(filePath);
+  // The renderer only ever passes back a path minted by makeTempMobilePath;
+  // constrain reads (this also unlinks) to the temp dir as defense-in-depth.
+  const tempRoot = path.resolve(app.getPath('temp'));
+  const resolved = path.resolve(filePath);
+  if (resolved !== tempRoot && !resolved.startsWith(tempRoot + path.sep)) {
+    throw new Error('refusing to read outside the temp dir');
+  }
+  const buf = await fs.promises.readFile(resolved);
   // Best-effort delete; the temp file isn't ours after the renderer has it.
-  fs.promises.unlink(filePath).catch(() => { /* ignore */ });
+  fs.promises.unlink(resolved).catch(() => { /* ignore */ });
   // Copy into a fresh ArrayBuffer; Node's Buffer is a slice over a shared
   // pool and we don't want IPC serialization to leak the rest of the pool.
   const ab = new ArrayBuffer(buf.byteLength);
@@ -356,6 +438,7 @@ export function cleanupAllScrcpy(): void {
     if (active.filePath) fs.unlinkSync(active.filePath);
   } catch { /* ignore */ }
   active = null;
+  clearScrcpyPid();
 }
 
 export function makeTempMobilePath(): string {

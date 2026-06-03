@@ -1,8 +1,8 @@
-import { app, BrowserWindow, Menu, desktopCapturer, globalShortcut, ipcMain, dialog, screen, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, Menu, crashReporter, desktopCapturer, globalShortcut, ipcMain, dialog, screen, session, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { hideCursor, showCursor, isCursorHidden } from './cursorHider';
+import { hideCursor, showCursor, isCursorHidden, setCursorSentinelPath, recoverCursorIfStranded } from './cursorHider';
 import {
   listAdbDevices,
   spawnScrcpy,
@@ -12,9 +12,16 @@ import {
   makeTempMobilePath,
   onScrcpyDisconnect,
   binariesAvailable,
+  killStrayScrcpyFromPreviousSession,
 } from './scrcpy-bridge';
 
 const isDev = process.env['NODE_ENV'] === 'development';
+
+// Collect native crash minidumps locally (no upload). Without this a GPU/native
+// crash leaves no trace; with it the dumps land under userData/Crashpad so a
+// "the cursor was stranded again" report is actually diagnosable. Must be
+// called as early as possible, before any window exists.
+crashReporter.start({ uploadToServer: false });
 
 // Window + taskbar icon. In dev this resolves to <root>/build/icon.ico (one
 // level above electron-dist/). In the packaged app the .exe already carries the
@@ -24,6 +31,88 @@ const APP_ICON = path.join(__dirname, '..', 'build', 'icon.ico');
 const appIcon = fs.existsSync(APP_ICON) ? APP_ICON : undefined;
 
 Menu.setApplicationMenu(null);
+
+// ---------------------------------------------------------------------------
+// Renderer hardening. The app loads from file:// in production with
+// sandbox:false, so a renderer compromise would otherwise reach every Node-
+// backed IPC handler. Two cheap, high-value guards close that off:
+//   1. A Content-Security-Policy (applied in production via response headers).
+//   2. Deny all window.open popups and block top-level navigation away from
+//      the app origin — the app is a SPA and never navigates legitimately.
+// The CSP must allow the external hosts the LOCAL Whisper captions feature
+// genuinely needs: transformers.js (@huggingface/transformers 4.x) downloads
+// the model from huggingface.co (redirecting to *.hf.co / cdn-lfs) and the
+// onnxruntime-web WASM runtime from cdn.jsdelivr.net. 'wasm-unsafe-eval' is
+// required to instantiate that WASM. If captions stop working in a packaged
+// build, this policy is the first place to check.
+const DEV_ORIGIN = 'http://localhost:5173';
+
+const CSP_PRODUCTION = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "media-src 'self' blob: data:",
+  "worker-src 'self' blob:",
+  "connect-src 'self' data: blob: https://huggingface.co https://*.huggingface.co https://*.hf.co https://cdn.jsdelivr.net",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+  "frame-src 'none'",
+].join('; ');
+
+function isAllowedNavigation(targetUrl: string): boolean {
+  try {
+    const u = new URL(targetUrl);
+    // Dev runs against the Vite server; production is served from file://.
+    return isDev ? u.origin === DEV_ORIGIN : u.protocol === 'file:';
+  } catch {
+    return false;
+  }
+}
+
+// Defense-in-depth for IPC: confirm a privileged (FS / process-spawning)
+// handler is being called by one of our own frames, not an injected foreign
+// origin. CSP + the navigation guards are the primary control; this rejects a
+// *positively* foreign origin while staying permissive when the frame URL can't
+// be read, so a transient frame state never breaks a legitimate call.
+function isTrustedSender(event: IpcMainInvokeEvent): boolean {
+  const url = event.senderFrame?.url;
+  if (!url) return true;
+  return isAllowedNavigation(url);
+}
+
+function hardenWebContents(contents: Electron.WebContents): void {
+  // Deny all popups / new windows — nothing in the app opens one.
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const blockNav = (e: Electron.Event, url: string): void => {
+    if (!isAllowedNavigation(url)) {
+      e.preventDefault();
+      console.warn('[security] blocked navigation to', url);
+    }
+  };
+  contents.on('will-navigate', blockNav);
+  contents.on('will-redirect', blockNav);
+}
+
+// Registered at module load (before whenReady fires) so it covers every
+// window: main, hud, cursor-preview and camera-preview.
+app.on('web-contents-created', (_e, contents) => hardenWebContents(contents));
+
+// Single-instance lock. Two running copies would race over genuinely global
+// OS state with no cross-process guard: the blanked system cursor
+// (SetSystemCursor) and scrcpy's single-session invariant. If we don't get the
+// lock, a copy is already running — quit and let the primary instance focus.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+});
 
 let mainWindow: BrowserWindow | null = null;
 let hudWindow: BrowserWindow | null = null;
@@ -441,9 +530,20 @@ function applyGlobalShortcuts(s: GlobalShortcuts): ShortcutRegResult[] {
 }
 
 app.whenReady().then(() => {
+  // A second instance that lost the lock above is quitting — never create
+  // windows for it.
+  if (!app.hasSingleInstanceLock()) return;
+
   // Group the taskbar entry under our own AppUserModelID so Windows shows the
   // Klipe icon (not electron.exe's) and attributes notifications correctly.
   if (process.platform === 'win32') app.setAppUserModelId('com.klipe.studio');
+
+  // Crash recovery: undo any global OS state a previous run left stranded —
+  // a blanked system cursor and/or an orphaned scrcpy child — before doing
+  // anything else.
+  setCursorSentinelPath(path.join(app.getPath('userData'), 'cursor-hidden.flag'));
+  recoverCursorIfStranded();
+  killStrayScrcpyFromPreviousSession();
 
   // Grant the capture permissions a local recorder needs (mic, camera, screen).
   // Electron shows no browser-style prompt; without this the renderer's
@@ -456,6 +556,22 @@ app.whenReady().then(() => {
     const allowed = ['media', 'audioCapture', 'videoCapture', 'display-capture'];
     return allowed.includes(permission);
   });
+
+  // Apply the Content-Security-Policy in production only. In dev the Vite
+  // server needs inline scripts, eval and a websocket for HMR, so a strict CSP
+  // there would just break the dev loop without adding real protection (dev
+  // isn't shipped). Electron's webRequest does intercept file:// responses, so
+  // this reaches the packaged app's document loads.
+  if (!isDev) {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [CSP_PRODUCTION],
+        },
+      });
+    });
+  }
 
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     const targetId = pendingDisplayMediaSourceId;
@@ -509,9 +625,16 @@ ipcMain.handle('prepare-display-media', (_evt: IpcMainInvokeEvent, sourceId: unk
 // during a recording.
 ipcMain.handle('adb:list-devices', () => listAdbDevices());
 ipcMain.handle('scrcpy:temp-path', () => makeTempMobilePath());
-ipcMain.handle('scrcpy:start', (_e, args: { serial: string; filePath: string }) => spawnScrcpy(args));
+ipcMain.handle('scrcpy:start', (_e: IpcMainInvokeEvent, args: { serial: string; filePath: string }) => {
+  if (!isTrustedSender(_e)) return Promise.resolve({ ok: false, error: 'untrusted sender' });
+  return spawnScrcpy(args);
+});
 ipcMain.handle('scrcpy:stop', () => stopScrcpy());
-ipcMain.handle('scrcpy:read', (_e, p: string) => readScrcpyFile(p));
+ipcMain.handle('scrcpy:read', (_e: IpcMainInvokeEvent, p: unknown) => {
+  if (!isTrustedSender(_e)) throw new Error('untrusted sender');
+  if (typeof p !== 'string') throw new Error('invalid path');
+  return readScrcpyFile(p);
+});
 ipcMain.handle('scrcpy:available', () => binariesAvailable());
 
 // When scrcpy exits without us asking (phone unplugged, scrcpy crashed),
@@ -547,6 +670,18 @@ process.on('SIGTERM', () => { ensureCursorRestored(); process.exit(0); });
 process.on('uncaughtException', (err) => {
   console.error('[main] uncaught:', err);
   ensureCursorRestored();
+});
+
+// A renderer or child (GPU/utility) process dying is exactly the scenario that
+// strands the system cursor — the dead renderer can't run its own teardown, so
+// the main process restores it. Logged so the failure is visible alongside the
+// crashReporter minidumps.
+app.on('render-process-gone', (_e, _wc, details) => {
+  console.error('[main] render-process-gone:', details.reason, 'exitCode', details.exitCode);
+  ensureCursorRestored();
+});
+app.on('child-process-gone', (_e, details) => {
+  console.error('[main] child-process-gone:', details.type, details.reason, 'exitCode', details.exitCode);
 });
 
 ipcMain.handle('get-screen-sources', async () => {
@@ -623,6 +758,7 @@ interface SaveVideoBlobArgs {
 ipcMain.handle(
   'save-video-blob',
   async (_evt: IpcMainInvokeEvent, { buffer, suggestedName, mimeType }: SaveVideoBlobArgs) => {
+    if (!isTrustedSender(_evt)) return { canceled: true as const };
     const ext = mimeType && mimeType.includes('mp4') ? 'mp4' : 'webm';
     const defaultPath = path.join(
       app.getPath('videos'),
@@ -638,7 +774,9 @@ ipcMain.handle(
       ],
     });
     if (result.canceled || !result.filePath) return { canceled: true as const };
-    fs.writeFileSync(result.filePath, Buffer.from(buffer as ArrayBuffer));
+    // Async write: a 4K export can be hundreds of MB — fs.writeFileSync would
+    // block the main process (frozen UI, unresponsive HUD) for the whole flush.
+    await fs.promises.writeFile(result.filePath, Buffer.from(buffer as ArrayBuffer));
     return { canceled: false as const, filePath: result.filePath };
   },
 );
@@ -692,6 +830,7 @@ interface ProjectSaveArgs {
 // source media (screen/camera/mobile/music). The renderer supplies the JSON
 // and the raw bytes; we only do the file IO here.
 ipcMain.handle('project:save', async (_evt: IpcMainInvokeEvent, args: ProjectSaveArgs) => {
+  if (!isTrustedSender(_evt)) return { canceled: true as const };
   if (!mainWindow) return { canceled: true as const };
   const { manifestJson, media, suggestedName } = args || ({} as ProjectSaveArgs);
   if (typeof manifestJson !== 'string' || !Array.isArray(media)) {
@@ -758,7 +897,10 @@ ipcMain.handle('project:open', async () => {
 
 // Open a known project folder without a dialog — used by the recents list.
 ipcMain.handle('project:open-path', async (_evt: IpcMainInvokeEvent, projectPath: unknown) => {
-  if (typeof projectPath !== 'string' || !projectPath) return { canceled: true as const };
+  if (!isTrustedSender(_evt)) return { canceled: true as const };
+  if (typeof projectPath !== 'string' || !projectPath || !path.isAbsolute(projectPath)) {
+    return { canceled: true as const };
+  }
   return readProjectDir(projectPath);
 });
 
@@ -772,8 +914,9 @@ interface ProjectSaveDocArgs {
 // background music) in an existing project folder. The large video blobs are
 // immutable in the editor, so they are never rewritten here.
 ipcMain.handle('project:save-doc', async (_evt: IpcMainInvokeEvent, args: ProjectSaveDocArgs) => {
+  if (!isTrustedSender(_evt)) return { ok: false as const, error: 'untrusted sender' };
   const { projectPath, manifestJson, media } = args || ({} as ProjectSaveDocArgs);
-  if (typeof projectPath !== 'string' || typeof manifestJson !== 'string') {
+  if (typeof projectPath !== 'string' || typeof manifestJson !== 'string' || !path.isAbsolute(projectPath)) {
     return { ok: false as const, error: 'Invalid args' };
   }
   try {
@@ -1032,6 +1175,7 @@ if ([FW]::IsIconic($h)) { [void][FW]::ShowWindow($h, 9) }
 `;
 
 ipcMain.handle('focus-window-source', async (_evt: IpcMainInvokeEvent, sourceId: unknown) => {
+  if (!isTrustedSender(_evt)) return { ok: false as const };
   if (process.platform !== 'win32') return { ok: false as const };
   if (typeof sourceId !== 'string') return { ok: false as const };
   const parts = sourceId.split(':');

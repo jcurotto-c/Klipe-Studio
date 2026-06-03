@@ -5,6 +5,7 @@ import type { Recording } from './types';
 import { openProject, openProjectPath, type EditDocument } from './lib/project';
 import { loadRecents, addRecent, removeRecent, type RecentProject } from './lib/recents';
 import { loadGlobalShortcuts, applyGlobalShortcuts } from './lib/global-shortcuts';
+import { releaseFilmstrip } from './lib/filmstrip';
 import logoIcon from './assets/branding/klipe-icon.svg';
 
 type View = 'recorder' | 'editor';
@@ -31,7 +32,7 @@ export default function App(): JSX.Element {
   }, []);
 
   const handleNewRecording = useCallback(() => {
-    if (recording?.url) URL.revokeObjectURL(recording.url);
+    if (recording?.url) { releaseFilmstrip(recording.url); URL.revokeObjectURL(recording.url); }
     setLoadedDoc(null);
     setCurrentProjectPath(null);
     setRecording(null);
@@ -40,7 +41,7 @@ export default function App(): JSX.Element {
   }, [recording]);
 
   const applyOpened = useCallback((opened: { recording: Recording; doc: EditDocument; projectPath: string }) => {
-    if (recording?.url) URL.revokeObjectURL(recording.url);
+    if (recording?.url) { releaseFilmstrip(recording.url); URL.revokeObjectURL(recording.url); }
     setLoadedDoc(opened.doc);
     setRecording(opened.recording);
     setCurrentProjectPath(opened.projectPath || null);

@@ -22,7 +22,7 @@ import {
   playKeystrokeSound,
 } from './sound-fx';
 import { createMp4Encoder, isMp4ExportSupported } from './mp4-encoder';
-import { SourceDecoder, CameraFrameProvider } from './source-decoder';
+import { SourceDecoder, CameraFrameProvider, BackgroundVideoProvider } from './source-decoder';
 import { OverlayStage } from '../overlays/engine/OverlayStage';
 import type {
   AudioFxOptions,
@@ -410,6 +410,29 @@ async function exportVideoMp4({
     }
   }
 
+  // Looping video background: decode the chosen clip via Mediabunny and sample
+  // the frame matching each output time, so the bake is frame-accurate (an
+  // autoplaying <video> would drift against the export clock). The source is a
+  // data URL (or object URL) we fetch back into a blob to feed the decoder.
+  let bgVideoProvider: BackgroundVideoProvider | null = null;
+  if (background?.type === 'video' && background.src) {
+    const provider = new BackgroundVideoProvider();
+    try {
+      const blob = await (await fetch(background.src)).blob();
+      const ok = await provider.init(blob);
+      if (ok) {
+        bgVideoProvider = provider;
+        onLog?.('Video background ready: compositing looping clip behind each frame');
+      } else {
+        provider.destroy();
+        onLog?.('Video background had no decodable video track — export will show a dark background');
+      }
+    } catch (e) {
+      provider.destroy();
+      onLog?.(`WARNING: video background failed to load (${errorMessage(e)}) — export will show a dark background instead`);
+    }
+  }
+
   const fallbackFrameDur = 1 / fps;
   // Body output-time consumed so far (0 at the first recorded frame). The global
   // timestamp for each frame is derived from this via bodyToGlobalMs.
@@ -496,6 +519,7 @@ async function exportVideoMp4({
   const cleanup = async (): Promise<void> => {
     sourceDecoder.destroy();
     cameraProvider?.destroy();
+    bgVideoProvider?.destroy();
     overlayStage?.dispose();
     cardStage?.dispose();
     if (overlayCanvas) { overlayCanvas.width = 0; overlayCanvas.height = 0; }
@@ -526,6 +550,12 @@ async function exportVideoMp4({
 
   // ---- 4) Drive frames through the pipeline, fragment by fragment ---------
   let nextMid = 0;
+  // Per-frame error recovery: a single renderFrame failure (a transient
+  // decode/draw glitch) shouldn't lose the whole export. We tolerate a run of
+  // failures by re-encoding the previous good canvas, and only abort if the
+  // failures pile up (genuinely corrupt source / dead GPU).
+  let frameFailures = 0;
+  const MAX_CONSEC_FRAME_FAILURES = 30;
   try {
     await prebakeCrossfades();
 
@@ -563,69 +593,87 @@ async function exportVideoMp4({
           nextMid++;
         }
 
-        const tMs = mediaTimeSec * 1000;
-        // Pull the webcam frame for this output time (null when no provider /
-        // before the camera's first frame) and let renderFrame draw the disc.
-        const cameraFrame = cameraProvider ? await cameraProvider.frameAt(mediaTimeSec) : null;
-        renderFrame(ctx, videoFrame, {
-          tMs,
-          segments,
-          mouse,
-          displayWidth: display?.width,
-          displayHeight: display?.height,
-          background,
-          crop,
-          fitMode: fitMode ?? 'fit',
-          cameraSource: cameraFrame,
-          cameraOptions,
-          cursorState,
-          cursorOptions,
-          frame,
-          cursorFollowState,
-          cursorFollowEnabled: camera.enabled,
-          cursorFollowConfig: camera.config,
-          zoomBlur: zoomBlur ?? 0,
-          blurRegions,
-          // Phone-primary export: the source IS the phone capture. Feed
-          // the decoded VideoFrame as mobileSource and tell renderFrame
-          // to draw the iPhone-centered layout instead of the screen.
-          mobilePrimary,
-          mobileSource: mobilePrimary ? videoFrame : null,
-          mobileOptions,
-        });
-
+        // Compute the output timestamp FIRST so that, if rendering this frame
+        // fails, we can still emit a correctly-timed duplicate of the previous
+        // good canvas and keep audio/video in lockstep.
         let outSec = bodyToGlobalMs(tl, bodyMsNow) / 1000;
         if (outSec <= lastTimestampSec) outSec = lastTimestampSec + 1e-6;
         lastTimestampSec = outSec;
-
-        // Composite text/image overlays on top — sampled at BODY output-time so
-        // their keyframes line up with what the user authored in the editor.
-        if (overlayStage && overlayCanvas) {
-          overlayStage.renderAt(bodySec * 1000);
-          ctx.drawImage(overlayCanvas, 0, 0);
-        }
-
-        // Crossfade the adjacent card over the live frame (a card dissolving in
-        // over the body before it, or out over the body after it). Mirrors the
-        // editor preview exactly.
-        const trans = resolveTransition(tl, outSec * 1000);
-        if (trans) {
-          const baked = bakedFrames.get(bakedKey(trans.card, trans.localMs));
-          if (baked) {
-            ctx.save();
-            ctx.globalAlpha = Math.min(1, Math.max(0, trans.alpha));
-            ctx.drawImage(baked, 0, 0);
-            ctx.restore();
-          }
-        }
-
         const dur = durationSec > 0 ? durationSec : fallbackFrameDur;
+
+        try {
+          const tMs = mediaTimeSec * 1000;
+          // Pull the webcam frame for this output time (null when no provider /
+          // before the camera's first frame) and let renderFrame draw the disc.
+          const cameraFrame = cameraProvider ? await cameraProvider.frameAt(mediaTimeSec) : null;
+          // Looping background-video frame at this output time. When there's a
+          // video background we always pass a defined value (frame or null) so
+          // the renderer never falls back to its live preview element.
+          const bgFrame = bgVideoProvider
+            ? await bgVideoProvider.frameAt(outSec)
+            : (background?.type === 'video' ? null : undefined);
+          renderFrame(ctx, videoFrame, {
+            tMs,
+            segments,
+            mouse,
+            displayWidth: display?.width,
+            displayHeight: display?.height,
+            background,
+            backgroundFrame: bgFrame,
+            crop,
+            fitMode: fitMode ?? 'fit',
+            cameraSource: cameraFrame,
+            cameraOptions,
+            cursorState,
+            cursorOptions,
+            frame,
+            cursorFollowState,
+            cursorFollowEnabled: camera.enabled,
+            cursorFollowConfig: camera.config,
+            zoomBlur: zoomBlur ?? 0,
+            blurRegions,
+            // Phone-primary export: the source IS the phone capture. Feed
+            // the decoded VideoFrame as mobileSource and tell renderFrame
+            // to draw the iPhone-centered layout instead of the screen.
+            mobilePrimary,
+            mobileSource: mobilePrimary ? videoFrame : null,
+            mobileOptions,
+          });
+
+          // Composite text/image overlays on top — sampled at BODY output-time
+          // so their keyframes line up with what the user authored in the editor.
+          if (overlayStage && overlayCanvas) {
+            overlayStage.renderAt(bodySec * 1000);
+            ctx.drawImage(overlayCanvas, 0, 0);
+          }
+
+          // Crossfade the adjacent card over the live frame (a card dissolving
+          // in over the body before it, or out over the body after it). Mirrors
+          // the editor preview exactly.
+          const trans = resolveTransition(tl, outSec * 1000);
+          if (trans) {
+            const baked = bakedFrames.get(bakedKey(trans.card, trans.localMs));
+            if (baked) {
+              ctx.save();
+              ctx.globalAlpha = Math.min(1, Math.max(0, trans.alpha));
+              ctx.drawImage(baked, 0, 0);
+              ctx.restore();
+            }
+          }
+          frameFailures = 0;
+        } catch (e) {
+          // Keep the previous good canvas content and fall through to encode it
+          // as a duplicate. Abort only once failures pile up.
+          if (++frameFailures > MAX_CONSEC_FRAME_FAILURES) throw e;
+          onLog?.(`Frame at ${outSec.toFixed(2)}s failed (${errorMessage(e)}); duplicating previous frame`);
+        }
+
         await encoder.addFrame(outSec, dur);
 
         if (onProgress) {
           onProgress('encoding', Math.min(0.99, outSec / total));
         }
-      });
+      }, signal);
 
       elapsedBody += fragDur;
     }

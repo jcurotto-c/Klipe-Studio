@@ -397,10 +397,10 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
       const angle = background.angle == null ? 135 : background.angle;
       return { background: `linear-gradient(${angle}deg, ${background.from}, ${background.to})` };
     }
-    if (background.type === 'image') {
-      // The canvas renders the image cover-fit to its own size; matching that
-      // exactly in CSS on the larger .preview rect would require runtime layout
-      // math, so we fall back to the dark surround here to avoid a visible seam.
+    if (background.type === 'image' || background.type === 'video') {
+      // The canvas renders the image/video cover-fit to its own size; matching
+      // that exactly in CSS on the larger .preview rect would require runtime
+      // layout math, so we fall back to the dark surround here to avoid a seam.
       return {};
     }
     const preset = WALLPAPER_PRESETS[background.value] ?? WALLPAPER_PRESETS['default']!;

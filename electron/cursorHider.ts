@@ -1,4 +1,27 @@
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+
+// On-disk sentinel marking "the system cursor is currently blanked". Because
+// SetSystemCursor persists until the next reboot, a hard crash (GPU crash,
+// SIGKILL, power loss) while recording would otherwise strand the user with an
+// invisible cursor and no running process to restore it. We write this file
+// when hiding and delete it when restoring; on the next launch the main process
+// calls recoverCursorIfStranded() to detect and undo a stranded state.
+let sentinelPath: string | null = null;
+
+export function setCursorSentinelPath(p: string): void {
+  sentinelPath = p;
+}
+
+function writeSentinel(): void {
+  if (!sentinelPath) return;
+  try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch { /* best-effort */ }
+}
+
+function clearSentinel(): void {
+  if (!sentinelPath) return;
+  try { fs.rmSync(sentinelPath, { force: true }); } catch { /* best-effort */ }
+}
 
 // Standard Win32 OCR_* cursor IDs we replace while recording. Covers the
 // cursors most apps load via LoadCursor/IDC_*.
@@ -96,7 +119,12 @@ export function hideCursor(): boolean {
   if (process.platform !== 'win32') return false;
   if (cursorHidden) return true;
   const ok = runPowerShell(HIDE_SCRIPT);
-  if (ok) cursorHidden = true;
+  if (ok) {
+    cursorHidden = true;
+    // Mark the stranded-cursor sentinel BEFORE the recording starts so a crash
+    // mid-take is always recoverable on next launch.
+    writeSentinel();
+  }
   return ok;
 }
 
@@ -107,9 +135,29 @@ export function showCursor(): boolean {
   // Restore the in-memory flag even if the script returned non-zero, so we
   // don't get stuck unable to retry. The next hideCursor() can reapply.
   cursorHidden = false;
+  clearSentinel();
   return ok;
 }
 
 export function isCursorHidden(): boolean {
   return cursorHidden;
+}
+
+/**
+ * Restore the system cursor if a previous run blanked it and crashed before
+ * restoring (detected via the on-disk sentinel). Safe to call once at startup;
+ * a no-op when the sentinel is absent. Returns true if a stranded cursor was
+ * recovered.
+ */
+export function recoverCursorIfStranded(): boolean {
+  if (process.platform !== 'win32') return false;
+  if (!sentinelPath) return false;
+  let stranded = false;
+  try { stranded = fs.existsSync(sentinelPath); } catch { stranded = false; }
+  if (!stranded) return false;
+  console.warn('[cursorHider] recovering system cursor stranded by a previous crash');
+  const ok = runPowerShell(SHOW_SCRIPT);
+  cursorHidden = false;
+  clearSentinel();
+  return ok;
 }

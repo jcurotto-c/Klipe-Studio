@@ -32,6 +32,7 @@ import {
   BufferTarget,
   CanvasSource,
   AudioBufferSource,
+  canEncodeVideo,
 } from 'mediabunny';
 
 export type ExportContainerFormat = 'mp4' | 'webm';
@@ -80,6 +81,25 @@ export async function createMp4Encoder(
   }
 
   const isMp4 = config.format === 'mp4';
+  const videoCodec = isMp4 ? 'avc' : 'vp9';
+
+  // Capability pre-flight: probe the chosen codec at the requested size/bitrate
+  // BEFORE wiring up the pipeline, so an unsupported combo (commonly 4K H.264 on
+  // a machine without a hardware AVC encoder) fails with a clear, actionable
+  // message up-front instead of erroring deep inside the encode loop.
+  const canEncode = await canEncodeVideo(videoCodec, {
+    width: config.width,
+    height: config.height,
+    bitrate: config.videoBitrate,
+  });
+  if (!canEncode) {
+    const fmtLabel = isMp4 ? 'H.264 / MP4' : 'VP9 / WebM';
+    const altLabel = isMp4 ? 'WebM' : 'MP4';
+    throw new Error(
+      `This device can't encode ${config.width}×${config.height} as ${fmtLabel}. ` +
+        `Try a lower resolution or the ${altLabel} format.`,
+    );
+  }
 
   const output = new Output({
     format: isMp4
@@ -91,7 +111,7 @@ export async function createMp4Encoder(
   });
 
   const videoSource = new CanvasSource(config.canvas, {
-    codec: isMp4 ? 'avc' : 'vp9',
+    codec: videoCodec,
     bitrate: config.videoBitrate,
     keyFrameInterval: KEYFRAME_INTERVAL_SEC,
   });

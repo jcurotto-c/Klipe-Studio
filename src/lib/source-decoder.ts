@@ -81,12 +81,20 @@ export class SourceDecoder {
     startSec: number,
     endSec: number,
     onFrame: FrameHandler,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (!this.videoTrack) {
       throw new Error('SourceDecoder.init() was not awaited');
     }
     const sink = new VideoSampleSink(this.videoTrack);
     for await (const sample of sink.samples(startSec, endSec)) {
+      // Stop promptly on abort: breaking the for-await loop calls the sample
+      // iterator's return(), so a cancelled export doesn't keep decoding the
+      // remaining (potentially thousands of) source frames.
+      if (signal?.aborted) {
+        sample.close();
+        break;
+      }
       // VideoSample.toVideoFrame() returns a fresh VideoFrame the caller is
       // responsible for closing. We pass it through to onFrame, then close
       // both wrapper and frame in the finally block.
@@ -189,6 +197,140 @@ export class CameraFrameProvider {
     if (!this.current) return null;
     if (!this.currentFrame) this.currentFrame = this.current.toVideoFrame();
     return this.currentFrame;
+  }
+
+  destroy(): void {
+    try { void this.iter?.return?.(); } catch { /* ignore */ }
+    this.iter = null;
+    this.current?.close();
+    this.current = null;
+    this.currentFrame?.close();
+    this.currentFrame = null;
+    this.peeked?.close();
+    this.peeked = null;
+    if (this.input) {
+      try { this.input.dispose(); } catch { /* ignore */ }
+      this.input = null;
+    }
+    this.track = null;
+  }
+}
+
+/**
+ * Time-indexed reader for a LOOPING video BACKGROUND, used by the export
+ * pipeline to bake an animated background behind each output frame.
+ *
+ * Mirrors {@link CameraFrameProvider}'s forward-iterator-with-reseek strategy,
+ * but the requested output time is wrapped modulo the clip's duration so a
+ * short loop tiles across a long recording. Each loop boundary (output time
+ * wrapping back toward 0) reads as a backward jump and transparently re-opens
+ * the iterator from the start, exactly like a fragment played out of order.
+ */
+export class BackgroundVideoProvider {
+  private input: Input | null = null;
+  private track: InputVideoTrack | null = null;
+  private iter: AsyncIterator<VideoSample> | null = null;
+  private current: VideoSample | null = null;
+  private currentFrame: VideoFrame | null = null;
+  private peeked: VideoSample | null = null;
+  private lastTime = -Infinity;
+  /** Clip length in seconds, used to wrap the requested time. 0 → don't loop. */
+  private durationSec = 0;
+
+  /** Returns false if the blob has no decodable video track. */
+  async init(blob: Blob): Promise<boolean> {
+    this.input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
+    const track = await this.input.getPrimaryVideoTrack();
+    if (!track) return false;
+    this.track = track;
+    // Prefer the cheap metadata duration; fall back to a full scan only if the
+    // container didn't record one. 0 means "couldn't tell" → freeze on the last
+    // frame rather than loop (still no crash).
+    try {
+      this.durationSec = (await track.getDurationFromMetadata()) ?? 0;
+    } catch { this.durationSec = 0; }
+    if (!(this.durationSec > 0)) {
+      try { this.durationSec = await track.computeDuration(); } catch { this.durationSec = 0; }
+    }
+    await this.openFrom(0);
+    return true;
+  }
+
+  private async openFrom(startSec: number): Promise<void> {
+    try { await this.iter?.return?.(); } catch { /* ignore */ }
+    this.current?.close();
+    this.current = null;
+    this.currentFrame?.close();
+    this.currentFrame = null;
+    this.peeked?.close();
+    this.peeked = null;
+    const sink = new VideoSampleSink(this.track!);
+    this.iter = sink.samples(Math.max(0, startSec))[Symbol.asyncIterator]();
+    const first = await this.iter.next();
+    this.peeked = first.done ? null : first.value;
+  }
+
+  /**
+   * Returns the background VideoFrame to draw at output time `outSec`, or null
+   * if nothing applies yet. The frame is OWNED by the provider — draw it
+   * synchronously and do NOT close it.
+   *
+   * Never throws: a decode/iterator error resets the provider to a clean state
+   * and returns null (the export then draws its dark base for that frame and
+   * recovers on the next call) instead of propagating into the caller's
+   * per-frame error path, which is meant for canvas-draw glitches.
+   */
+  async frameAt(outSec: number): Promise<VideoFrame | null> {
+    if (!this.track || !this.iter) return null;
+    let t = outSec;
+    if (this.durationSec > 0) {
+      t = outSec % this.durationSec;
+      if (t < 0) t += this.durationSec;
+    }
+    try {
+      if (t < this.lastTime - 1e-3) {
+        // Loop wrap (or fragments out of order): reopen a touch earlier so the
+        // frame covering `t` is included, then let the loop below land on it.
+        await this.openFrom(Math.max(0, t - 0.5));
+      }
+      this.lastTime = t;
+
+      while (this.peeked && this.peeked.timestamp <= t) {
+        this.current?.close();
+        this.currentFrame?.close();
+        this.currentFrame = null;
+        this.current = this.peeked;
+        const next = await this.iter.next();
+        this.peeked = next.done ? null : next.value;
+      }
+
+      // Self-discover the loop length when the container had no usable duration:
+      // the iterator just ran dry, so the last frame's end IS the clip end. From
+      // the next call on, the modulo above wraps and the clip loops cleanly
+      // (instead of freezing on this last frame forever).
+      if (this.durationSec <= 0 && !this.peeked && this.current) {
+        const end = this.current.timestamp + (this.current.duration > 0 ? this.current.duration : 0);
+        if (end > 0) this.durationSec = end;
+      }
+
+      if (!this.current) return null;
+      if (!this.currentFrame) this.currentFrame = this.current.toVideoFrame();
+      return this.currentFrame;
+    } catch {
+      // Reset to a consistent state and force a reopen on the next call.
+      try { this.current?.close(); } catch { /* ignore */ }
+      try { this.currentFrame?.close(); } catch { /* ignore */ }
+      try { this.peeked?.close(); } catch { /* ignore */ }
+      this.current = null;
+      this.currentFrame = null;
+      this.peeked = null;
+      // Infinity (NOT -Infinity): the next call computes a finite t, and
+      // `t < lastTime - 1e-3` then reads `t < Infinity` → true → openFrom()
+      // rebuilds the iterator from scratch, abandoning the stalled one. Using
+      // -Infinity would make the guard false and REUSE the broken iterator.
+      this.lastTime = Infinity;
+      return null;
+    }
   }
 
   destroy(): void {

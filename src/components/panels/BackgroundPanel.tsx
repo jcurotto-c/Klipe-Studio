@@ -12,6 +12,12 @@ interface CustomImagePreset {
   label: string;
 }
 
+interface CustomVideoPreset {
+  id: string;
+  src: string;
+  label: string;
+}
+
 function loadCustomImages(): CustomImagePreset[] {
   try {
     const raw = localStorage.getItem(CUSTOM_IMAGES_STORAGE_KEY);
@@ -40,7 +46,7 @@ function saveCustomImages(list: CustomImagePreset[]): void {
 
 const TABS: ReadonlyArray<{ id: BgTab; label: string; disabled?: boolean }> = [
   { id: 'image',    label: 'Image' },
-  { id: 'video',    label: 'Video', disabled: true },
+  { id: 'video',    label: 'Video' },
   { id: 'color',    label: 'Color' },
   { id: 'gradient', label: 'Gradient' },
 ];
@@ -51,6 +57,7 @@ function tabFromValue(bg: Background | null | undefined): BgTab {
   if (bg.type === 'gradient') return 'gradient';
   if (bg.type === 'color') return 'color';
   if (bg.type === 'image') return 'image';
+  if (bg.type === 'video') return 'video';
   return 'color';
 }
 
@@ -87,6 +94,11 @@ export default function BackgroundPanel({
 }: BackgroundPanelProps): JSX.Element {
   const [tab, setTab] = useState<BgTab>(() => tabFromValue(value));
   const [customImages, setCustomImages] = useState<CustomImagePreset[]>(() => loadCustomImages());
+  // Uploaded videos are kept in-session only (not localStorage): a video data
+  // URL is far larger than an image and would blow the storage quota. The
+  // ACTIVE selection still persists via the project document; this gallery just
+  // lets you flip between clips added this session.
+  const [customVideos, setCustomVideos] = useState<CustomVideoPreset[]>([]);
   const blur = (value && 'blur' in value && value.blur) || 0;
 
   useEffect(() => {
@@ -105,19 +117,36 @@ export default function BackgroundPanel({
     setCustomImages((prev) => prev.filter((c) => c.id !== id));
   };
 
+  const addCustomVideo = (src: string): CustomVideoPreset => {
+    const id = `vid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const label = `Video ${customVideos.length + 1}`;
+    const next: CustomVideoPreset = { id, src, label };
+    setCustomVideos((prev) => [...prev, next]);
+    return next;
+  };
+
+  const removeCustomVideo = (id: string): void => {
+    setCustomVideos((prev) => prev.filter((c) => c.id !== id));
+  };
+
   const update = (patch: Partial<Background>): void => {
     const merged = { ...(value ?? {}), ...patch } as Background;
     onChange(merged);
   };
 
   const switchTab = (id: BgTab): void => {
-    if (id === 'video') return;
     setTab(id);
     if (id === 'image') {
       if (value && value.type === 'image') return;
       const firstKey = Object.keys(IMAGE_PRESETS)[0];
       const src = firstKey ? IMAGE_PRESETS[firstKey]!.src : null;
       onChange({ type: 'image', src, blur });
+    }
+    if (id === 'video') {
+      if (value && value.type === 'video') return;
+      // No presets ship with the app — start empty so the tab shows its upload
+      // prompt. Picking a file in VideoTab fills in the src.
+      onChange({ type: 'video', src: null, blur });
     }
     if (id === 'gradient') {
       const from = value && value.type === 'gradient' ? value.from : '#ffffff';
@@ -203,6 +232,15 @@ export default function BackgroundPanel({
             customImages={customImages}
             onAddCustomImage={addCustomImage}
             onRemoveCustomImage={removeCustomImage}
+          />
+        )}
+        {tab === 'video' && (
+          <VideoTab
+            value={value}
+            update={update}
+            customVideos={customVideos}
+            onAddCustomVideo={addCustomVideo}
+            onRemoveCustomVideo={removeCustomVideo}
           />
         )}
         {tab === 'gradient' && <GradientTab value={value} update={update} />}
@@ -567,6 +605,135 @@ function WallpaperImageTab({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+interface VideoTabProps extends SubTabProps {
+  customVideos: CustomVideoPreset[];
+  onAddCustomVideo: (src: string) => CustomVideoPreset;
+  onRemoveCustomVideo: (id: string) => void;
+}
+
+function VideoTab({
+  value,
+  update,
+  customVideos,
+  onAddCustomVideo,
+  onRemoveCustomVideo,
+}: VideoTabProps): JSX.Element {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const currentSrc = value && value.type === 'video' ? value.src : null;
+
+  // Always show the active clip as a swatch, even after a reload emptied the
+  // in-session gallery — it lives in the project document, not this list.
+  const items: CustomVideoPreset[] = [...customVideos];
+  if (currentSrc && !items.some((v) => v.src === currentSrc)) {
+    items.unshift({ id: 'active', src: currentSrc, label: 'Current' });
+  }
+
+  const readFile = (file: File | null | undefined): void => {
+    if (!file) return;
+    // Object URL, NOT a data URL: the clip is referenced by a short blob: string
+    // in the document (no base64 bloat in state or in the autosaved JSON). The
+    // project saver persists the bytes to a separate file and rebuilds this URL
+    // on open (see project.ts readBgVideoMedia / reconstructProject).
+    const url = URL.createObjectURL(file);
+    const added = onAddCustomVideo(url);
+    update({ type: 'video', src: added.src });
+  };
+
+  const onPick = (): void => inputRef.current?.click();
+  const onChange = (e: ChangeEvent<HTMLInputElement>): void => {
+    readFile(e.target.files?.[0]);
+    e.target.value = '';
+  };
+  const onDrop = (e: DragEvent<HTMLButtonElement>): void => {
+    e.preventDefault();
+    setDragging(false);
+    const file = Array.from(e.dataTransfer.files || []).find((f) => f.type.startsWith('video/'));
+    readFile(file);
+  };
+
+  const handleRemove = (e: React.MouseEvent, vid: CustomVideoPreset): void => {
+    e.stopPropagation();
+    if (vid.id !== 'active') {
+      onRemoveCustomVideo(vid.id);
+      // Free the blob this gallery entry owned (the synthetic 'active' swatch
+      // points at a reopened/in-use URL we don't own, so never revoke that one).
+      if (vid.src.startsWith('blob:')) {
+        try { URL.revokeObjectURL(vid.src); } catch { /* ignore */ }
+      }
+    }
+    if (currentSrc === vid.src) {
+      // Fall back to another clip if one remains, else clear the selection (the
+      // tab then shows its upload prompt — clear feedback that it's unset).
+      const next = customVideos.find((c) => c.src !== vid.src) ?? null;
+      update({ type: 'video', src: next ? next.src : null });
+    }
+  };
+
+  return (
+    <div className="wallpaper-block">
+      <button
+        className={`upload-btn ${dragging ? 'dragging' : ''}`}
+        onClick={onPick}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
+      >
+        <UploadIcon />
+        <span>Upload Video</span>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="video/*"
+          style={{ display: 'none' }}
+          onChange={onChange}
+        />
+      </button>
+
+      {items.length === 0 ? (
+        <div className="blur-region-empty">
+          Upload a short looping clip (MP4 or WebM). It plays muted behind your
+          recording and is baked into the export.
+        </div>
+      ) : (
+        <div className="wallpaper-grid-pro">
+          {items.map((v) => (
+            <div
+              key={v.id}
+              className={`wallpaper-swatch-pro image-swatch custom-swatch ${currentSrc === v.src ? 'active' : ''}`}
+              onClick={() => update({ type: 'video', src: v.src })}
+              title={v.label}
+              role="button"
+            >
+              {/* Only the active swatch autoplays — multiple decoding <video>s
+                  would spike CPU and lag the live preview. The rest preload a
+                  frame and stay paused. */}
+              <video
+                src={v.src}
+                muted
+                loop
+                autoPlay={currentSrc === v.src}
+                playsInline
+                preload="metadata"
+                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit', pointerEvents: 'none' }}
+              />
+              <button
+                type="button"
+                className="custom-swatch-remove"
+                title="Remove"
+                aria-label={`Remove ${v.label}`}
+                onClick={(e) => handleRemove(e, v)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

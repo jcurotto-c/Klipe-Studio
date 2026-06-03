@@ -49,6 +49,28 @@ const SECONDS_PER_THUMB = 0.5;
 const SEEK_TIMEOUT_MS = 4000;
 
 const cache = new Map<string, Entry>();
+/** Keep at most this many recordings' thumbnails resident. ImageBitmaps hold
+ *  GPU/native memory that the GC does NOT reclaim — they must be close()d. */
+const MAX_CACHED = 3;
+
+function destroyEntry(entry: Entry): void {
+  for (const th of entry.thumbs) {
+    try { th.bitmap.close(); } catch { /* ignore */ }
+  }
+  entry.thumbs = [];
+}
+
+/** Evict least-recently-used entries nobody is subscribed to (on-screen rows
+ *  are kept). Map iteration order is insertion/LRU order — see getEntry. */
+function evictIfNeeded(): void {
+  if (cache.size <= MAX_CACHED) return;
+  for (const [url, entry] of cache) {
+    if (cache.size <= MAX_CACHED) break;
+    if (entry.listeners.size > 0) continue;
+    destroyEntry(entry);
+    cache.delete(url);
+  }
+}
 
 function buildSnapshot(entry: Entry): FilmstripData {
   return {
@@ -65,19 +87,24 @@ function notify(entry: Entry): void {
 }
 
 function getEntry(url: string): Entry {
-  let entry = cache.get(url);
-  if (!entry) {
-    entry = {
-      status: 'loading',
-      thumbs: [],
-      aspect: 16 / 9,
-      duration: 0,
-      listeners: new Set(),
-      snapshot: { status: 'loading', thumbs: [], aspect: 16 / 9, duration: 0 },
-      started: false,
-    };
-    cache.set(url, entry);
+  const existing = cache.get(url);
+  if (existing) {
+    // Re-insert to mark most-recently-used (Map preserves insertion order).
+    cache.delete(url);
+    cache.set(url, existing);
+    return existing;
   }
+  const entry: Entry = {
+    status: 'loading',
+    thumbs: [],
+    aspect: 16 / 9,
+    duration: 0,
+    listeners: new Set(),
+    snapshot: { status: 'loading', thumbs: [], aspect: 16 / 9, duration: 0 },
+    started: false,
+  };
+  cache.set(url, entry);
+  evictIfNeeded();
   return entry;
 }
 
@@ -212,6 +239,18 @@ export function subscribeFilmstrip(url: string, hint: number, cb: Listener): () 
 
 export function getFilmstripSnapshot(url: string): FilmstripData {
   return getEntry(url).snapshot;
+}
+
+/**
+ * Release a recording's cached thumbnails and close their ImageBitmaps. Call
+ * when the recording's object URL is revoked (the URL is dead, so the cache
+ * entry is unusable) to reclaim GPU/native memory that the GC can't.
+ */
+export function releaseFilmstrip(url: string): void {
+  const entry = cache.get(url);
+  if (!entry) return;
+  destroyEntry(entry);
+  cache.delete(url);
 }
 
 /** Nearest thumbnail to a given source-time. `thumbs` is assumed sorted by t. */
