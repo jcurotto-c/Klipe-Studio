@@ -12,6 +12,7 @@ import {
 } from '../lib/fragments';
 import type { BackgroundMusic, Fragment, KlipeMouseEvent, ZoomSegment } from '../types';
 import type { Overlay } from '../overlays/types';
+import type { Caption } from '../overlays/captions';
 import type { CardTimeline } from '../cards/timeline';
 import { bodyToGlobalMs, globalToBodySec } from '../cards/timeline';
 import { FragmentFilmstrip } from './FragmentFilmstrip';
@@ -34,6 +35,7 @@ type DragState =
   | { kind: 'seg' | 'segStart' | 'segEnd'; id: string; startX: number; origStart: number; origEnd: number }
   | { kind: 'audioMove' | 'audioStart' | 'audioEnd'; startX: number; origStart: number; origEnd: number }
   | { kind: 'ovMove' | 'ovStart' | 'ovEnd'; id: string; startX: number; origStart: number; origEnd: number }
+  | { kind: 'capMove' | 'capStart' | 'capEnd'; id: string; startX: number; origStart: number; origEnd: number }
   | { kind: 'midMove'; id: string; startX: number; origAt: number; gStartSec: number; armed: boolean };
 
 interface TimelineProps {
@@ -59,6 +61,10 @@ interface TimelineProps {
   selectedOverlayId?: string | null;
   onSelectOverlay?: (id: string | null) => void;
   onUpdateOverlay?: (id: string, patch: Partial<Overlay>) => void;
+  captions?: Caption[];
+  selectedCaptionId?: string | null;
+  onSelectCaption?: (id: string | null) => void;
+  onUpdateCaption?: (id: string, patch: Partial<Caption>) => void;
   /** Segmented card timeline. Body content is positioned on the global clock via
    * its body chunks; coloured caps mark intro / mid-roll / outro cards. */
   cardTimeline?: CardTimeline;
@@ -98,6 +104,10 @@ export default function Timeline({
   selectedOverlayId = null,
   onSelectOverlay,
   onUpdateOverlay,
+  captions,
+  selectedCaptionId = null,
+  onSelectCaption,
+  onUpdateCaption,
   cardTimeline,
   onSelectCard,
   onMoveMidCard,
@@ -246,6 +256,21 @@ export default function Timeline({
         let ne = tMs;
         ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(bodyMs, ne));
         onUpdateOverlay(drag.id, { visibleTo: ne });
+      } else if (drag.kind === 'capMove' && onUpdateCaption) {
+        const dx = e.clientX - drag.startX;
+        const dMs = (dx / trackRef.current!.getBoundingClientRect().width) * duration * 1000;
+        const len = drag.origEnd - drag.origStart;
+        let ns = drag.origStart + dMs;
+        ns = Math.max(0, Math.min(bodyMs - len, ns));
+        onUpdateCaption(drag.id, { startMs: ns, endMs: ns + len });
+      } else if (drag.kind === 'capStart' && onUpdateCaption) {
+        let ns = tMs;
+        ns = Math.max(0, Math.min(drag.origEnd - MIN_SEG_MS, ns));
+        onUpdateCaption(drag.id, { startMs: ns });
+      } else if (drag.kind === 'capEnd' && onUpdateCaption) {
+        let ne = tMs;
+        ne = Math.max(drag.origStart + MIN_SEG_MS, Math.min(bodyMs, ne));
+        onUpdateCaption(drag.id, { endMs: ne });
       }
     };
     const up = (): void => {
@@ -267,7 +292,7 @@ export default function Timeline({
     };
   }, [
     drag, onSeek, onUpdateSegment, onUpdateFragments, onFragmentEdge, onBeginEdit,
-    onUpdateBackgroundMusic, onUpdateOverlay, onMoveMidCard, onSelectCard,
+    onUpdateBackgroundMusic, onUpdateOverlay, onUpdateCaption, onMoveMidCard, onSelectCard,
     xToOutputTime, xDeltaToSeconds, duration, sourceDuration,
     fragments, layouts, dropIndex, toBodySec, bodyMs,
   ]);
@@ -278,6 +303,7 @@ export default function Timeline({
     if (target.closest('.zoom-seg')) return;
     if (target.closest('.fragment')) return;
     if (target.closest('.overlay-seg')) return;
+    if (target.closest('.caption-seg')) return;
     onSelectSegment?.(null);
     onSelectFragment(null);
     onSelectOverlay?.(null);
@@ -383,6 +409,35 @@ export default function Timeline({
       startX: e.clientX,
       origStart: start,
       origEnd: end,
+    });
+  };
+
+  const onCaptionMouseDown = (e: ReactMouseEvent<HTMLDivElement>, cap: Caption): void => {
+    e.stopPropagation();
+    onSelectCaption?.(cap.id);
+    onSelectOverlay?.(null);
+    onSelectSegment?.(null);
+    onSelectFragment(null);
+    onBeginEdit?.();
+    setDrag({ kind: 'capMove', id: cap.id, startX: e.clientX, origStart: cap.startMs, origEnd: cap.endMs });
+  };
+
+  const onCaptionEdgeMouseDown = (
+    e: ReactMouseEvent<HTMLDivElement>,
+    cap: Caption,
+    edge: 'start' | 'end',
+  ): void => {
+    e.stopPropagation();
+    onSelectCaption?.(cap.id);
+    onSelectSegment?.(null);
+    onSelectFragment(null);
+    onBeginEdit?.();
+    setDrag({
+      kind: edge === 'start' ? 'capStart' : 'capEnd',
+      id: cap.id,
+      startX: e.clientX,
+      origStart: cap.startMs,
+      origEnd: cap.endMs,
     });
   };
 
@@ -650,6 +705,41 @@ export default function Timeline({
                     className="overlay-seg-handle right"
                     data-handle="overlay-end"
                     onMouseDown={(e) => onOverlayEdgeMouseDown(e, ov, 'end')}
+                  />
+                </div>
+              );
+            })}
+            <div className="playhead ghost" style={{ left: pct(currentTime) }} />
+          </div>
+        )}
+
+        {captions && captions.length > 0 && (
+          <div className="track caption-track">
+            {captions.map((cap) => {
+              const isSel = cap.id === selectedCaptionId;
+              const isDragging = drag?.kind?.startsWith('cap') && 'id' in drag && drag.id === cap.id;
+              const label = cap.text.trim() || 'Caption';
+              return (
+                <div
+                  key={cap.id}
+                  className={`caption-seg ${isSel ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+                  style={{
+                    left: bodyLeft(cap.startMs / 1000),
+                    width: bodyWidth(cap.startMs / 1000, cap.endMs / 1000),
+                  }}
+                  title={`${label} · ${(cap.startMs / 1000).toFixed(2)}s → ${(cap.endMs / 1000).toFixed(2)}s`}
+                  onMouseDown={(e) => onCaptionMouseDown(e, cap)}
+                >
+                  <span className="caption-seg-label">{label}</span>
+                  <div
+                    className="caption-seg-handle left"
+                    data-handle="caption-start"
+                    onMouseDown={(e) => onCaptionEdgeMouseDown(e, cap, 'start')}
+                  />
+                  <div
+                    className="caption-seg-handle right"
+                    data-handle="caption-end"
+                    onMouseDown={(e) => onCaptionEdgeMouseDown(e, cap, 'end')}
                   />
                 </div>
               );

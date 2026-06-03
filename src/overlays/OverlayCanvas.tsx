@@ -76,13 +76,18 @@ export default function OverlayCanvas({
   // Mount Pixi once.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    const host = hostRef.current;
+    // React attaches a PARENT's ref AFTER a child's layout effect runs, so
+    // `hostRef.current` (the parent .canvas-wrap) is still null here on first
+    // mount — and this effect has [] deps, so a bare early-return would leave
+    // the stage unmounted forever (no overlays/captions ever render). Fall back
+    // to the canvas's own parentElement, which is the same wrap and is always
+    // present once the canvas exists.
+    const host = hostRef.current ?? canvas?.parentElement ?? null;
     if (!canvas || !host) return;
-    // Always mounts as a child of VideoCanvas's .canvas-wrap. The parent
-    // sizes the wrap in *its* useLayoutEffect, which runs AFTER ours (React
-    // commits children first). So at this point the host can still be 0×0;
-    // we mount Pixi at a placeholder 1×1 and re-sync below after the async
-    // init completes, by which time the parent layout has settled.
+    // The parent sizes the wrap in *its* useLayoutEffect, which runs AFTER ours;
+    // at this point the host can still be 0×0, so we mount Pixi at a placeholder
+    // 1×1 and re-sync below after the async init completes, by which time the
+    // parent layout has settled.
     const measure = (): { w: number; h: number } => {
       const r = host.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
@@ -95,7 +100,7 @@ export default function OverlayCanvas({
     let cancelled = false;
     const stage = new OverlayStage({ textShadow });
     stageRef.current = stage;
-    void stage.mount(canvas, initial.w, initial.h).then(() => {
+    stage.mount(canvas, initial.w, initial.h).then(() => {
       if (cancelled) { stage.dispose(); return; }
       mountedRef.current = true;
       // Re-measure: by the time the async init resolves, the parent wrap
@@ -122,8 +127,8 @@ export default function OverlayCanvas({
             if (!cancelled && mountedRef.current) stage.renderAt(timeRef.current);
           });
         });
-      });
-    });
+      }).catch((err) => console.error('[OverlayCanvas] initial setOverlays failed', err));
+    }).catch((err) => console.error('[OverlayCanvas] stage mount failed', err));
     return () => {
       cancelled = true;
       mountedRef.current = false;
@@ -135,8 +140,10 @@ export default function OverlayCanvas({
 
   // Track host size — mirror it on the overlay canvas so the two pixel grids align.
   useLayoutEffect(() => {
-    const host = hostRef.current;
     const canvas = canvasRef.current;
+    // Same parent-ref-timing caveat as the mount effect — fall back to the
+    // canvas's parentElement so the ResizeObserver always has an element.
+    const host = hostRef.current ?? canvas?.parentElement ?? null;
     if (!host || !canvas) return;
     const apply = (): void => {
       const rect = host.getBoundingClientRect();
@@ -167,13 +174,17 @@ export default function OverlayCanvas({
     if (!stage || !mountedRef.current) return;
     let cancelled = false;
     stage.setSelected(selectedId);
-    void stage.setOverlays(overlays).then(() => {
+    stage.setOverlays(overlays).then(() => {
       if (cancelled) return;
       if (pendingFrameRef.current != null) cancelAnimationFrame(pendingFrameRef.current);
       pendingFrameRef.current = requestAnimationFrame(() => {
         pendingFrameRef.current = null;
         if (mountedRef.current) stage.renderAt(timeMs);
       });
+    }).catch((err) => {
+      // Surface build failures that were previously swallowed by `void` — a
+      // single bad overlay otherwise silently aborts the whole stage rebuild.
+      console.error('[OverlayCanvas] setOverlays failed', err);
     });
     return () => { cancelled = true; };
   }, [overlays, timeMs, selectedId]);

@@ -106,6 +106,15 @@ export interface TextOverlay extends OverlayCommon {
    * Editor metadata — the actual motion lives in `transform`/`typewriter`. */
   anim?: string;
   typewriter?: Typewriter;
+  /** Wrap text to multiple lines once it exceeds this fraction of canvas WIDTH.
+   * Absent → no wrapping (single overflowing line, the historical behaviour).
+   * Used by captions for the 1–2-line classic-subtitle look. */
+  wordWrapRel?: number;
+  /** Outline stroke for legibility over busy video. Absent → none. */
+  stroke?: { color: string; width: number };
+  /** Rounded-rect background pill drawn behind the text. Absent → none.
+   * `padRel` is padding as a fraction of the font size. */
+  box?: { color: string; opacity: number; padRel: number };
 }
 
 export interface ImageOverlay extends OverlayCommon {

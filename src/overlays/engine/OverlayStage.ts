@@ -34,6 +34,8 @@ interface OverlayNode {
   container: Container;
   text: Text | null;        // text overlays only — for size + content updates
   sprite: Sprite | null;    // image overlays only — for size updates
+  /** Background pill behind text overlays (captions); null when not requested. */
+  box: Graphics | null;
   blur: BlurFilter;
   typewriterFullText: string | null;
   /** Current text drop-shadow state, so patchNode only restyles on change. */
@@ -222,7 +224,17 @@ export class OverlayStage {
    */
   async setOverlays(overlays: Overlay[]): Promise<void> {
     this.overlays = overlays;
-    const key = overlays.map((o) => `${o.id}:${o.type}:${o.z}`).join('|');
+    // Structural key — a rebuild is forced when the layer set, z-order, OR a
+    // text overlay's box/stroke/wrap PRESENCE changes (those add/remove child
+    // display objects or initial style that patchNode can't toggle in place).
+    // Their VALUES still update live via patchNode without a rebuild.
+    const key = overlays.map((o) => {
+      if (o.type === 'text') {
+        const f = `${o.box ? 'B' : ''}${o.stroke ? 'S' : ''}${(o.wordWrapRel ?? 0) > 0 ? 'W' : ''}`;
+        return `${o.id}:text:${o.z}:${f}`;
+      }
+      return `${o.id}:${o.type}:${o.z}`;
+    }).join('|');
     if (key === this.builtKey) return;
     this.builtKey = key;
 
@@ -347,14 +359,14 @@ export class OverlayStage {
     const h = this.app.renderer.height;
     switch (overlay.type) {
       case 'text': {
-        const { container, text, fullText, shadowOn } = this.buildText(overlay, h);
+        const { container, text, box, fullText, shadowOn } = this.buildText(overlay, h);
         container.filters = [blur];
-        return { overlay, container, text, sprite: null, blur, typewriterFullText: fullText, shadowOn };
+        return { overlay, container, text, sprite: null, box, blur, typewriterFullText: fullText, shadowOn };
       }
       case 'image': {
         const { container, sprite } = await this.buildImage(overlay, h);
         container.filters = [blur];
-        return { overlay, container, text: null, sprite, blur, typewriterFullText: null, shadowOn: false };
+        return { overlay, container, text: null, sprite, box: null, blur, typewriterFullText: null, shadowOn: false };
       }
     }
   }
@@ -364,12 +376,19 @@ export class OverlayStage {
    * for property edits (live preview while typing).
    */
   private patchNode(node: OverlayNode, overlay: Overlay, canvasH: number): void {
+    const prevOverlay = node.overlay;
     node.overlay = overlay;
+    // The overlay object is reused frame-to-frame while nothing changes (the
+    // editor memoises it), so a new reference means the user edited the layer
+    // (or its caption style). Used to gate pixel-based restyles (stroke) that
+    // don't otherwise depend on per-frame state.
+    const overlayChanged = prevOverlay !== overlay;
     if (overlay.type === 'text' && node.text) {
       const t = node.text;
       const desiredSize = Math.max(2, Math.round(overlay.sizeRel * canvasH));
       const style = t.style;
-      if (style.fontSize !== desiredSize) style.fontSize = desiredSize;
+      const sizeChanged = style.fontSize !== desiredSize;
+      if (sizeChanged) style.fontSize = desiredSize;
       if (style.fill !== overlay.color) style.fill = overlay.color;
       const desiredFamily = fontStack(overlay.fontFamily, overlay.mono);
       if (style.fontFamily !== desiredFamily) style.fontFamily = desiredFamily;
@@ -390,6 +409,24 @@ export class OverlayStage {
         style.dropShadow = wantShadow ? { ...TEXT_SHADOW } : false;
         node.shadowOn = wantShadow;
       }
+      // Word-wrap width tracks the overlay + canvas width (captions). Presence
+      // is fixed by the build key, so only the width can change here.
+      let wrapChanged = false;
+      if ((overlay.wordWrapRel ?? 0) > 0) {
+        const wrapW = overlay.wordWrapRel! * this.app.renderer.width;
+        if (!style.wordWrap) style.wordWrap = true;
+        if (style.wordWrapWidth !== wrapW) { style.wordWrapWidth = wrapW; wrapChanged = true; }
+      }
+      // Outline value — only re-apply on a real edit (pixel-based, so resize is
+      // irrelevant) to avoid re-rasterising the glyphs every frame.
+      if (overlay.stroke && overlayChanged) {
+        style.stroke = { color: overlay.stroke.color, width: overlay.stroke.width };
+      }
+      // Background pill hugs the text bounds — only redraw when those bounds
+      // could have moved (edit, font-size or wrap-width change), not every frame.
+      if (node.box && (overlayChanged || sizeChanged || wrapChanged)) {
+        this.drawTextBox(node.box, t, overlay, desiredSize);
+      }
     } else if (overlay.type === 'image' && node.sprite) {
       const target = this.imagePixelSize(overlay, canvasH);
       if (Math.abs(node.sprite.width - target.w) > 0.5) node.sprite.width = target.w;
@@ -400,6 +437,7 @@ export class OverlayStage {
   private buildText(overlay: TextOverlay, canvasH: number): {
     container: Container;
     text: Text;
+    box: Graphics | null;
     fullText: string | null;
     shadowOn: boolean;
   } {
@@ -410,6 +448,7 @@ export class OverlayStage {
     const fontSize = Math.max(2, Math.round(overlay.sizeRel * canvasH));
     // Per-item override wins; otherwise the stage default (off for card text).
     const shadowOn = overlay.shadow ?? this.textShadow;
+    const wrap = overlay.wordWrapRel != null && overlay.wordWrapRel > 0;
     const t = new Text({
       text: initial,
       style: {
@@ -421,11 +460,41 @@ export class OverlayStage {
         letterSpacing: overlay.letterSpacing ?? 0,
         align: overlay.align ?? 'center',
         dropShadow: shadowOn ? { ...TEXT_SHADOW } : false,
+        // Only include these when actually used — passing `stroke: undefined`
+        // (or other defaults Pixi doesn't expect) can break Text construction,
+        // which would silently abort the whole stage build.
+        ...(overlay.stroke ? { stroke: { color: overlay.stroke.color, width: overlay.stroke.width } } : {}),
+        ...(wrap ? { wordWrap: true, wordWrapWidth: overlay.wordWrapRel! * this.app.renderer.width } : {}),
       },
     });
     t.anchor.set(alignAnchorX(overlay.align), 0.5);
+    // Background pill (captions): a rounded rect drawn BEHIND the text, sized to
+    // the measured bounds + padding. Added first so it sits under the glyphs.
+    let box: Graphics | null = null;
+    if (overlay.box) {
+      box = new Graphics();
+      c.addChild(box);
+      this.drawTextBox(box, t, overlay, fontSize);
+    }
     c.addChild(t);
-    return { container: c, text: t, fullText: isTypewriter ? full : null, shadowOn };
+    return { container: c, text: t, box, fullText: isTypewriter ? full : null, shadowOn };
+  }
+
+  /** (Re)draw a caption's background pill to hug the current text bounds. */
+  private drawTextBox(box: Graphics, text: Text, overlay: TextOverlay, fontSize: number): void {
+    const spec = overlay.box;
+    box.clear();
+    if (!spec) return;
+    const pad = Math.max(0, spec.padRel) * fontSize;
+    const ax = alignAnchorX(overlay.align);
+    const tw = text.width;
+    const th = text.height;
+    const left = -ax * tw - pad;
+    const top = -th / 2 - pad;
+    const w = tw + pad * 2;
+    const hgt = th + pad * 2;
+    const radius = Math.min(w, hgt) * 0.28;
+    box.roundRect(left, top, w, hgt, radius).fill({ color: spec.color, alpha: spec.opacity });
   }
 
   private async buildImage(overlay: ImageOverlay, canvasH: number): Promise<{

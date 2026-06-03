@@ -30,6 +30,7 @@
     "@fontsource/manrope": "5.2.8",
     "@fontsource/sora": "5.2.8",
     "@fontsource/space-grotesk": "5.2.10",
+    "@huggingface/transformers": "^4.2.0",
     "framer-motion": "12.38.0",
     "mediabunny": "1.44.2",
     "pixi-filters": "6.1.5",

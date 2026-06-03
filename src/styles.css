@@ -3282,6 +3282,121 @@ select {
   max-height: 62%;
 }
 
+/* ── Captions panel ──────────────────────────────────────────────────── */
+.caption-panel .primary-btn {
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 100%);
+  border-color: transparent;
+  color: #0a0a0a;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.caption-panel .primary-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.caption-panel .primary-btn.full { width: 100%; margin-top: 4px; }
+
+.panel-hint {
+  font-size: 11.5px;
+  color: var(--text-dim, rgba(255, 255, 255, 0.5));
+  margin-top: 6px;
+  line-height: 1.4;
+}
+.panel-hint.error { color: var(--danger, #e5484d); }
+.panel-hint.ok { color: var(--accent, #7bd88f); }
+
+.caption-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.caption-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.caption-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+.caption-row:hover { background: rgba(255, 255, 255, 0.05); }
+.caption-row.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.caption-row .caption-text { width: 100%; }
+.caption-times {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim, rgba(255, 255, 255, 0.5));
+}
+.caption-times .caption-time { width: 56px; flex: none; }
+
+/* ── Captions timeline track ─────────────────────────────────────────── */
+.timeline.pro .track.caption-track {
+  height: 28px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+}
+.timeline.pro .track.caption-track .caption-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(120, 200, 255, 0.5), rgba(70, 150, 230, 0.42));
+  border: 1px solid rgba(120, 200, 255, 0.7);
+  border-radius: 5px;
+  cursor: grab;
+  overflow: hidden;
+}
+.timeline.pro .track.caption-track .caption-seg:hover { filter: brightness(1.15); }
+.timeline.pro .track.caption-track .caption-seg.dragging {
+  cursor: grabbing;
+  box-shadow: 0 0 0 2px rgba(120, 200, 255, 0.9), 0 0 18px rgba(120, 200, 255, 0.4);
+  z-index: 2;
+}
+.timeline.pro .track.caption-track .caption-seg.selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(var(--accent-rgb), 0.5);
+  z-index: 2;
+}
+.timeline.pro .track.caption-track .caption-seg-label {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.timeline.pro .track.caption-track .caption-seg-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: rgba(255, 255, 255, 0);
+  z-index: 2;
+}
+.timeline.pro .track.caption-track .caption-seg-handle.left { left: 0; }
+.timeline.pro .track.caption-track .caption-seg-handle.right { right: 0; }
+.timeline.pro .track.caption-track .caption-seg-handle:hover { background: rgba(255, 255, 255, 0.4); }
+
 /* Click/hover zones — transparent layer mapping thirds to the 8 slots. */
 .cam-stage-zones {
   position: absolute;

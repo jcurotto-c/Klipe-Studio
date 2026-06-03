@@ -43,6 +43,7 @@ import type {
   ZoomSegment,
 } from '../types';
 import type { Overlay } from '../overlays/types';
+import type { Caption, CaptionStyle } from '../overlays/captions';
 import type { CardSet } from '../cards/types';
 
 export const PROJECT_VERSION = 1;
@@ -82,6 +83,14 @@ export interface EditDocument {
    * inline as data URLs (same convention as overlays), so no extra media files.
    */
   cards?: CardSet;
+  /**
+   * Subtitle captions (timed text) + their single shared style. Absent on
+   * projects saved before the feature — `reconstructProject` leaves them
+   * undefined and the editor loads `[]` + DEFAULT_CAPTION_STYLE. Plain JSON
+   * (text only), no extra media files.
+   */
+  captions?: Caption[];
+  captionStyle?: CaptionStyle;
 }
 
 interface MediaRef {

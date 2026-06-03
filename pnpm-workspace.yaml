@@ -1,6 +1,14 @@
 # pnpm settings (pnpm 11 reads these here, not from package.json's "pnpm" field).
 # Allow these dependencies to run their install/build scripts: electron's
 # postinstall downloads the Electron binary; esbuild's sets up its native binary.
+#
+# transformers.js pulls in onnxruntime-node (native ORT binaries), sharp (image
+# processing) and protobufjs — but captions use the WASM (onnxruntime-web)
+# runtime in the renderer, so none of those native builds are needed. Deny them
+# explicitly to keep installs lean (and to acknowledge the choice for pnpm 11).
 allowBuilds:
   electron: true
   esbuild: true
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false

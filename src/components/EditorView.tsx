@@ -70,6 +70,14 @@ import {
 } from '../overlays/factories';
 import OverlayInspector from '../overlays/components/OverlayInspector';
 import OverlayLayerList from '../overlays/components/OverlayLayerList';
+import {
+  captionsToOverlays,
+  makeCaptionId,
+  DEFAULT_CAPTION_STYLE,
+  type Caption,
+  type CaptionStyle,
+} from '../overlays/captions';
+import { generateCaptions, type CaptionProgress } from '../lib/transcription';
 import { saveProject, saveProjectDoc, type EditDocument } from '../lib/project';
 import type { Card, CardSet } from '../cards/types';
 import { createMidCard } from '../cards/factories';
@@ -173,6 +181,8 @@ interface HistorySnapshot {
   blurRegions: BlurRegion[];
   overlays: Overlay[];
   cards: CardSet;
+  captions: Caption[];
+  captionStyle: CaptionStyle;
 }
 
 const HISTORY_LIMIT = 100;
@@ -346,6 +356,12 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [cards, setCards] = useState<CardSet>(() => initialDoc?.cards ?? { intro: null, outro: null });
   const [selectedCardItemId, setSelectedCardItemId] = useState<string | null>(null);
+  const [captions, setCaptions] = useState<Caption[]>(() => initialDoc?.captions ?? []);
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(
+    () => initialDoc?.captionStyle ?? { ...DEFAULT_CAPTION_STYLE },
+  );
+  const [selectedCaptionId, setSelectedCaptionId] = useState<string | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
 
   const exportCrop: Crop | null = isFullCrop(crop) ? null : crop;
@@ -496,6 +512,10 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   playingRef.current = playing;
   const cardsRef = useRef<CardSet>(cards);
   cardsRef.current = cards;
+  const captionsRef = useRef<Caption[]>(captions);
+  captionsRef.current = captions;
+  const captionStyleRef = useRef<CaptionStyle>(captionStyle);
+  captionStyleRef.current = captionStyle;
   const cardTimelineRef = useRef(cardTimeline);
   cardTimelineRef.current = cardTimeline;
   /** Wall-clock of the previous RAF tick — advances the global clock during
@@ -521,6 +541,8 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     blurRegions: blurRegionsRef.current,
     overlays: overlaysRef.current,
     cards: cardsRef.current,
+    captions: captionsRef.current,
+    captionStyle: captionStyleRef.current,
   }), []);
 
   // The full editor state, gathered for project persistence. Mirrors the
@@ -546,10 +568,13 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     blurRegions,
     overlays,
     cards,
+    captions,
+    captionStyle,
   }), [
     fragments, segments, background, crop, zoomDefaults, cameraOptions,
     cursorOptions, frameOptions, audioFxOptions, backgroundMusic, audioVolume,
     micVolume, systemVolume, aspectRatioId, fitMode, platformId, mobileOptions, blurRegions, overlays, cards,
+    captions, captionStyle,
   ]);
 
   const handleSaveProject = useCallback(async (): Promise<void> => {
@@ -632,11 +657,15 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     blurRegionsRef.current = snap.blurRegions;
     overlaysRef.current = snap.overlays;
     cardsRef.current = snap.cards;
+    captionsRef.current = snap.captions;
+    captionStyleRef.current = snap.captionStyle;
     setFragments(snap.fragments);
     setSegments(snap.segments);
     setBlurRegions(snap.blurRegions);
     setOverlays(snap.overlays);
     setCards(snap.cards);
+    setCaptions(snap.captions);
+    setCaptionStyle(snap.captionStyle);
   }, []);
 
   const undo = useCallback((): void => {
@@ -995,6 +1024,20 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     [blurRegions, selectedBlurId],
   );
 
+  // Captions become ephemeral text overlays at render time, merged ABOVE the
+  // user's overlays. Both the preview canvas and the export consume this set so
+  // they stay identical. Captions share the body-output-time clock.
+  const previewOverlays = useMemo<Overlay[]>(
+    () => [...overlays, ...captionsToOverlays(captions, captionStyle)],
+    [overlays, captions, captionStyle],
+  );
+
+  const hasCaptionAudio = useMemo<boolean>(
+    () => !!(recording.micAudio?.blob || recording.systemAudio?.blob
+      || (recording.hasAudio !== false && recording.blob)),
+    [recording],
+  );
+
   const selectedOverlay = useMemo<Overlay | null>(
     () => overlays.find((o) => o.id === selectedOverlayId) ?? null,
     [overlays, selectedOverlayId],
@@ -1135,6 +1178,10 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   }, [pushHistory, defaultVisibility]);
 
   const handleSelectOverlay = useCallback((id: string | null) => {
+    // Captions are merged into the preview overlay set for rendering, but they
+    // are NOT user overlays — clicking one on the canvas should be a no-op
+    // rather than clearing the current selection.
+    if (id && !overlaysRef.current.some((o) => o.id === id)) return;
     setSelectedOverlayId(id);
     if (id) {
       setSelectedId(null);
@@ -1169,6 +1216,78 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     pushHistory();
     setOverlays((prev) => prev.map((o) => (o.id === id ? applyAnimation(o, kind) : o)));
   }, [pushHistory]);
+
+  // ---------------------------------------------------------------------------
+  // Captions (subtitles)
+  // ---------------------------------------------------------------------------
+
+  const handleAddCaption = useCallback(() => {
+    pushHistory();
+    // A ~2s caption starting at the playhead's body-output-time (the caption
+    // clock), clamped to the body's end.
+    const totalMs = Math.max(0, Math.round(bodyDuration * 1000));
+    const fromMs = Math.max(0, Math.min(
+      totalMs - 500,
+      Math.round(globalToBodyMs(cardTimelineRef.current, currentTimeRef.current * 1000)),
+    ));
+    const toMs = Math.min(fromMs + 2000, totalMs);
+    const cap: Caption = { id: makeCaptionId(), text: 'New caption', startMs: fromMs, endMs: Math.max(fromMs + 500, toMs) };
+    setCaptions((prev) => [...prev, cap].sort((a, b) => a.startMs - b.startMs));
+    setSelectedCaptionId(cap.id);
+  }, [pushHistory, bodyDuration]);
+
+  const handleUpdateCaption = useCallback((id: string, patch: Partial<Caption>) => {
+    setCaptions((prev) => {
+      const next = prev.map((c) => (c.id === id ? { ...c, ...patch } : c));
+      // Keep the list time-ordered when start times move (timeline drag / edit).
+      return 'startMs' in patch ? next.sort((a, b) => a.startMs - b.startMs) : next;
+    });
+  }, []);
+
+  const handleRemoveCaption = useCallback((id: string) => {
+    pushHistory();
+    setCaptions((prev) => prev.filter((c) => c.id !== id));
+    setSelectedCaptionId((cur) => (cur === id ? null : cur));
+  }, [pushHistory]);
+
+  const handleChangeCaptionStyle = useCallback((patch: Partial<CaptionStyle>) => {
+    setCaptionStyle((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const handleSelectCaption = useCallback((id: string | null) => {
+    setSelectedCaptionId(id);
+    if (id) {
+      const cap = captionsRef.current.find((c) => c.id === id);
+      if (cap) seek(bodyToGlobalMs(cardTimelineRef.current, cap.startMs) / 1000 + 0.001);
+      setSelectedId(null);
+      setSelectedBlurId(null);
+      setSelectedFragmentId(null);
+      setSelectedOverlayId(null);
+    }
+  }, [seek]);
+
+  const handleGenerateCaptions = useCallback(async (
+    opts: { language?: string; mode: 'replace' | 'append'; onProgress?: (p: CaptionProgress) => void },
+  ): Promise<{ ok: boolean; count?: number; error?: string }> => {
+    if (transcribing) return { ok: false, error: 'Already transcribing.' };
+    setTranscribing(true);
+    try {
+      const generated = await generateCaptions(recording, fragmentsRef.current, {
+        language: opts.language,
+        onProgress: opts.onProgress,
+      });
+      pushHistory();
+      setCaptions((prev) => {
+        const merged = opts.mode === 'append' ? [...prev, ...generated] : generated;
+        return merged.sort((a, b) => a.startMs - b.startMs);
+      });
+      return { ok: true, count: generated.length };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      setTranscribing(false);
+    }
+  }, [transcribing, recording, pushHistory]);
 
   // ---------------------------------------------------------------------------
   // Intro / outro cards
@@ -1792,6 +1911,17 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           onCardsChange={handleCardsChange}
           onAddMidCardAtPlayhead={handleAddMidCardAtPlayhead}
           onCaptureRecordingFrame={handleCaptureRecordingFrame}
+          captions={captions}
+          captionStyle={captionStyle}
+          selectedCaptionId={selectedCaptionId}
+          onAddCaption={handleAddCaption}
+          onUpdateCaption={handleUpdateCaption}
+          onRemoveCaption={handleRemoveCaption}
+          onChangeCaptionStyle={handleChangeCaptionStyle}
+          onSelectCaption={handleSelectCaption}
+          onGenerateCaptions={handleGenerateCaptions}
+          captionsHasAudio={hasCaptionAudio}
+          captionsTranscribing={transcribing}
         />
       </div>
       <div className="editor-right">
@@ -1854,7 +1984,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
               onDragBlurRect={handleDragBlurRect}
               onCommitBlurRect={handleCommitBlurRect}
               onCreateBlur={handleCreateBlur}
-              overlays={overlays}
+              overlays={previewOverlays}
               overlayTimeMs={bodySec * 1000}
               selectedOverlayId={selectedOverlayId}
               onSelectOverlay={handleSelectOverlay}
@@ -2215,6 +2345,10 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
             selectedOverlayId={selectedOverlayId}
             onSelectOverlay={handleSelectOverlay}
             onUpdateOverlay={handleUpdateOverlay}
+            captions={captions}
+            selectedCaptionId={selectedCaptionId}
+            onSelectCaption={handleSelectCaption}
+            onUpdateCaption={handleUpdateCaption}
             cardTimeline={cardTimeline}
             onSelectCard={handleSelectCard}
             onMoveMidCard={handleMoveMidCard}
@@ -2268,7 +2402,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
           micVolume={micVolume}
           systemVolume={systemVolume}
           blurRegions={blurRegions}
-          overlays={overlays}
+          overlays={previewOverlays}
           cards={cards}
           platformId={platformId}
           onPlatform={applyPlatform}

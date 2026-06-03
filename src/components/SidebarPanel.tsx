@@ -7,6 +7,7 @@ import AudioPanel from './panels/AudioPanel';
 import ShortcutsPanel from './panels/ShortcutsPanel';
 import PlaceholderPanel from './panels/PlaceholderPanel';
 import IntroOutroPanel from './panels/IntroOutroPanel';
+import CaptionPanel from './panels/CaptionPanel';
 import type {
   AudioFxOptions,
   Background,
@@ -20,6 +21,8 @@ import type {
   MobileOptions,
 } from '../types';
 import type { CardSet } from '../cards/types';
+import type { Caption, CaptionStyle } from '../overlays/captions';
+import type { CaptionProgress } from '../lib/transcription';
 
 type CategoryId =
   | 'scene'
@@ -90,6 +93,17 @@ interface SidebarPanelProps {
   onCardsChange: (next: CardSet) => void;
   onAddMidCardAtPlayhead: () => void;
   onCaptureRecordingFrame: (position: 'start' | 'end' | number) => Promise<string | null>;
+  captions: Caption[];
+  captionStyle: CaptionStyle;
+  selectedCaptionId: string | null;
+  onAddCaption: () => void;
+  onUpdateCaption: (id: string, patch: Partial<Caption>) => void;
+  onRemoveCaption: (id: string) => void;
+  onChangeCaptionStyle: (patch: Partial<CaptionStyle>) => void;
+  onSelectCaption: (id: string | null) => void;
+  onGenerateCaptions: (opts: { language?: string; mode: 'replace' | 'append'; onProgress?: (p: CaptionProgress) => void }) => Promise<{ ok: boolean; count?: number; error?: string }>;
+  captionsHasAudio: boolean;
+  captionsTranscribing: boolean;
 }
 
 export default function SidebarPanel({
@@ -130,6 +144,17 @@ export default function SidebarPanel({
   onCardsChange,
   onAddMidCardAtPlayhead,
   onCaptureRecordingFrame,
+  captions,
+  captionStyle,
+  selectedCaptionId,
+  onAddCaption,
+  onUpdateCaption,
+  onRemoveCaption,
+  onChangeCaptionStyle,
+  onSelectCaption,
+  onGenerateCaptions,
+  captionsHasAudio,
+  captionsTranscribing,
 }: SidebarPanelProps): JSX.Element {
   const [activeId, setActiveId] = useState<CategoryId>('scene');
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -221,7 +246,21 @@ export default function SidebarPanel({
           />
         );
       case 'captions':
-        return <PlaceholderPanel title="Captions" description="Auto-generated subtitles and styling." />;
+        return (
+          <CaptionPanel
+            captions={captions}
+            style={captionStyle}
+            selectedCaptionId={selectedCaptionId}
+            onAddCaption={onAddCaption}
+            onUpdateCaption={onUpdateCaption}
+            onRemoveCaption={onRemoveCaption}
+            onChangeStyle={onChangeCaptionStyle}
+            onSelectCaption={onSelectCaption}
+            onGenerate={onGenerateCaptions}
+            hasAudio={captionsHasAudio}
+            transcribing={captionsTranscribing}
+          />
+        );
       case 'audio':
         return (
           <AudioPanel

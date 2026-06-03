@@ -74,6 +74,12 @@ export default defineConfig({
       },
     },
   },
+  // The local speech-to-text worker (transcribe.worker.ts) pulls in
+  // transformers.js, which dynamically imports its ONNX backends — that needs
+  // ES-module workers (the default iife format can't code-split dynamic import).
+  worker: {
+    format: 'es',
+  },
   server: {
     port: 5173,
     strictPort: true,
@@ -82,5 +88,9 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
-  optimizeDeps: {},
+  // Don't pre-bundle transformers.js — its conditional node/web backends confuse
+  // esbuild's optimiser; let Rollup handle it in the worker chunk instead.
+  optimizeDeps: {
+    exclude: ['@huggingface/transformers'],
+  },
 });
