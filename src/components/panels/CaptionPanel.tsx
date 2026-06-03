@@ -208,10 +208,14 @@ export default function CaptionPanel({
         <div className="grad-row">
           <label>Shadow</label>
           <Toggle label="" checked={style.shadow ?? true} onChange={(v) => onChangeStyle({ shadow: v })} />
-          <label style={{ marginLeft: 12 }}>Outline</label>
+        </div>
+
+        <div className="grad-row">
+          <label>Outline</label>
           <Toggle label="" checked={!!style.outline} onChange={(v) => onChangeStyle({ outline: v ? { ...DEFAULT_OUTLINE } : null })} />
           {style.outline && (
             <input
+              className="swatch"
               type="color"
               value={style.outline.color}
               onChange={(e) => onChangeStyle({ outline: { ...DEFAULT_OUTLINE, ...style.outline, color: e.target.value } })}
@@ -224,24 +228,20 @@ export default function CaptionPanel({
           <label>Background</label>
           <Toggle label="" checked={!!style.box} onChange={(v) => onChangeStyle({ box: v ? { ...DEFAULT_BOX } : null })} />
           {style.box && (
-            <>
-              <input
-                type="color"
-                value={style.box.color}
-                onChange={(e) => onChangeStyle({ box: { ...DEFAULT_BOX, ...style.box, color: e.target.value } })}
-                title="Background color"
-              />
-              <input
-                type="range"
-                min={0} max={1} step={0.05}
-                value={style.box.opacity}
-                onChange={(e) => onChangeStyle({ box: { ...DEFAULT_BOX, ...style.box, opacity: Number(e.target.value) } })}
-                title="Background opacity"
-                style={{ flex: 1 }}
-              />
-            </>
+            <input
+              className="swatch"
+              type="color"
+              value={style.box.color}
+              onChange={(e) => onChangeStyle({ box: { ...DEFAULT_BOX, ...style.box, color: e.target.value } })}
+              title="Background color"
+            />
           )}
         </div>
+        {style.box && (
+          <Slider label="BG opacity" value={style.box.opacity} min={0} max={1} step={0.05}
+            format={(v) => `${Math.round(v * 100)}%`}
+            onChange={(v) => onChangeStyle({ box: { ...DEFAULT_BOX, ...style.box, opacity: v } })} />
+        )}
       </div>
 
       {/* ── Caption list ───────────────────────────────────────────────── */}
