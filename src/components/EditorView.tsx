@@ -78,7 +78,8 @@ import {
   type CaptionStyle,
 } from '../overlays/captions';
 import { generateCaptions, type CaptionProgress } from '../lib/transcription';
-import { saveProject, saveProjectDoc, type EditDocument } from '../lib/project';
+import { saveProject, saveProjectDoc, saveProjectToLibrary, type EditDocument } from '../lib/project';
+import { capturePoster } from '../lib/poster';
 import type { Card, CardSet } from '../cards/types';
 import { createMidCard } from '../cards/factories';
 import {
@@ -171,8 +172,13 @@ interface EditorViewProps {
   initialDoc?: EditDocument | null;
   /** Folder of the currently-open project, if any (enables quick-save + autosave). */
   projectPath?: string | null;
-  /** Called after a successful save with the project's folder + name. */
+  /** Called after a successful explicit save with the project's folder + name. */
   onProjectSaved?: (path: string, name: string) => void;
+  /** Claim the one-time library auto-save for this recording. Returns false if it
+   *  was already started (e.g. by a previous mount), so it never double-writes. */
+  beginLibraryAutoSave?: (recordingUrl: string) => boolean;
+  /** Called when the decoupled library auto-save finishes (may be post-unmount). */
+  onLibraryAutoSaved?: (recordingUrl: string, path: string, name: string) => void;
 }
 
 interface HistorySnapshot {
@@ -204,7 +210,7 @@ const ASPECT_OPTIONS: ReadonlyArray<AspectOption> = [
   { id: '3:4',  label: 'Tall',     ratio: '3:4',  value: 3 / 4 },
 ];
 
-export default function EditorView({ recording, navExtraEl, initialDoc, projectPath, onProjectSaved }: EditorViewProps): JSX.Element {
+export default function EditorView({ recording, navExtraEl, initialDoc, projectPath, onProjectSaved, beginLibraryAutoSave, onLibraryAutoSaved }: EditorViewProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [sourceDuration, setSourceDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -613,6 +619,49 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     }, 1500);
     return () => clearTimeout(t);
   }, [projectPath, recording, buildEditDocument]);
+
+  // First-time auto-save into the managed library (<Videos>/KlipeStudio). A
+  // fresh recording arrives with no projectPath; we persist it (media + a poster
+  // thumbnail + duration) exactly once so it appears in the "My videos" gallery
+  // and is NEVER lost — even if the user never explicitly saves. Recordings
+  // opened from disk already have a projectPath, so they skip this.
+  //
+  // Deliberately decoupled from this component's lifecycle: the write must NOT be
+  // cancelled if the user navigates away mid-capture (that was a data-loss bug),
+  // so there is no `unmounted` guard around the disk write — the async chain runs
+  // to completion regardless. De-duplication lives in App (beginLibraryAutoSave),
+  // so a navigate-out-and-back remount can't kick off a second full-media write.
+  // App.onLibraryAutoSaved decides whether to adopt the path (it may land after
+  // unmount or after an explicit save). The poster is best-effort: a null/duration-
+  // less result still saves the media; project:save-doc preserves durationMs on
+  // later re-saves so the gallery badge survives.
+  useEffect(() => {
+    if (projectPath) return;
+    if (beginLibraryAutoSave && !beginLibraryAutoSave(recording.url)) return;
+    const doc = buildEditDocument();
+    const url = recording.url;
+    const name = recording.name || 'Untitled';
+    void (async () => {
+      let thumbnail: Uint8Array | null = null;
+      let durationMs: number | null = null;
+      try {
+        const poster = await capturePoster(url);
+        thumbnail = poster.bytes;
+        durationMs = poster.durationMs > 0 ? poster.durationMs : null;
+      } catch { /* poster is best-effort — save the recording regardless */ }
+      try {
+        const res = await saveProjectToLibrary(recording, doc, { thumbnail, durationMs });
+        if (res.ok && res.projectPath) {
+          onLibraryAutoSaved?.(url, res.projectPath, name);
+        } else if (res.error) {
+          console.error('[library] auto-save failed:', res.error);
+        }
+      } catch (e) {
+        console.error('[library] auto-save failed:', e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Master volume for the recording's own audio. With separate mic/system
   // tracks the screen blob has no audio, so the main <video> is muted and the

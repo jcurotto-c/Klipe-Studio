@@ -601,20 +601,10 @@ export default function FloatingHUD(): JSX.Element {
             </svg>
           </button>
           <button
-            className="hud-traffic-dot is-min"
-            onClick={() => window.klipeHud?.minimize?.()}
-            title="Minimize"
-            aria-label="Minimize"
-          >
-            <svg viewBox="0 0 12 12" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-              <path d="M2.5 6h7" />
-            </svg>
-          </button>
-          <button
             className="hud-traffic-dot is-max"
             onClick={() => window.klipeHud?.showMain?.()}
-            title="Open editor"
-            aria-label="Open editor"
+            title="Open window"
+            aria-label="Open window"
           >
             <svg viewBox="0 0 12 12" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 5V3h2M9 7v2H7M3 7v2h2M9 5V3H7" />

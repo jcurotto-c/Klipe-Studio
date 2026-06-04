@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, crashReporter, desktopCapturer, globalShortcut, ipcMain, dialog, screen, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, Menu, crashReporter, desktopCapturer, globalShortcut, ipcMain, dialog, screen, session, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -141,6 +141,24 @@ const HUD_BAR_HEIGHT = 140;
 const HUD_HEIGHT = HUD_BAR_HEIGHT;
 const HUD_TOP_OFFSET = 12;
 
+// Set true the instant a real quit begins, so the panel's close handler stops
+// hiding-to-toggle and lets the window actually be destroyed.
+let isQuitting = false;
+
+/** Bring the floating toolbar (toggle) back. */
+function showHud(): void {
+  if (hudWindow && !hudWindow.isDestroyed()) {
+    if (!hudWindow.isVisible()) { hudWindow.show(); hudWindow.focus(); }
+  } else {
+    createHudWindow();
+  }
+}
+
+/** Hide the floating toolbar (toggle). */
+function hideHud(): void {
+  if (hudWindow && !hudWindow.isDestroyed() && hudWindow.isVisible()) hudWindow.hide();
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -165,9 +183,20 @@ function createWindow(): void {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  // The floating toolbar (toggle) and the main window (panel) are mutually
+  // exclusive: showing the panel hides the toggle; hiding/minimizing/closing the
+  // panel brings the toggle back. Closing the panel (its X) returns to the
+  // toggle instead of quitting — the app fully quits only via the toggle's close
+  // button (app:quit → app.exit, which bypasses this handler).
+  mainWindow.on('show', hideHud);
+  mainWindow.on('restore', hideHud);
+  mainWindow.on('hide', showHud);
+  mainWindow.on('minimize', showHud);
+
   mainWindow.on('close', (e) => {
-    if (hudWindow && !hudWindow.isDestroyed() && mainWindow && !mainWindow.isVisible()) {
+    if (!isQuitting) {
       e.preventDefault();
+      mainWindow?.hide(); // fires 'hide' → the toggle reappears; app keeps running
     }
   });
 
@@ -660,6 +689,7 @@ function ensureCursorRestored(): void {
     /* never throw from a teardown handler */
   }
 }
+app.on('before-quit', () => { isQuitting = true; });
 app.on('before-quit', ensureCursorRestored);
 app.on('before-quit', () => { try { cleanupAllScrcpy(); } catch { /* never throw from teardown */ } });
 app.on('will-quit', ensureCursorRestored);
@@ -826,6 +856,48 @@ interface ProjectSaveArgs {
   suggestedName: string;
 }
 
+/** Sanitize a project name into a filesystem-safe folder name. */
+function safeProjectName(name: string | undefined): string {
+  return (name || 'Untitled').replace(/[\\/:*?"<>|]/g, '_').trim() || 'Untitled';
+}
+
+/** Write project.json plus the supplied media files into a project folder.
+ * Async (fs.promises) on purpose: the media blobs are routinely hundreds of MB,
+ * and a synchronous write would block the single main-process event loop —
+ * freezing the big window AND the always-on-top HUD toolbar for the whole flush
+ * (the same trap save-video-blob and project:save-doc already avoid). This runs
+ * automatically on every recording (library auto-save), so it must never stall. */
+async function writeProjectBundle(
+  projectDir: string,
+  manifestJson: string,
+  media: Array<{ name: string; bytes: Uint8Array }>,
+): Promise<void> {
+  await fs.promises.mkdir(projectDir, { recursive: true });
+  await fs.promises.writeFile(path.join(projectDir, 'project.json'), manifestJson, 'utf8');
+  for (const m of media) {
+    if (!m || typeof m.name !== 'string' || !m.bytes) continue;
+    // Only a bare filename is allowed inside the bundle — block traversal.
+    const safe = path.basename(m.name);
+    await fs.promises.writeFile(path.join(projectDir, safe), Buffer.from(m.bytes));
+  }
+}
+
+/** The managed library folder where recordings auto-save: <Videos>/KlipeStudio. */
+function libraryRoot(): string {
+  return path.join(app.getPath('videos'), 'KlipeStudio');
+}
+
+/** Resolve a non-colliding `<name>.klipestudio` folder path inside `dir`. */
+function uniqueProjectDir(dir: string, safeName: string): string {
+  let candidate = path.join(dir, `${safeName}.klipestudio`);
+  let n = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${safeName} (${n}).klipestudio`);
+    n += 1;
+  }
+  return candidate;
+}
+
 // Persist a .klipestudio project as a folder bundle: project.json plus the
 // source media (screen/camera/mobile/music). The renderer supplies the JSON
 // and the raw bytes; we only do the file IO here.
@@ -836,7 +908,7 @@ ipcMain.handle('project:save', async (_evt: IpcMainInvokeEvent, args: ProjectSav
   if (typeof manifestJson !== 'string' || !Array.isArray(media)) {
     return { canceled: true as const, error: 'Invalid project payload' };
   }
-  const safeName = (suggestedName || 'Untitled').replace(/[\\/:*?"<>|]/g, '_');
+  const safeName = safeProjectName(suggestedName);
   const defaultPath = path.join(app.getPath('videos'), `${safeName}.klipestudio`);
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Save Klipe project',
@@ -846,19 +918,140 @@ ipcMain.handle('project:save', async (_evt: IpcMainInvokeEvent, args: ProjectSav
   if (result.canceled || !result.filePath) return { canceled: true as const };
   const projectDir = result.filePath;
   try {
-    fs.mkdirSync(projectDir, { recursive: true });
-    fs.writeFileSync(path.join(projectDir, 'project.json'), manifestJson, 'utf8');
-    for (const m of media) {
-      if (!m || typeof m.name !== 'string' || !m.bytes) continue;
-      // Only a bare filename is allowed inside the bundle — block traversal.
-      const safe = path.basename(m.name);
-      fs.writeFileSync(path.join(projectDir, safe), Buffer.from(m.bytes));
-    }
+    await writeProjectBundle(projectDir, manifestJson, media);
     return { canceled: false as const, projectPath: projectDir };
   } catch (err) {
     return { canceled: false as const, error: String(err) };
   }
 });
+
+// Auto-save a recording into the managed library (<Videos>/KlipeStudio) with no
+// dialog. Used right after a recording opens in the editor so nothing is ever
+// lost — every take becomes a real, reopenable project. De-dupes the folder
+// name so two recordings made in the same second don't clobber each other.
+ipcMain.handle('library:save', async (_evt: IpcMainInvokeEvent, args: ProjectSaveArgs) => {
+  if (!isTrustedSender(_evt)) return { ok: false as const, error: 'untrusted sender' };
+  const { manifestJson, media, suggestedName } = args || ({} as ProjectSaveArgs);
+  if (typeof manifestJson !== 'string' || !Array.isArray(media)) {
+    return { ok: false as const, error: 'Invalid project payload' };
+  }
+  try {
+    const root = libraryRoot();
+    await fs.promises.mkdir(root, { recursive: true });
+    const projectDir = uniqueProjectDir(root, safeProjectName(suggestedName));
+    await writeProjectBundle(projectDir, manifestJson, media);
+    return { ok: true as const, projectPath: projectDir };
+  } catch (err) {
+    return { ok: false as const, error: String(err) };
+  }
+});
+
+interface LibraryItem {
+  projectPath: string;
+  name: string;
+  createdAt: number;
+  durationMs: number | null;
+  thumbnailDataUrl: string | null;
+}
+
+// Enumerate the managed library: every `*.klipestudio` folder, newest first.
+// Reads only the cheap metadata (project.json's name/createdAt/durationMs) plus
+// the small thumbnail — never the multi-MB video blobs — so the gallery stays
+// snappy even with many recordings.
+ipcMain.handle('library:list', async (_evt: IpcMainInvokeEvent) => {
+  if (!isTrustedSender(_evt)) return [] as LibraryItem[];
+  const root = libraryRoot();
+  try {
+    fs.mkdirSync(root, { recursive: true });
+    const entries = await fs.promises.readdir(root, { withFileTypes: true });
+    const items: LibraryItem[] = [];
+    for (const e of entries) {
+      if (!e.isDirectory() || !e.name.endsWith('.klipestudio')) continue;
+      const projectDir = path.join(root, e.name);
+      try {
+        const raw = await fs.promises.readFile(path.join(projectDir, 'project.json'), 'utf8');
+        const manifest = JSON.parse(raw) as {
+          klipeProject?: boolean;
+          name?: string;
+          createdAt?: number;
+          durationMs?: number;
+        };
+        if (manifest.klipeProject !== true) continue;
+        let thumbnailDataUrl: string | null = null;
+        try {
+          const buf = await fs.promises.readFile(path.join(projectDir, 'thumbnail.jpg'));
+          thumbnailDataUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
+        } catch {
+          /* no thumbnail — gallery shows a placeholder */
+        }
+        items.push({
+          projectPath: projectDir,
+          name: typeof manifest.name === 'string' ? manifest.name : e.name.replace(/\.klipestudio$/, ''),
+          createdAt: typeof manifest.createdAt === 'number' ? manifest.createdAt : 0,
+          durationMs: typeof manifest.durationMs === 'number' ? manifest.durationMs : null,
+          thumbnailDataUrl,
+        });
+      } catch {
+        /* unreadable/!project folder — skip */
+      }
+    }
+    items.sort((a, b) => b.createdAt - a.createdAt);
+    return items;
+  } catch (err) {
+    console.error('[library] list failed:', err);
+    return [] as LibraryItem[];
+  }
+});
+
+// Permanently delete a library project folder. Guarded: the path must live
+// inside the library root and carry the .klipestudio suffix, so a compromised
+// renderer can't aim this at arbitrary directories.
+ipcMain.handle('library:delete', async (_evt: IpcMainInvokeEvent, projectPath: unknown) => {
+  if (!isTrustedSender(_evt)) return { ok: false as const, error: 'untrusted sender' };
+  if (typeof projectPath !== 'string' || !path.isAbsolute(projectPath)) {
+    return { ok: false as const, error: 'Invalid path' };
+  }
+  if (!isWithinLibrary(projectPath)) {
+    return { ok: false as const, error: 'Refusing to delete outside the library' };
+  }
+  try {
+    await fs.promises.rm(path.resolve(projectPath), { recursive: true, force: true });
+    return { ok: true as const };
+  } catch (err) {
+    return { ok: false as const, error: String(err) };
+  }
+});
+
+/** True if `target` is the library root or a `.klipestudio` folder inside it. */
+function isWithinLibrary(target: string): boolean {
+  const root = libraryRoot();
+  const resolved = path.resolve(target);
+  const within = resolved === root || resolved.startsWith(root + path.sep);
+  return within && resolved.endsWith('.klipestudio');
+}
+
+// Reveal a project in the OS file manager (selected), or — with no path — open
+// the library root folder itself. The path is validated against the library
+// root (same guard as library:delete) so a compromised renderer can't point an
+// Explorer window at arbitrary locations.
+ipcMain.handle('library:reveal', async (_evt: IpcMainInvokeEvent, projectPath: unknown) => {
+  if (!isTrustedSender(_evt)) return { ok: false as const };
+  try {
+    const root = libraryRoot();
+    await fs.promises.mkdir(root, { recursive: true });
+    if (typeof projectPath === 'string' && projectPath && path.isAbsolute(projectPath) && isWithinLibrary(projectPath)) {
+      shell.showItemInFolder(projectPath);
+    } else {
+      await shell.openPath(root);
+    }
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const };
+  }
+});
+
+// The library root path, for display / "open folder" affordances.
+ipcMain.handle('library:root', () => libraryRoot());
 
 async function readProjectDir(projectDir: string): Promise<
   | { canceled: false; manifestJson: string; media: Record<string, Uint8Array>; projectPath: string }
@@ -921,7 +1114,35 @@ ipcMain.handle('project:save-doc', async (_evt: IpcMainInvokeEvent, args: Projec
   }
   try {
     if (!fs.existsSync(projectPath)) return { ok: false as const, error: 'Project folder not found' };
-    await fs.promises.writeFile(path.join(projectPath, 'project.json'), manifestJson, 'utf8');
+    // Carry forward manifest fields the editor's buildManifest doesn't preserve
+    // across a re-save, so autosave / explicit Save never corrupts them:
+    //  - durationMs: written once by the library auto-save; the editor has no
+    //    notion of it, so without this it'd be dropped and the gallery duration
+    //    badge would vanish on the first debounced autosave.
+    //  - createdAt: buildManifest stamps Date.now() on every save; preserving the
+    //    original keeps the gallery's date stable and stops an edited project from
+    //    jumping to the top of the newest-first sort.
+    let finalJson = manifestJson;
+    try {
+      const incoming = JSON.parse(manifestJson) as { createdAt?: number; durationMs?: number };
+      const existingRaw = await fs.promises.readFile(path.join(projectPath, 'project.json'), 'utf8');
+      const existing = JSON.parse(existingRaw) as { createdAt?: number; durationMs?: number };
+      const merged = { ...incoming };
+      let changed = false;
+      if (typeof existing.createdAt === 'number' && existing.createdAt > 0 && existing.createdAt !== incoming.createdAt) {
+        merged.createdAt = existing.createdAt;
+        changed = true;
+      }
+      if ((typeof incoming.durationMs !== 'number' || incoming.durationMs <= 0)
+        && typeof existing.durationMs === 'number' && existing.durationMs > 0) {
+        merged.durationMs = existing.durationMs;
+        changed = true;
+      }
+      if (changed) finalJson = JSON.stringify(merged);
+    } catch {
+      /* malformed JSON on either side — write the incoming manifest as-is */
+    }
+    await fs.promises.writeFile(path.join(projectPath, 'project.json'), finalJson, 'utf8');
     if (Array.isArray(media)) {
       for (const m of media) {
         if (!m || typeof m.name !== 'string' || !m.bytes) continue;

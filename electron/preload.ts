@@ -51,6 +51,17 @@ contextBridge.exposeInMainWorld('klipe', {
     open: () => ipcRenderer.invoke('project:open'),
     openPath: (projectPath: string) => ipcRenderer.invoke('project:open-path', projectPath),
   },
+  library: {
+    save: (params: {
+      manifestJson: string;
+      media: Array<{ name: string; bytes: Uint8Array }>;
+      suggestedName: string;
+    }) => ipcRenderer.invoke('library:save', params),
+    list: () => ipcRenderer.invoke('library:list'),
+    delete: (projectPath: string) => ipcRenderer.invoke('library:delete', projectPath),
+    reveal: (projectPath?: string) => ipcRenderer.invoke('library:reveal', projectPath),
+    root: () => ipcRenderer.invoke('library:root'),
+  },
   shortcuts: {
     set: (s: { toggleRecord: string; toggleHud: string }) => ipcRenderer.invoke('shortcuts:set', s),
     getDefaults: () => ipcRenderer.invoke('shortcuts:get-defaults'),

@@ -57,6 +57,13 @@ function hasMp4Moov(buf: ArrayBuffer): boolean {
 }
 
 interface RecorderViewProps {
+  /** Whether the recorder's headless UI is the visible view. The recording
+   *  ENGINE (HUD event listeners + begin/stop) runs whenever this component is
+   *  mounted, regardless of `active`; `active` only gates the visible markup so
+   *  it doesn't render under the library/editor. The component is kept mounted
+   *  app-wide so a recording can be started from the floating toolbar at any
+   *  time — even while the big window shows the library. */
+  active: boolean;
   onRecordingDone: (rec: Recording) => void;
   recents: RecentProject[];
   onOpenRecent: (path: string) => void;
@@ -74,7 +81,7 @@ interface ActiveRecorder {
   scrcpy: { filePath: string; serial: string } | null;
 }
 
-export default function RecorderView({ onRecordingDone, recents, onOpenRecent }: RecorderViewProps): JSX.Element {
+export default function RecorderView({ active, onRecordingDone, recents, onOpenRecent }: RecorderViewProps): JSX.Element | null {
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recorderRef = useRef<ActiveRecorder | null>(null);
@@ -341,6 +348,26 @@ export default function RecorderView({ onRecordingDone, recents, onOpenRecent }:
       offEvent?.();
     };
   }, [beginRecording, stopRecording]);
+
+  // The recording engine (all hooks above) keeps running whenever this component
+  // is mounted. When the recorder isn't the visible view we render nothing — so
+  // it can sit mounted under the library/editor without showing — except a
+  // floating banner if a recording errored, so the failure still surfaces.
+  if (!active) {
+    if (!error) return null;
+    return (
+      <div
+        style={{
+          position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 4000, maxWidth: 520, color: 'var(--danger)', background: 'var(--bg-1)',
+          padding: '10px 14px', border: '1px solid var(--danger)', borderRadius: 8,
+          boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+        }}
+      >
+        {error}
+      </div>
+    );
+  }
 
   return (
     <div className="recorder recorder-headless">

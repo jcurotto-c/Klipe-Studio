@@ -103,6 +103,9 @@ export interface ProjectManifest {
   version: number;
   name: string;
   createdAt: number;
+  /** Source duration in ms — recorded so the library gallery can show it
+   * without decoding the video. Absent on projects saved before the feature. */
+  durationMs?: number;
   display: Display;
   autoZoom: boolean;
   mouse: MouseTrack;
@@ -231,6 +234,7 @@ function buildManifest(
   doc: EditDocument,
   musicRef: MediaRef | null,
   bgVideoRef: MediaRef | null,
+  durationMs?: number,
 ): ProjectManifest {
   const refs = mediaRefsFor(recording);
   // Strip volatile object URLs (background music + video background) from the
@@ -249,6 +253,7 @@ function buildManifest(
     version: PROJECT_VERSION,
     name: recording.name || 'Untitled',
     createdAt: Date.now(),
+    ...(typeof durationMs === 'number' && durationMs > 0 ? { durationMs } : {}),
     display: recording.display,
     autoZoom: recording.autoZoom !== false,
     mouse: recording.mouse,
@@ -299,6 +304,64 @@ export async function saveProject(
   if (bgVideo) media.push({ name: bgVideo.ref.file, bytes: bgVideo.bytes });
 
   const manifest = buildManifest(recording, doc, music?.ref ?? null, bgVideo?.ref ?? null);
+  return bridge.save({
+    manifestJson: JSON.stringify(manifest),
+    media,
+    suggestedName: manifest.name,
+  });
+}
+
+export interface LibrarySaveResult {
+  ok: boolean;
+  projectPath?: string;
+  error?: string;
+}
+
+/**
+ * Auto-save a fresh recording into the managed library (<Videos>/KlipeStudio)
+ * with NO dialog. Writes every media file exactly like {@link saveProject} plus
+ * a small JPEG poster (`thumbnail.jpg`) and the source duration, so the recording
+ * shows up in the gallery immediately and nothing is ever lost. Called once,
+ * right after a recording opens in the editor.
+ */
+export async function saveProjectToLibrary(
+  recording: Recording,
+  doc: EditDocument,
+  options?: { thumbnail?: Uint8Array | null; durationMs?: number | null },
+): Promise<LibrarySaveResult> {
+  const bridge = window.klipe?.library;
+  if (!bridge?.save) return { ok: false, error: 'Library is unavailable in this build.' };
+
+  const refs = mediaRefsFor(recording);
+  const media: Array<{ name: string; bytes: Uint8Array }> = [];
+  media.push({ name: refs.screen.file, bytes: await blobBytes(recording.blob) });
+  if (recording.camera && refs.camera) {
+    media.push({ name: refs.camera.file, bytes: await blobBytes(recording.camera.blob) });
+  }
+  if (recording.mobile && refs.mobile) {
+    media.push({ name: refs.mobile.file, bytes: await blobBytes(recording.mobile.blob) });
+  }
+  if (recording.micAudio && refs.micAudio) {
+    media.push({ name: refs.micAudio.file, bytes: await blobBytes(recording.micAudio.blob) });
+  }
+  if (recording.systemAudio && refs.systemAudio) {
+    media.push({ name: refs.systemAudio.file, bytes: await blobBytes(recording.systemAudio.blob) });
+  }
+  const music = await readMusicMedia(doc);
+  if (music) media.push({ name: music.ref.file, bytes: music.bytes });
+  const bgVideo = await readBgVideoMedia(doc);
+  if (bgVideo) media.push({ name: bgVideo.ref.file, bytes: bgVideo.bytes });
+  if (options?.thumbnail && options.thumbnail.byteLength > 0) {
+    media.push({ name: 'thumbnail.jpg', bytes: options.thumbnail });
+  }
+
+  const manifest = buildManifest(
+    recording,
+    doc,
+    music?.ref ?? null,
+    bgVideo?.ref ?? null,
+    options?.durationMs ?? undefined,
+  );
   return bridge.save({
     manifestJson: JSON.stringify(manifest),
     media,

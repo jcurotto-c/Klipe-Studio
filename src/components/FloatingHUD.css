@@ -19,7 +19,7 @@
   /* Recording — quieter, more atmospheric */
   --hud-rec: #ff4f5a;
   --hud-rec-soft: rgba(255, 79, 90, 0.14);
-  --hud-rec-glow: rgba(255, 79, 90, 0.22);
+  --hud-rec-glow: rgba(255, 45, 60, 0.38);
 
   /* AI / Accent — refined platinum */
   --hud-purple: #ffffff;
@@ -186,24 +186,28 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgba(0, 0, 0, 0); /* icon hidden until hover */
+  color: rgba(255, 255, 255, 0); /* icon hidden until hover */
   flex: 0 0 auto;
   position: relative;
+  /* Monochrome neutral dot at rest — fits the white-on-black UI. Colour is
+     reserved for the close (quit) hover, where it actually signals something. */
+  background: radial-gradient(circle at 35% 30%, #3c3c3c 0%, #2c2c2c 60%, #232323 100%);
   transition:
     transform 160ms var(--ease-spring),
-    filter 160ms var(--ease-out),
+    background 140ms var(--ease-out),
     color 120ms ease;
   box-shadow:
     inset 0 0 0 0.5px var(--hud-tl-rim),
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 1px 1px rgba(0, 0, 0, 0.25);
 }
-.hud-traffic-dot.is-close { background: radial-gradient(circle at 35% 30%, #ff8b85 0%, var(--hud-tl-close) 60%, #d83b34 100%); }
-.hud-traffic-dot.is-min   { background: radial-gradient(circle at 35% 30%, #ffd97a 0%, var(--hud-tl-min)   60%, #cc8e0e 100%); }
-.hud-traffic-dot.is-max   { background: radial-gradient(circle at 35% 30%, #7ce880 0%, var(--hud-tl-max)   60%, #1a9e2a 100%); }
 
-.hud-traffic:hover .hud-traffic-dot { color: rgba(0, 0, 0, 0.55); }
-.hud-traffic-dot:hover { filter: brightness(1.05); }
+/* Glyphs reveal on hover, light against the dark dots. */
+.hud-traffic:hover .hud-traffic-dot { color: rgba(255, 255, 255, 0.85); }
+/* Open window: stays neutral, lifts a touch on hover. */
+.hud-traffic-dot.is-max:hover { background: radial-gradient(circle at 35% 30%, #4d4d4d 0%, #3a3a3a 60%, #2f2f2f 100%); }
+/* Close = quits the app: the only place colour earns its keep. */
+.hud-traffic-dot.is-close:hover { background: radial-gradient(circle at 35% 30%, #ff8ba0 0%, var(--danger) 60%, #e0415f 100%); }
 .hud-traffic-dot:active { transform: scale(0.88); }
 
 /* ───────────── Hairline divider ───────────── */
@@ -690,12 +694,13 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   height: 18px;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 35% 28%, #ff9099 0%, #ff4f5a 50%, #cf2935 100%);
+    radial-gradient(circle at 35% 28%, #ff5b64 0%, #ff2231 48%, #cc0e1b 100%);
   box-shadow:
     0 0 0 0.5px rgba(0, 0, 0, 0.30),
-    0 1px 3px rgba(207, 41, 53, 0.40),
-    inset 0 1px 0 rgba(255, 255, 255, 0.30),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+    0 1px 4px rgba(255, 34, 49, 0.55),
+    0 0 9px -1px rgba(255, 40, 55, 0.50),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22);
   transition:
     transform 380ms var(--ease-spring),
     border-radius 380ms var(--ease-soft),
@@ -757,7 +762,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   width: 14px;
   height: 14px;
   border-radius: 3px;
-  background: radial-gradient(circle at 40% 30%, #ff8a92 0%, #ff4f5a 50%, #d62b37 100%);
+  background: radial-gradient(circle at 40% 30%, #ff5b64 0%, #ff2231 50%, #d10f1c 100%);
   animation: rec-dot-soft 2.6s ease-in-out infinite;
 }
 

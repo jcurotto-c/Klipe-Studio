@@ -79,6 +79,23 @@ declare global {
         | null
       >;
     };
+    /** Managed recording library under <Videos>/KlipeStudio. */
+    library: {
+      /** Auto-save a recording into the library (no dialog). */
+      save: (params: {
+        manifestJson: string;
+        media: Array<{ name: string; bytes: Uint8Array }>;
+        suggestedName: string;
+      }) => Promise<{ ok: boolean; projectPath?: string; error?: string }>;
+      /** List every saved recording, newest first. */
+      list: () => Promise<LibraryItem[]>;
+      /** Permanently delete a project folder (must live inside the library). */
+      delete: (projectPath: string) => Promise<{ ok: boolean; error?: string }>;
+      /** Reveal a project (or the library root) in the OS file manager. */
+      reveal: (projectPath?: string) => Promise<{ ok: boolean }>;
+      /** Absolute path of the library root folder. */
+      root: () => Promise<string>;
+    };
     /** Configurable system-wide shortcuts (re)registered in the main process. */
     shortcuts?: {
       set: (s: GlobalShortcuts) => Promise<{
@@ -93,6 +110,19 @@ declare global {
   interface GlobalShortcuts {
     toggleRecord: string;
     toggleHud: string;
+  }
+
+  /** One saved recording in the library gallery (lightweight — no video bytes). */
+  interface LibraryItem {
+    /** Absolute path of the `<name>.klipestudio` folder. */
+    projectPath: string;
+    name: string;
+    /** Epoch ms the project was created/auto-saved. */
+    createdAt: number;
+    /** Source duration in ms, if it was recorded into the manifest. */
+    durationMs: number | null;
+    /** Inline JPEG poster (`data:image/jpeg;base64,…`) or null if none. */
+    thumbnailDataUrl: string | null;
   }
 
   interface HudTrigger {
