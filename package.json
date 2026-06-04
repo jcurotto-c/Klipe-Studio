@@ -14,9 +14,10 @@
     "dev:electron": "pnpm build:electron && wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
     "dev": "concurrently -k -n VITE,ELECTRON -c blue,magenta \"pnpm dev:vite\" \"pnpm dev:electron\"",
     "build:vite": "vite build",
-    "build": "pnpm typecheck && pnpm build:vite && pnpm build:electron && electron-builder --win --x64",
+    "build": "pnpm typecheck && pnpm build:vite && pnpm build:electron && node scripts/prepare-wincodesign.cjs && electron-builder --win --x64",
     "preview": "vite preview",
     "setup:scrcpy": "node scripts/download-scrcpy.cjs",
+    "setup:wincodesign": "node scripts/prepare-wincodesign.cjs",
     "postinstall": "node scripts/download-scrcpy.cjs",
     "make:icon": "electron scripts/make-icon.cjs",
     "audit:check": "pnpm audit --audit-level=high"
