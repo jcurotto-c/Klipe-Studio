@@ -80,6 +80,7 @@ import {
 import { generateCaptions, type CaptionProgress } from '../lib/transcription';
 import { saveProject, saveProjectDoc, saveProjectToLibrary, type EditDocument } from '../lib/project';
 import { capturePoster } from '../lib/poster';
+import { releaseFilmstrip } from '../lib/filmstrip';
 import type { Card, CardSet } from '../cards/types';
 import { createMidCard } from '../cards/factories';
 import {
@@ -640,12 +641,16 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     if (beginLibraryAutoSave && !beginLibraryAutoSave(recording.url)) return;
     const doc = buildEditDocument();
     const url = recording.url;
+    // The gallery card should show what the recording actually looks like. For a
+    // phone-primary recording that is the phone footage, not the parallel PC
+    // screen capture — so grab the poster frame from the phone URL when present.
+    const posterUrl = recording.mobile?.url ?? recording.url;
     const name = recording.name || 'Untitled';
     void (async () => {
       let thumbnail: Uint8Array | null = null;
       let durationMs: number | null = null;
       try {
-        const poster = await capturePoster(url);
+        const poster = await capturePoster(posterUrl);
         thumbnail = poster.bytes;
         durationMs = poster.durationMs > 0 ? poster.durationMs : null;
       } catch { /* poster is best-effort — save the recording regardless */ }
@@ -1395,7 +1400,11 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     }
     try {
       const v = document.createElement('video');
-      v.src = recording.url;
+      // A card freeze-frame must come from the footage the user actually sees.
+      // In phone-primary mode that's the phone clip (synced 1:1 to the master
+      // clock, so the screen-time srcTime maps directly); fall back to the
+      // screen capture otherwise.
+      v.src = recording.mobile?.url ?? recording.url;
       v.muted = true;
       v.preload = 'auto';
       // Resolve on the event OR a timeout so a stalled decode can't hang the UI.
@@ -1436,7 +1445,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     } catch {
       return null;
     }
-  }, [recording.url]);
+  }, [recording.url, recording.mobile]);
 
   /** Drag a card's text/logo item to a new fractional position (any card it
    * belongs to — ids are unique across intro/outro/mid). */
@@ -1915,7 +1924,12 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
 
   useEffect(() => {
     if (!recordedMobile) return undefined;
-    return () => { URL.revokeObjectURL(recordedMobile.url); };
+    return () => {
+      // The phone URL now also backs the timeline filmstrip, so free its cached
+      // thumbnails (ImageBitmaps the GC can't reclaim) before revoking the URL.
+      releaseFilmstrip(recordedMobile.url);
+      URL.revokeObjectURL(recordedMobile.url);
+    };
   }, [recordedMobile]);
 
   return (
@@ -2382,7 +2396,13 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
             onUpdateSegment={handleUpdateSegment}
             fragments={fragments}
             sourceDuration={sourceDuration}
-            recordingUrl={recording.url}
+            // Filmstrip must show whatever the preview shows. In phone-primary
+            // mode the phone footage is the main subject (the screen capture
+            // runs in parallel only as the master clock), so the timeline
+            // thumbnails come from the phone URL — not recording.url, which is
+            // the PC screen the user never sees. The mobile <video> is synced
+            // 1:1 to the master clock, so fragment src-times map unchanged.
+            recordingUrl={recordedMobile ? recordedMobile.url : recording.url}
             selectedFragmentId={selectedFragmentId}
             onSelectFragment={handleSelectFragment}
             onUpdateFragments={handleUpdateFragments}
