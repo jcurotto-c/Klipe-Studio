@@ -25,7 +25,7 @@ import {
   Text,
   Texture,
 } from 'pixi.js';
-import type { ImageOverlay, Overlay, TextOverlay } from '../types';
+import type { ImageOverlay, LineOverlay, Overlay, TextOverlay } from '../types';
 import { fontStack, snapWeight } from '../fonts';
 import { sampleNumber, sampleVec } from './sample';
 
@@ -34,6 +34,8 @@ interface OverlayNode {
   container: Container;
   text: Text | null;        // text overlays only — for size + content updates
   sprite: Sprite | null;    // image overlays only — for size updates
+  /** The stroke for line overlays (callout leader lines); null otherwise. */
+  line: Graphics | null;
   /** Background pill behind text overlays (captions); null when not requested. */
   box: Graphics | null;
   blur: BlurFilter;
@@ -133,6 +135,7 @@ export class OverlayStage {
     const sorted = [...this.overlays].sort((a, b) => b.z - a.z);
     for (const overlay of sorted) {
       if (overlay.hidden) continue;
+      if (overlay.type === 'line') continue; // generated callout lines aren't selectable
       const tx = overlay.transform;
       const pos = sampleVec(tx.position, tMs, overlay.base.x, overlay.base.y);
       const scl = sampleNumber(tx.scale, tMs, overlay.base.scale);
@@ -174,6 +177,11 @@ export class OverlayStage {
       const charW = fontPx * 0.55;
       const longest = overlay.text.split('\n').reduce((a, l) => Math.max(a, l.length), 1);
       return { w: Math.max(40, longest * charW), h: fontPx * 1.3 };
+    }
+    if (overlay.type === 'line') {
+      const w = Math.abs(overlay.to.x - overlay.from.x) * this.app.renderer.width;
+      const h = Math.abs(overlay.to.y - overlay.from.y) * canvasH;
+      return { w: Math.max(1, w), h: Math.max(1, h) };
     }
     return this.imagePixelSize(overlay, canvasH);
   }
@@ -270,6 +278,28 @@ export class OverlayStage {
       // patch the node so the user sees edits without a full rebuild.
       this.patchNode(node, overlay, h);
 
+      // Line overlays are drawn in canvas-space from their endpoints, so they
+      // bypass the container position/scale/rotation transform. The `scale`
+      // track doubles as a 0..1 draw-on progress (segment grows from `from`).
+      if (overlay.type === 'line') {
+        const ltx = overlay.transform;
+        const op = sampleNumber(ltx.opacity, tMs, overlay.base.opacity);
+        const vFrom = overlay.visibleFrom ?? -Infinity;
+        const vTo = overlay.visibleTo ?? Infinity;
+        const visible = !overlay.hidden && tMs >= vFrom && tMs <= vTo && op > 0.001;
+        node.container.visible = visible;
+        node.container.position.set(0, 0);
+        node.container.scale.set(1, 1);
+        node.container.rotation = 0;
+        node.container.alpha = op;
+        node.blur.enabled = false;
+        if (visible && node.line) {
+          const progress = Math.max(0, Math.min(1, sampleNumber(ltx.scale, tMs, 1)));
+          this.drawLine(node.line, overlay, progress, w, h);
+        }
+        continue;
+      }
+
       const tx = overlay.transform;
       const pos = sampleVec(tx.position, tMs, overlay.base.x, overlay.base.y);
       const scl = sampleNumber(tx.scale, tMs, overlay.base.scale);
@@ -361,14 +391,39 @@ export class OverlayStage {
       case 'text': {
         const { container, text, box, fullText, shadowOn } = this.buildText(overlay, h);
         container.filters = [blur];
-        return { overlay, container, text, sprite: null, box, blur, typewriterFullText: fullText, shadowOn };
+        return { overlay, container, text, sprite: null, line: null, box, blur, typewriterFullText: fullText, shadowOn };
       }
       case 'image': {
         const { container, sprite } = await this.buildImage(overlay, h);
         container.filters = [blur];
-        return { overlay, container, text: null, sprite, box: null, blur, typewriterFullText: null, shadowOn: false };
+        return { overlay, container, text: null, sprite, line: null, box: null, blur, typewriterFullText: null, shadowOn: false };
+      }
+      case 'line': {
+        const { container, line } = this.buildLine(overlay);
+        container.filters = [blur];
+        return { overlay, container, text: null, sprite: null, line, box: null, blur, typewriterFullText: null, shadowOn: false };
       }
     }
+  }
+
+  private buildLine(overlay: LineOverlay): { container: Container; line: Graphics } {
+    const c = new Container();
+    const g = new Graphics();
+    c.addChild(g);
+    this.drawLine(g, overlay, 1, this.app.renderer.width, this.app.renderer.height);
+    return { container: c, line: g };
+  }
+
+  /** (Re)draw a line overlay to a fraction `progress` (0..1) of its length. */
+  private drawLine(g: Graphics, overlay: LineOverlay, progress: number, w: number, h: number): void {
+    g.clear();
+    if (progress <= 0) return;
+    const fx = overlay.from.x * w;
+    const fy = overlay.from.y * h;
+    const ex = fx + (overlay.to.x * w - fx) * progress;
+    const ey = fy + (overlay.to.y * h - fy) * progress;
+    const width = Math.max(1, overlay.thicknessRel * h);
+    g.moveTo(fx, fy).lineTo(ex, ey).stroke({ width, color: overlay.color, cap: 'round' });
   }
 
   /**

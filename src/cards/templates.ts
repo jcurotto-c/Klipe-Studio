@@ -8,6 +8,7 @@ import type { Overlay } from '../overlays/types';
 import type { Card } from './types';
 import { DEFAULT_CARD_DURATION_MS } from './types';
 import { createCard, createCardText, sequenceWindows } from './factories';
+import { buildRevealCard, DEFAULT_REVEAL_CONFIG } from './reveal';
 
 export interface CardTemplate {
   id: string;
@@ -82,6 +83,14 @@ export const CARD_TEMPLATES: ReadonlyArray<CardTemplate> = [
       ];
       return card;
     },
+  },
+  {
+    id: 'reveal',
+    label: 'Reveal',
+    build: (kind) => buildRevealCard(kind, {
+      ...DEFAULT_REVEAL_CONFIG,
+      title: intro(kind, DEFAULT_REVEAL_CONFIG.title, 'Thanks for watching'),
+    }),
   },
 ];
 

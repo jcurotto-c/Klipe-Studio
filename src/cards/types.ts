@@ -14,6 +14,45 @@
 import type { Background } from '../types';
 import type { Overlay } from '../overlays/types';
 
+/** One image in a reveal card's cascade. Stored inline as a data URL. */
+export interface RevealImageRef {
+  src: string;
+  naturalWidth: number;
+  naturalHeight: number;
+}
+
+/**
+ * Parametric config for the "reveal" card template. The card's `items` are
+ * regenerated deterministically from this by `buildRevealCard`, so the user
+ * edits the config (title / images / labels) rather than the hand-authored
+ * keyframe choreography.
+ */
+export interface RevealConfig {
+  title: string;
+  /** Ordered cascade images (3–5 ideal). Empty → built-in placeholders. */
+  images: RevealImageRef[];
+  /** Callout labels for the final stage — one thin leader line each (max 3). */
+  labels: string[];
+  /** Font id (from the card font registry) for the title + labels. */
+  fontFamily?: string;
+  /** Title text height as a fraction of canvas height. Default 0.085. */
+  titleSizeRel?: number;
+  /** Callout label text height as a fraction of canvas height. Default 0.032. */
+  labelSizeRel?: number;
+  /**
+   * When true, the hero (zooming) image is auto-captured from the recording —
+   * the first frame for an intro, the last for an outro — and zooms to fully
+   * cover the frame, opening cleanly into the video. `heroImage` holds the
+   * captured frame; the uploaded `images` become supporting cascade layers.
+   */
+  heroFromRecording?: boolean;
+  heroImage?: RevealImageRef;
+  /** Colour for the callout lines + labels. Defaults to a muted grey. */
+  accent?: string;
+  /** Background override; defaults to white. */
+  background?: Background;
+}
+
 export interface Card {
   id: string;
   kind: 'intro' | 'outro' | 'mid';
@@ -38,6 +77,14 @@ export interface Card {
    * cards in `CardSet.mid`; ignored for intro (anchored at 0) / outro (at end).
    */
   atBodyMs?: number;
+  /**
+   * Layout/template id this card was generated from. Cards built by a
+   * parametric template (currently only 'reveal') store this plus their config
+   * so the editor regenerates `items` instead of hand-editing the choreography.
+   */
+  template?: string;
+  /** Parametric config for a generated card (only the 'reveal' template today). */
+  revealConfig?: RevealConfig;
 }
 
 /** Persisted on EditDocument. Either end may be null (no card there). */

@@ -11,10 +11,11 @@ import { type CSSProperties, useMemo, useState } from 'react';
 import type { Background } from '../../types';
 import type { ImageOverlay, Overlay, OverlayTransform, TextOverlay } from '../../overlays/types';
 import { createImageOverlay, applyAnimation } from '../../overlays/factories';
-import type { Card, CardSet } from '../../cards/types';
+import type { Card, CardSet, RevealConfig, RevealImageRef } from '../../cards/types';
 import { MAX_CARD_DURATION_MS, MAX_CARD_TRANSITION_MS, MIN_CARD_DURATION_MS } from '../../cards/types';
 import { createCard, createCardText, sequenceWindows } from '../../cards/factories';
 import { CARD_TEMPLATES, buildTemplate } from '../../cards/templates';
+import { buildRevealCard } from '../../cards/reveal';
 import { FONT_OPTIONS, fontStackById, resolveFontId } from '../../overlays/fonts';
 
 type Side = 'intro' | 'outro' | 'mid';
@@ -203,6 +204,7 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
   const [side, setSide] = useState<Side>('intro');
   const [selectedMidId, setSelectedMidId] = useState<string | null>(null);
   const [capturingFrame, setCapturingFrame] = useState(false);
+  const [capturingHero, setCapturingHero] = useState(false);
   // Build each template once per side for the thumbnail previews.
   const templatePreviews = useMemo(
     () => CARD_TEMPLATES.map((t) => ({ t, preview: buildTemplate(t.id, side === 'outro' ? 'outro' : 'intro') })),
@@ -277,6 +279,79 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
     const animated = applyAnimation(withTiming, 'popIn') as ImageOverlay;
     // popIn keys are anchored at visibleFrom (0), which is what we want.
     setItems([...card.items.filter((o) => o.type !== 'image'), animated]);
+  };
+
+  // --- Reveal template (parametric card) ------------------------------------
+  const isReveal = card?.template === 'reveal';
+  const revealConfig: RevealConfig | null = card?.revealConfig ?? null;
+
+  /** Regenerate the reveal card's items from a config + duration, preserving the
+   * card's identity, anchor and crossfade. The user's background is folded into
+   * the config so it persists and survives the rebuild. */
+  const rebuildReveal = (nextConfig: RevealConfig, durationMs: number): void => {
+    if (!card) return;
+    const kindForBuild: 'intro' | 'outro' = side === 'outro' ? 'outro' : 'intro';
+    const built = buildRevealCard(kindForBuild, { ...nextConfig, background: card.background }, durationMs);
+    setCard({ ...built, id: card.id, kind: card.kind, atBodyMs: card.atBodyMs, transitionMs: card.transitionMs });
+  };
+  const setRevealConfig = (next: RevealConfig): void => {
+    if (card) rebuildReveal(next, card.durationMs);
+  };
+
+  /** Toggle the auto-hero: capture the recording's first (intro) / last (outro)
+   * frame as the zooming hero, or revert to the last uploaded image. */
+  const setHeroFromRecording = async (on: boolean): Promise<void> => {
+    if (!card || !revealConfig) return;
+    if (!on) {
+      setRevealConfig({ ...revealConfig, heroFromRecording: false });
+      return;
+    }
+    setCapturingHero(true);
+    try {
+      const pos: 'start' | 'end' | number = side === 'intro' ? 'start' : side === 'outro' ? 'end' : (card.atBodyMs ?? 0);
+      const url = await onCaptureRecordingFrame(pos);
+      if (!url) { setRevealConfig({ ...revealConfig, heroFromRecording: false }); return; }
+      const heroImg = new Image();
+      heroImg.src = url;
+      await new Promise<void>((resolve) => { heroImg.onload = () => resolve(); heroImg.onerror = () => resolve(); });
+      const ref: RevealImageRef = { src: url, naturalWidth: heroImg.naturalWidth || 1920, naturalHeight: heroImg.naturalHeight || 1080 };
+      setRevealConfig({ ...revealConfig, heroFromRecording: true, heroImage: ref });
+    } finally {
+      setCapturingHero(false);
+    }
+  };
+
+  const addRevealImage = async (): Promise<void> => {
+    if (!card || !revealConfig) return;
+    const bridge = window.klipe;
+    if (!bridge?.openImageFile) return;
+    const result = await bridge.openImageFile();
+    if (!result || 'error' in result) return;
+    const img = new Image();
+    img.src = result.dataUrl;
+    await new Promise<void>((resolve) => { img.onload = () => resolve(); img.onerror = () => resolve(); });
+    const ref: RevealImageRef = { src: result.dataUrl, naturalWidth: img.naturalWidth || 800, naturalHeight: img.naturalHeight || 1040 };
+    setRevealConfig({ ...revealConfig, images: [...revealConfig.images, ref] });
+  };
+  const removeRevealImage = (i: number): void => {
+    if (revealConfig) setRevealConfig({ ...revealConfig, images: revealConfig.images.filter((_, k) => k !== i) });
+  };
+  const moveRevealImage = (i: number, dir: -1 | 1): void => {
+    if (!revealConfig) return;
+    const arr = [...revealConfig.images];
+    const j = i + dir;
+    if (j < 0 || j >= arr.length) return;
+    [arr[i], arr[j]] = [arr[j]!, arr[i]!];
+    setRevealConfig({ ...revealConfig, images: arr });
+  };
+  const setRevealLabel = (i: number, text: string): void => {
+    if (revealConfig) setRevealConfig({ ...revealConfig, labels: revealConfig.labels.map((l, k) => (k === i ? text : l)) });
+  };
+  const addRevealLabel = (): void => {
+    if (revealConfig && revealConfig.labels.length < 3) setRevealConfig({ ...revealConfig, labels: [...revealConfig.labels, 'New label'] });
+  };
+  const removeRevealLabel = (i: number): void => {
+    if (revealConfig) setRevealConfig({ ...revealConfig, labels: revealConfig.labels.filter((_, k) => k !== i) });
   };
 
   const durSec = (card?.durationMs ?? 0) / 1000;
@@ -401,7 +476,11 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
                 min={MIN_CARD_DURATION_MS / 1000}
                 max={MAX_CARD_DURATION_MS / 1000}
                 step={0.1}
-                onChange={(v) => updateCard({ durationMs: Math.round(v * 1000) })}
+                onChange={(v) => {
+                  const ms = Math.round(v * 1000);
+                  if (isReveal && revealConfig) rebuildReveal(revealConfig, ms);
+                  else updateCard({ durationMs: ms });
+                }}
               />
               <NumRow
                 label="Crossfade"
@@ -426,7 +505,13 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
           <div className="section-card">
             <div className="section-head"><span className="section-title">Background</span></div>
             <div className="section-body">
-              <CardBackground value={card.background} onChange={(bg) => updateCard({ background: bg })} />
+              <CardBackground
+                value={card.background}
+                onChange={(bg) => {
+                  if (isReveal && revealConfig) setCard({ ...card, background: bg, revealConfig: { ...revealConfig, background: bg } });
+                  else updateCard({ background: bg });
+                }}
+              />
               <button
                 type="button"
                 className="upload-btn"
@@ -453,6 +538,146 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
             </div>
           </div>
 
+          {isReveal && revealConfig ? (
+            <>
+              {/* REVEAL — TITLE */}
+              <div className="section-card">
+                <div className="section-head"><span className="section-title">Reveal · Title</span></div>
+                <div className="section-body">
+                  <input
+                    className="export-select"
+                    style={{ width: '100%' }}
+                    type="text"
+                    value={revealConfig.title}
+                    placeholder="Title"
+                    onChange={(e) => setRevealConfig({ ...revealConfig, title: e.target.value })}
+                  />
+                  <div className="grad-row" style={{ marginTop: 8 }}>
+                    <label>Font</label>
+                    <select
+                      className="export-select"
+                      style={{ flex: 1, fontFamily: fontStackById(resolveFontId(revealConfig.fontFamily)) }}
+                      value={resolveFontId(revealConfig.fontFamily)}
+                      onChange={(e) => setRevealConfig({ ...revealConfig, fontFamily: e.target.value })}
+                    >
+                      {FONT_CATEGORIES.map((cat) => (
+                        <optgroup key={cat.id} label={cat.label}>
+                          {FONT_OPTIONS.filter((f) => f.category === cat.id).map((f) => (
+                            <option key={f.id} value={f.id} style={{ fontFamily: f.stack }}>{f.label}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+                  <NumRow
+                    label="Title size"
+                    value={Math.round((revealConfig.titleSizeRel ?? 0.085) * 1000)}
+                    unit=""
+                    min={40}
+                    max={160}
+                    step={5}
+                    onChange={(v) => setRevealConfig({ ...revealConfig, titleSizeRel: v / 1000 })}
+                  />
+                  <p className="muted-note" style={{ fontSize: 11, opacity: 0.6, margin: '6px 0 0' }}>
+                    {side === 'outro'
+                      ? 'Outro plays the reveal in reverse for a symmetric close.'
+                      : 'Title enters, slides left as images cascade in, then the hero image zooms in with callouts.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* REVEAL — IMAGES */}
+              <div className="section-card">
+                <div className="section-head">
+                  <span className="section-title">Reveal · Images</span>
+                  <button className="link-action" onClick={() => void addRevealImage()}>+ Add image</button>
+                </div>
+                <div className="section-body">
+                  {/* Auto-hero: pull the zooming image from the recording itself */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, opacity: 0.85 }}>
+                      Hero from {side === 'outro' ? 'video end' : 'video start'}
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!revealConfig.heroFromRecording}
+                      className={`switch ${revealConfig.heroFromRecording ? 'on' : ''}`}
+                      disabled={capturingHero}
+                      onClick={() => void setHeroFromRecording(!revealConfig.heroFromRecording)}
+                    >
+                      <span className="switch-thumb" />
+                    </button>
+                  </div>
+
+                  {revealConfig.heroFromRecording && revealConfig.heroImage && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <img src={revealConfig.heroImage.src} alt="hero frame" style={{ width: 52, height: 32, objectFit: 'cover', borderRadius: 4, background: '#0b0d12' }} />
+                      <span style={{ flex: 1, fontSize: 12, opacity: 0.75 }}>Hero · zooms in to open the clip</span>
+                      <button className="link-action" disabled={capturingHero} onClick={() => void setHeroFromRecording(true)} title="Re-capture the frame">
+                        {capturingHero ? '…' : 'Re-capture'}
+                      </button>
+                    </div>
+                  )}
+
+                  {revealConfig.images.length === 0 && !revealConfig.heroFromRecording && (
+                    <p className="muted-note" style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
+                      Using placeholder images. Upload 3–5 of your own — they cascade in and the last one zooms to fill.
+                    </p>
+                  )}
+                  {revealConfig.images.length === 0 && revealConfig.heroFromRecording && (
+                    <p className="muted-note" style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
+                      The video's opening frame zooms in to start the clip. Add images to cascade in front of it.
+                    </p>
+                  )}
+                  {revealConfig.images.map((img, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <img src={img.src} alt={`image ${i + 1}`} style={{ width: 40, height: 52, objectFit: 'cover', borderRadius: 4, background: '#0b0d12' }} />
+                      <span style={{ flex: 1, fontSize: 12, opacity: 0.75 }}>
+                        Image {i + 1}{(!revealConfig.heroFromRecording && i === revealConfig.images.length - 1) ? ' · hero' : ''}
+                      </span>
+                      <button className="link-action" onClick={() => moveRevealImage(i, -1)} disabled={i === 0} title="Move up">↑</button>
+                      <button className="link-action" onClick={() => moveRevealImage(i, 1)} disabled={i === revealConfig.images.length - 1} title="Move down">↓</button>
+                      <button className="link-action" onClick={() => removeRevealImage(i)} title="Remove">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* REVEAL — CALLOUTS */}
+              <div className="section-card">
+                <div className="section-head">
+                  <span className="section-title">Reveal · Callouts</span>
+                  {revealConfig.labels.length < 3 && (
+                    <button className="link-action" onClick={addRevealLabel}>+ Add</button>
+                  )}
+                </div>
+                <div className="section-body">
+                  <NumRow
+                    label="Callout size"
+                    value={Math.round((revealConfig.labelSizeRel ?? 0.032) * 1000)}
+                    unit=""
+                    min={18}
+                    max={70}
+                    step={2}
+                    onChange={(v) => setRevealConfig({ ...revealConfig, labelSizeRel: v / 1000 })}
+                  />
+                  {revealConfig.labels.length === 0 && (
+                    <p className="muted-note" style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
+                      No callouts. Add up to 3 thin labels — each gets a leader line that draws on.
+                    </p>
+                  )}
+                  {revealConfig.labels.map((label, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <input className="export-select" style={{ flex: 1 }} type="text" value={label} onChange={(e) => setRevealLabel(i, e.target.value)} />
+                      <button className="link-action" onClick={() => removeRevealLabel(i)} title="Remove">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+          <>
           {/* TEXT BLOCKS */}
           <div className="section-card">
             <div className="section-head">
@@ -543,6 +768,8 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
               )}
             </div>
           </div>
+          </>
+          )}
         </>
       )}
     </div>

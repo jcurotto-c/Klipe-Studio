@@ -126,4 +126,21 @@ export interface ImageOverlay extends OverlayCommon {
   sizeRel: number;
 }
 
-export type Overlay = TextOverlay | ImageOverlay;
+/**
+ * Connector / leader line — a straight segment between two fractional-canvas
+ * points. Used by the "reveal" card template for callout lines. It animates via
+ * the shared `opacity` track (fade-in) and reuses the `scale` track as a 0..1
+ * draw-on progress: the segment grows from `from` toward `to`. It has no
+ * intrinsic box, so it is skipped by hit-testing and is not selectable.
+ */
+export interface LineOverlay extends OverlayCommon {
+  type: 'line';
+  /** Endpoints in fractional canvas coords (0..1). */
+  from: Vec2;
+  to: Vec2;
+  /** Stroke thickness as a fraction of canvas height. */
+  thicknessRel: number;
+  color: string;
+}
+
+export type Overlay = TextOverlay | ImageOverlay | LineOverlay;

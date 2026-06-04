@@ -1996,7 +1996,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
               cardTimeMs={cardLocalMs}
               cardTransition={cardTransition}
               cardTransitionAlpha={cardTransitionAlpha}
-              cardEditable
+              cardEditable={visualCard?.template !== 'reveal'}
               selectedCardItemId={selectedCardItemId}
               onSelectCardItem={handleSelectCardItem}
               onMoveCardItem={handleMoveCardItem}
