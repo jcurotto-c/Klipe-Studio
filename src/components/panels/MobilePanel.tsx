@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MobileFinish, MobileOptions, MobilePosition } from '../../types';
-import { MOBILE_ASPECT } from '../../lib/mobile-frame';
+import { MOBILE_DEVICES, getMobileDevice, type MobileDeviceSpec } from '../../lib/mobile-frame';
 
 /** All nine cells are selectable — the phone defaults to dead-center. */
 export const MOBILE_POSITIONS: ReadonlyArray<ReadonlyArray<MobilePosition>> = [
@@ -9,8 +9,8 @@ export const MOBILE_POSITIONS: ReadonlyArray<ReadonlyArray<MobilePosition>> = [
   ['bottom-left',  'bottom-center', 'bottom-right'],
 ];
 
-/** Current settings schema version. Bump when position/size semantics change. */
-const MOBILE_OPTIONS_VERSION = 3;
+/** Current settings schema version. Bump when persisted semantics change. */
+const MOBILE_OPTIONS_VERSION = 4;
 
 export const DEFAULT_MOBILE_OPTIONS: MobileOptions = {
   hide: false,
@@ -20,23 +20,28 @@ export const DEFAULT_MOBILE_OPTIONS: MobileOptions = {
   zoomDifferent: true,
   tilt: 0,
   showIsland: true,
+  device: 'iphone-island',
   finish: 'graphite',
   v: MOBILE_OPTIONS_VERSION,
 };
 
 /**
- * Bring persisted phone settings up to the current schema. Pre-v2 recordings
- * stored position/size values that the renderer ignored (the phone was always
- * centered + auto-fit), so those are reset to the new live defaults — otherwise
- * a legacy `size: 18` would suddenly render a tiny phone.
+ * Bring persisted phone settings up to the current schema.
+ *  - Pre-v2 recordings stored position/size values the renderer ignored (the
+ *    phone was always centered + auto-fit), so those reset to the live defaults.
+ *  - v4 introduced `device`; older recordings derive it from the legacy
+ *    `showIsland` toggle (off → notch iPhone, on → Dynamic Island iPhone).
  */
 export function migrateMobileOptions(
   raw: Partial<MobileOptions> | null | undefined,
 ): MobileOptions {
   const merged: MobileOptions = { ...DEFAULT_MOBILE_OPTIONS, ...(raw ?? {}) };
-  if (!raw || (raw.v ?? 0) < MOBILE_OPTIONS_VERSION) {
+  if (!raw || (raw.v ?? 0) < 2) {
     merged.position = DEFAULT_MOBILE_OPTIONS.position;
     merged.size = DEFAULT_MOBILE_OPTIONS.size;
+  }
+  if (!raw?.device) {
+    merged.device = raw?.showIsland === false ? 'iphone-notch' : 'iphone-island';
   }
   merged.v = MOBILE_OPTIONS_VERSION;
   return merged;
@@ -109,11 +114,38 @@ export default function MobilePanel({ value, onChange, available = true, stageAs
       <div className="panel-divider" />
 
       <div className="panel-section">
+        <div className="panel-sublabel">Device</div>
+        <div className={`mobile-device-row ${opts.hide ? 'disabled' : ''}`}>
+          {Object.values(MOBILE_DEVICES).map((d) => {
+            const active = opts.device === d.id;
+            return (
+              <button
+                key={d.id}
+                type="button"
+                className={`mobile-device-btn ${active ? 'active' : ''}`}
+                onClick={() => !opts.hide && update({ device: d.id })}
+                aria-pressed={active}
+                aria-label={d.label}
+                title={d.label}
+                disabled={opts.hide}
+              >
+                <DeviceGlyph spec={d} />
+                <span className="mobile-device-label">{d.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="panel-divider" />
+
+      <div className="panel-section">
         <div className="panel-sublabel">Position</div>
         <PhonePositionStage
           position={opts.position}
           sizePct={opts.size}
           aspect={stageAspect}
+          device={getMobileDevice(opts.device)}
           disabled={opts.hide}
           onChange={(p) => update({ position: p })}
         />
@@ -140,7 +172,7 @@ export default function MobilePanel({ value, onChange, available = true, stageAs
         <div className="cam-fine">
           <SliderField
             label="Fine size"
-            help="Phone height as % of the canvas. Aspect ratio is locked to 19.5:9."
+            help="Phone height as % of the canvas. Aspect ratio follows the selected device."
             value={opts.size}
             min={40}
             max={100}
@@ -170,16 +202,6 @@ export default function MobilePanel({ value, onChange, available = true, stageAs
             onReset={() => update({ tilt: DEFAULT_MOBILE_OPTIONS.tilt })}
           />
         </div>
-      </div>
-
-      <div className="panel-section">
-        <ToggleRow
-          label="Show dynamic island"
-          help="Modern iPhone pill camera/sensor cutout. Off draws a classic notch instead."
-          checked={opts.showIsland}
-          onChange={(v) => update({ showIsland: v })}
-          disabled={opts.hide}
-        />
       </div>
 
       <div className="panel-section">
@@ -251,6 +273,8 @@ interface PhonePositionStageProps {
   position: MobilePosition;
   sizePct: number;
   aspect?: number | null;
+  /** Selected phone model — drives the chip's aspect + corner radius. */
+  device: MobileDeviceSpec;
   disabled?: boolean;
   onChange: (next: MobilePosition) => void;
 }
@@ -259,10 +283,10 @@ interface PhonePositionStageProps {
  * Miniature of the recording canvas with the phone chip living inside it.
  * Clicking a zone springs the chip to that slot; hovering shows a dotted ghost
  * of where it would land. The stage matches the output aspect, and the chip's
- * footprint (width-driven, 19.5:9 locked, height-clamped) tracks the Size
- * control 1:1 with the renderer, so it's a true preview.
+ * footprint (height-driven, device aspect, width-clamped) tracks the Size
+ * control 1:1 with the renderer's phone-primary layout, so it's a true preview.
  */
-function PhonePositionStage({ position, sizePct, aspect, disabled, onChange }: PhonePositionStageProps): JSX.Element {
+function PhonePositionStage({ position, sizePct, aspect, device, disabled, onChange }: PhonePositionStageProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [wrapW, setWrapW] = useState(0);
   const [hover, setHover] = useState<MobilePosition | null>(null);
@@ -291,14 +315,14 @@ function PhonePositionStage({ position, sizePct, aspect, disabled, onChange }: P
 
   const pad = Math.max(STAGE_MIN_PAD, stageW * STAGE_PAD_RATIO);
   // Mirror the renderer: height drives the footprint (% of canvas height), width
-  // locks to 19.5:9, with a width safety clamp for ultra-narrow stages.
+  // follows the device aspect, with a width safety clamp for ultra-narrow stages.
   let elemH = (sizePct / 100) * stageH;
-  let elemW = elemH / MOBILE_ASPECT;
+  let elemW = elemH / device.aspect;
   if (elemW > stageW * 0.98) {
     elemW = stageW * 0.98;
-    elemH = elemW * MOBILE_ASPECT;
+    elemH = elemW * device.aspect;
   }
-  const radius = elemW * 0.16;
+  const radius = elemW * device.radiusRatio;
 
   // Mirror renderer.ts mobileSlot(): anchor to the relevant edge, or center.
   const slot = (p: MobilePosition): { x: number; y: number } => {
@@ -450,5 +474,25 @@ function PhoneGlyph(): JSX.Element {
       <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
       <path d="M11 18.5h2" />
     </svg>
+  );
+}
+
+/**
+ * Miniature silhouette of a device for the picker — a true preview using the
+ * model's own aspect, corner radius and camera cutout so the three options read
+ * as visibly different chassis.
+ */
+function DeviceGlyph({ spec }: { spec: MobileDeviceSpec }): JSX.Element {
+  const H = 34;
+  const W = Math.round(H / spec.aspect);
+  const radius = W * spec.radiusRatio;
+  return (
+    <span
+      className="device-glyph"
+      style={{ width: W, height: H, borderRadius: radius }}
+      aria-hidden
+    >
+      <span className={`device-cutout ${spec.cutout}`} />
+    </span>
   );
 }

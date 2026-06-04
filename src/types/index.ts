@@ -288,10 +288,16 @@ export type MobilePosition = CameraPosition | 'middle-center';
 
 export type MobileFinish = 'graphite' | 'silver' | 'gold' | 'black';
 
+/**
+ * Phone chassis design. Drives body aspect, corner radius, bezel, camera cutout
+ * and side-button layout — see the device specs in lib/mobile-frame.
+ */
+export type MobileDeviceId = 'iphone-island' | 'iphone-notch' | 'samsung-galaxy';
+
 export interface MobileOptions {
   hide: boolean;
   position: MobilePosition;
-  /** Phone height as % of canvas height (40..100). Width is locked to 19.5:9. */
+  /** Phone height as % of canvas height (40..100). Width follows the device aspect. */
   size: number;
   /** Legacy overlay field — kept for back-compat; primary mode zooms via segments. */
   sizeDuringZoom: number;
@@ -299,8 +305,13 @@ export interface MobileOptions {
   zoomDifferent: boolean;
   /** Tilt in degrees (-10..+10). Side buttons are skipped when tilt !== 0. */
   tilt: number;
-  /** When false, draws a classic notch instead of a dynamic-island ellipse. */
+  /**
+   * Legacy: when false, drew a classic notch instead of a dynamic island. The
+   * cutout is now derived from `device`; kept only to migrate old recordings.
+   */
   showIsland: boolean;
+  /** Phone chassis design (iPhone Dynamic Island / iPhone notch / Samsung). */
+  device: MobileDeviceId;
   /** Bezel color treatment. */
   finish: MobileFinish;
   /**

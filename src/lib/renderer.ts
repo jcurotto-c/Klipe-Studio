@@ -45,14 +45,16 @@ import zoomInSvgUrl from '../assets/zoomin.svg';
 import zoomOutSvgUrl from '../assets/zoomout.svg';
 import type { CursorShape } from './cursor-sprites';
 import {
-  MOBILE_ASPECT,
   drawDynamicIsland,
-  drawIPhoneBody,
+  drawDeviceBody,
   drawNotch,
+  drawPunchHole,
   drawScreen,
   drawScreenHighlight,
   drawSideButtons,
   drawTopSpecular,
+  getMobileDevice,
+  type MobileDeviceSpec,
 } from './mobile-frame';
 
 export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
@@ -1572,8 +1574,9 @@ function getPhoneChromeBack(
   w: number,
   h: number,
   finish: MobileOptions['finish'],
+  spec: MobileDeviceSpec,
 ): PhoneChromeBack {
-  const key = `${Math.round(w)}|${Math.round(h)}|${finish}`;
+  const key = `${Math.round(w)}|${Math.round(h)}|${finish}|${spec.id}`;
   const cached = phoneChromeCache.get(key);
   if (cached) return cached;
   if (typeof document === 'undefined') {
@@ -1588,7 +1591,7 @@ function getPhoneChromeBack(
   if (!cctx) throw new Error('phone-chrome offscreen 2d context unavailable');
   const bx = pad;
   const by = pad;
-  const bodyRadius = w * 0.16;
+  const bodyRadius = w * spec.radiusRatio;
 
   // Drop shadow.
   cctx.save();
@@ -1602,8 +1605,8 @@ function getPhoneChromeBack(
   cctx.restore();
 
   // Side buttons + body fill + rim.
-  drawSideButtons(cctx, bx, by, w, h, finish);
-  drawIPhoneBody(cctx, bx, by, w, h, bodyRadius, finish);
+  drawSideButtons(cctx, bx, by, w, h, finish, spec.buttons);
+  drawDeviceBody(cctx, bx, by, w, h, bodyRadius, finish);
 
   // LRU-ish eviction: drop the oldest entry when at capacity.
   if (phoneChromeCache.size >= PHONE_CHROME_CACHE_MAX) {
@@ -1623,11 +1626,11 @@ function drawPhoneFrame(
   h: number,
   mobileSource: HTMLVideoElement | VideoFrame | null,
   finish: MobileOptions['finish'],
-  showIsland: boolean,
+  spec: MobileDeviceSpec,
   tilt: number,
 ): void {
-  const bodyRadius = w * 0.16;
-  const bezelThickness = w * 0.038;
+  const bodyRadius = w * spec.radiusRatio;
+  const bezelThickness = w * spec.bezelRatio;
   const tilted = tilt !== 0;
 
   ctx.save();
@@ -1654,10 +1657,10 @@ function drawPhoneFrame(
     ctx.roundRect(x, y, w, h, bodyRadius);
     ctx.fill();
     ctx.restore();
-    drawSideButtons(ctx, x, y, w, h, finish);
-    drawIPhoneBody(ctx, x, y, w, h, bodyRadius, finish);
+    drawSideButtons(ctx, x, y, w, h, finish, spec.buttons);
+    drawDeviceBody(ctx, x, y, w, h, bodyRadius, finish);
   } else {
-    const back = getPhoneChromeBack(w, h, finish);
+    const back = getPhoneChromeBack(w, h, finish, spec);
     ctx.drawImage(back.canvas, x - back.pad, y - back.pad);
   }
 
@@ -1694,11 +1697,14 @@ function drawPhoneFrame(
   const screenH = h - bezelThickness * 2;
   drawScreenHighlight(ctx, screenX, screenY, screenW, screenH, bodyRadius, bezelThickness);
 
-  // 8. Dynamic island OR classic notch — sits on top of screen content.
-  if (showIsland) {
+  // 8. Camera cutout — island / notch / punch-hole, per device. Sits on top
+  // of the screen content.
+  if (spec.cutout === 'island') {
     drawDynamicIsland(ctx, x, y, w, bezelThickness);
-  } else {
+  } else if (spec.cutout === 'notch') {
     drawNotch(ctx, x, y, w, bezelThickness);
+  } else {
+    drawPunchHole(ctx, x, y, w, bezelThickness);
   }
 
   // 9. Top specular highlight.
@@ -1717,15 +1723,15 @@ function drawMobileOverlay(
 ): void {
   if (!mobileOptions || mobileOptions.hide) return;
 
+  const spec = getMobileDevice(mobileOptions.device);
   const baseSize = Number(mobileOptions.size) || 18;
   const zoomSize = Number(mobileOptions.sizeDuringZoom) || baseSize;
   const blend = mobileOptions.zoomDifferent ? Math.max(0, Math.min(1, zoomP)) : 0;
   const sizePct = baseSize + (zoomSize - baseSize) * blend;
 
-  // Phone width is the user-facing size; height is locked to the modern
-  // iPhone 19.5:9 aspect.
+  // Phone width is the user-facing size; height follows the device's aspect.
   const W = Math.max(40, (sizePct / 100) * cw);
-  const H = W * MOBILE_ASPECT;
+  const H = W * spec.aspect;
   // If the height would exceed the canvas, scale both down proportionally.
   const scale = H > ch * 0.95 ? (ch * 0.95) / H : 1;
   const w = W * scale;
@@ -1734,12 +1740,12 @@ function drawMobileOverlay(
   const { x, y } = mobileSlot(mobileOptions.position, cw, ch, w, h, pad);
 
   const tilt = Math.max(-10, Math.min(10, Number(mobileOptions.tilt) || 0));
-  drawPhoneFrame(ctx, x, y, w, h, mobileSource, mobileOptions.finish, mobileOptions.showIsland, tilt);
+  drawPhoneFrame(ctx, x, y, w, h, mobileSource, mobileOptions.finish, spec, tilt);
 }
 
 /**
  * The "phone is the recording subject" layout: the phone frame drawn over the
- * background. `size` sets the phone height (% of canvas height, 19.5:9 locked),
+ * background. `size` sets the phone height (% of canvas height, device aspect),
  * `position` anchors it (default `middle-center`). An active zoom segment
  * scales the whole phone in toward the zoom's focus point, mapped onto the
  * phone's screen — so zoom behaves like a camera push into the screen content.
@@ -1754,28 +1760,28 @@ function drawMobilePrimary(
   displayW?: number,
   displayH?: number,
 ): void {
-  // Size is the phone's HEIGHT as % of canvas height. The phone is tall (19.5:9),
+  // Size is the phone's HEIGHT as % of canvas height. Phones are tall (≈19.5–20:9),
   // so height is its binding dimension in BOTH landscape and portrait canvases —
   // driving off height keeps the control meaningful everywhere (a width-based
   // size silently caps to a constant strip on wide canvases).
+  const spec = getMobileDevice(mobileOptions?.device);
   const sizePct = Math.max(20, Math.min(100, Number(mobileOptions?.size) || 85));
   let h = (sizePct / 100) * ch;
-  let w = h / MOBILE_ASPECT;
+  let w = h / spec.aspect;
   // Safety for ultra-narrow canvases where the phone would exceed the width.
   if (w > cw * 0.98) {
     w = cw * 0.98;
-    h = w * MOBILE_ASPECT;
+    h = w * spec.aspect;
   }
   const pad = Math.max(8, cw * MOBILE_PADDING_RATIO);
   const { x, y } = mobileSlot(mobileOptions?.position ?? 'middle-center', cw, ch, w, h, pad);
 
   const finish: MobileOptions['finish'] = mobileOptions?.finish ?? 'graphite';
-  const showIsland = mobileOptions?.showIsland ?? true;
   const tilt = Math.max(-10, Math.min(10, Number(mobileOptions?.tilt) || 0));
 
   const zScale = zoom?.scale ?? 1;
   if (zScale <= 1.001) {
-    drawPhoneFrame(ctx, x, y, w, h, mobileSource, finish, showIsland, tilt);
+    drawPhoneFrame(ctx, x, y, w, h, mobileSource, finish, spec, tilt);
     return;
   }
 
@@ -1784,7 +1790,7 @@ function drawMobilePrimary(
   // recording's display space (default = its centre), so normalise by the
   // display dims and map that fraction onto the phone's visible screen rect —
   // a centred zoom lands on the middle of the screen, as expected.
-  const bezel = w * 0.038;
+  const bezel = w * spec.bezelRatio;
   const screenX = x + bezel;
   const screenY = y + bezel;
   const screenW = w - bezel * 2;
@@ -1802,6 +1808,6 @@ function drawMobilePrimary(
   ctx.translate(fx, fy);
   ctx.scale(zScale, zScale);
   ctx.translate(-fx, -fy);
-  drawPhoneFrame(ctx, x, y, w, h, mobileSource, finish, showIsland, tilt);
+  drawPhoneFrame(ctx, x, y, w, h, mobileSource, finish, spec, tilt);
   ctx.restore();
 }
