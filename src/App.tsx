@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import RecorderView from './components/RecorderView';
 import EditorView from './components/EditorView';
 import LibraryView from './components/LibraryView';
+import UpdateBanner from './components/UpdateBanner';
 import type { Recording } from './types';
 import { openProject, openProjectPath, type EditDocument } from './lib/project';
 import { loadRecents, addRecent, removeRecent, type RecentProject } from './lib/recents';
@@ -197,6 +198,8 @@ export default function App(): JSX.Element {
           <div className="nav-extra" ref={setNavExtra} />
         </div>
       </header>
+
+      <UpdateBanner />
 
       <main className="view">
         {/* Always mounted: the recording engine (HUD listeners + begin/stop)

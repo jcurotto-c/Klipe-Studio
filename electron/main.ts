@@ -14,6 +14,7 @@ import {
   binariesAvailable,
   killStrayScrcpyFromPreviousSession,
 } from './scrcpy-bridge';
+import { autoUpdater } from 'electron-updater';
 
 const isDev = process.env['NODE_ENV'] === 'development';
 
@@ -558,6 +559,57 @@ function applyGlobalShortcuts(s: GlobalShortcuts): ShortcutRegResult[] {
   return results;
 }
 
+// ---------------------------------------------------------------------------
+// Auto-update. In a packaged build electron-builder bakes an `app-update.yml`
+// into resources (from the `publish` config in package.json) pointing at our
+// GitHub Releases. electron-updater reads it, compares the running version
+// against the latest release's `latest.yml`, and — when a newer one exists —
+// downloads the installer in the background, then installs it on the next quit.
+// checkForUpdatesAndNotify() shows a native OS notification once the download is
+// ready, so no in-app UI is needed. Skipped in dev: no app-update.yml exists
+// there, so a check would only log errors. Never throws into startup — a failed
+// update check must not stop the app from opening.
+// Push the update lifecycle state to the main window so the renderer can show
+// its in-app banner (see src/components/UpdateBanner.tsx). Safe to call before
+// the renderer has subscribed — early events (checking/available) are simply
+// missed; the banner only acts on 'downloading'/'downloaded', which land seconds
+// later once the background download runs.
+type UpdaterState = 'checking' | 'available' | 'downloading' | 'downloaded' | 'none' | 'error';
+function sendUpdaterStatus(payload: { state: UpdaterState; version?: string; percent?: number }): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:status', payload);
+  }
+}
+
+function initAutoUpdate(): void {
+  if (isDev) return;
+  try {
+    autoUpdater.autoDownload = true;
+    autoUpdater.on('checking-for-update', () => sendUpdaterStatus({ state: 'checking' }));
+    autoUpdater.on('update-available', (info) => {
+      console.log('[updater] update available:', info.version);
+      sendUpdaterStatus({ state: 'available', version: info.version });
+    });
+    autoUpdater.on('update-not-available', () => {
+      console.log('[updater] already up to date');
+      sendUpdaterStatus({ state: 'none' });
+    });
+    autoUpdater.on('download-progress', (p) =>
+      sendUpdaterStatus({ state: 'downloading', percent: Math.round(p.percent) }));
+    autoUpdater.on('update-downloaded', (info) => {
+      console.log('[updater] downloaded', info.version, '— ready to install');
+      sendUpdaterStatus({ state: 'downloaded', version: info.version });
+    });
+    autoUpdater.on('error', (err) => {
+      console.error('[updater] error:', err);
+      sendUpdaterStatus({ state: 'error' });
+    });
+    autoUpdater.checkForUpdatesAndNotify().catch((err) => console.error('[updater] check failed:', err));
+  } catch (err) {
+    console.error('[updater] init failed:', err);
+  }
+}
+
 app.whenReady().then(() => {
   // A second instance that lost the lock above is quitting — never create
   // windows for it.
@@ -633,6 +685,7 @@ app.whenReady().then(() => {
   createWindow();
   createHudWindow();
   applyGlobalShortcuts(currentShortcuts);
+  initAutoUpdate();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -1476,6 +1529,22 @@ ipcMain.handle('hud:show', () => {
 
 ipcMain.handle('app:quit', () => {
   app.exit(0);
+});
+
+// The in-app update banner's "Restart & install" button. Set isQuitting first:
+// the main window's close handler normally prevents close (it hides to the HUD),
+// which would block electron-updater's app.quit() and leave the freshly
+// downloaded installer un-run. With isQuitting=true the window closes, the
+// before-quit teardown runs (cursor restore, scrcpy cleanup), and the NSIS
+// installer launches on exit, then relaunches the updated app.
+ipcMain.handle('update:quit-and-install', () => {
+  isQuitting = true;
+  try {
+    autoUpdater.quitAndInstall();
+  } catch (err) {
+    console.error('[updater] quitAndInstall failed:', err);
+  }
+  return { ok: true as const };
 });
 
 ipcMain.handle('main:show', () => {

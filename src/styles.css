@@ -200,6 +200,40 @@ button.ghost { background: transparent; }
 }
 .titlebar-right .nav-extra { display: flex; align-items: center; gap: 8px; }
 
+/* In-app auto-update banner (src/components/UpdateBanner.tsx). Sits below the
+   titlebar while a new version downloads, then turns "ready" with a Restart
+   button. Monochrome, matching the titlebar's translucent-dark treatment. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(18, 18, 18, 0.92);
+  backdrop-filter: blur(10px);
+  font-size: 13px;
+  color: var(--text-1);
+}
+.update-banner.is-ready { color: var(--text-0); }
+.update-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-2);
+  flex: 0 0 auto;
+}
+.update-banner.is-ready .update-banner-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.14);
+}
+.update-banner-text { flex: 1 1 auto; min-width: 0; }
+.update-banner-btn {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
 .export-btn {
   display: inline-flex;
   align-items: center;

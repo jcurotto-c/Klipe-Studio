@@ -9,5 +9,11 @@ recordings/
 binaries/
 electron-dist/
 
+# Secrets — NEVER commit. Holds GH_TOKEN used by `pnpm release` to publish to
+# GitHub Releases. A leaked token in a public repo is scraped within seconds.
+# .env.example is the safe, committed template (no real values).
+.env
+.env.local
+
 # Local Claude Code settings (per-user, not shared)
 .claude/settings.local.json

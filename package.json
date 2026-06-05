@@ -15,6 +15,7 @@
     "dev": "concurrently -k -n VITE,ELECTRON -c blue,magenta \"pnpm dev:vite\" \"pnpm dev:electron\"",
     "build:vite": "vite build",
     "build": "pnpm typecheck && pnpm build:vite && pnpm build:electron && node scripts/prepare-wincodesign.cjs && electron-builder --win --x64",
+    "release": "pnpm typecheck && pnpm build:vite && pnpm build:electron && node scripts/prepare-wincodesign.cjs && node scripts/with-env.cjs electron-builder --win --x64 --publish always",
     "preview": "vite preview",
     "setup:scrcpy": "node scripts/download-scrcpy.cjs",
     "setup:wincodesign": "node scripts/prepare-wincodesign.cjs",
@@ -32,6 +33,7 @@
     "@fontsource/sora": "5.2.8",
     "@fontsource/space-grotesk": "5.2.10",
     "@huggingface/transformers": "^4.2.0",
+    "electron-updater": "^6.8.3",
     "framer-motion": "12.38.0",
     "mediabunny": "1.44.2",
     "pixi-filters": "6.1.5",
@@ -81,6 +83,13 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "jcurotto-c",
+        "repo": "Klipe-Studio"
+      }
+    ],
     "win": {
       "icon": "build/icon.ico",
       "target": [
@@ -94,7 +103,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Klipe-Studio-Setup.${ext}"
     }
   }
 }

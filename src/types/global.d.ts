@@ -14,7 +14,24 @@ declare global {
     klipe?: KlipeBridge;
     klipeHud?: KlipeHudBridge;
     klipeCameraPreview?: KlipeCameraPreviewBridge;
+    klipeUpdater?: KlipeUpdaterBridge;
     webkitAudioContext?: typeof AudioContext;
+  }
+
+  /** One auto-update lifecycle tick pushed from the main process. */
+  interface UpdaterStatus {
+    state: 'checking' | 'available' | 'downloading' | 'downloaded' | 'none' | 'error';
+    /** The new version, on 'available' / 'downloaded'. */
+    version?: string;
+    /** Download progress 0–100, on 'downloading'. */
+    percent?: number;
+  }
+
+  interface KlipeUpdaterBridge {
+    /** Subscribe to update lifecycle events; returns an unsubscribe fn. */
+    onStatus: (cb: (status: UpdaterStatus) => void) => () => void;
+    /** Quit and install the downloaded update (relaunches the app). */
+    quitAndInstall: () => Promise<{ ok: boolean }>;
   }
 
   interface KlipeCameraPreviewBridge {

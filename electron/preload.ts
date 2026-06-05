@@ -81,6 +81,15 @@ contextBridge.exposeInMainWorld('klipeCursorPreview', {
   },
 });
 
+contextBridge.exposeInMainWorld('klipeUpdater', {
+  onStatus: (cb: (payload: unknown) => void) => {
+    const listener = (_evt: IpcRendererEvent, payload: unknown): void => cb(payload);
+    ipcRenderer.on('updater:status', listener);
+    return () => ipcRenderer.removeListener('updater:status', listener);
+  },
+  quitAndInstall: () => ipcRenderer.invoke('update:quit-and-install'),
+});
+
 contextBridge.exposeInMainWorld('klipeCameraPreview', {
   onCommand: (cb: (payload: unknown) => void) => {
     const listener = (_evt: IpcRendererEvent, payload: unknown): void => cb(payload);
