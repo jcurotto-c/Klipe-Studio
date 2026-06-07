@@ -22,7 +22,7 @@ mirroring de teléfonos Android — en el espíritu de Screen Studio, pero para 
 
 [![Descargar para Windows](https://img.shields.io/badge/⬇%20%20Descargar%20para%20Windows-7C62FF?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/jcurotto-c/Klipe-Studio/releases/latest/download/Klipe-Studio-Setup.exe)
 
-<video src="https://github.com/user-attachments/assets/62c0fb8b-fa33-4893-af8b-a6f90a772f89" width="820" controls></video>
+<video src="https://github.com/user-attachments/assets/aac24b6c-8c93-4e42-8f38-680ed02964e0" width="820" controls></video>
 
 </div>
 
