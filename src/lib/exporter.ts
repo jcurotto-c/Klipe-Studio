@@ -222,8 +222,7 @@ export async function exportVideo(opts: ExportVideoOptions): Promise<ExportVideo
 // ----------------------------------------------------------------------------
 // MP4 export pipeline (WebCodecs + web-demuxer)
 //
-// Architecture mirrors a similar tool's exporter (`src/lib/exporter/streamingDecoder.ts`
-// in their repo): we demux the source blob ourselves and feed encoded chunks
+// Architecture: we demux the source blob ourselves and feed encoded chunks
 // directly to a WebCodecs `VideoDecoder`, completely bypassing the
 // HTMLVideoElement / compositor pipeline that previously caused exported
 // videos to freeze on the first frame.
