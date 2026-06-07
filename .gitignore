@@ -16,4 +16,5 @@ electron-dist/
 .env.local
 
 # Local Claude Code settings (per-user, not shared)
+.claude/settings.json
 .claude/settings.local.json
