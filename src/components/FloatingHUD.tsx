@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   useCallback,
-  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -24,35 +23,6 @@ function loadMobileEnabled(): boolean {
 }
 function loadMobileDeviceId(): string | null {
   try { return localStorage.getItem(MOBILE_DEVICE_KEY); } catch { return null; }
-}
-
-interface SourceCategory {
-  label: string;
-  bg: string;
-  fg: string;
-}
-
-function categorize(source: ScreenSource): SourceCategory {
-  if (source.kind === 'screen') {
-    return { label: 'screen', bg: 'rgba(120, 130, 150, 0.22)', fg: '#b9c2d6' };
-  }
-  const n = source.name.toLowerCase();
-  if (/(chrome|safari|firefox|edge|brave|opera|vivaldi|arc)/.test(n)) {
-    return { label: 'browser', bg: 'rgba(244, 114, 182, 0.20)', fg: '#f9a8d4' };
-  }
-  if (/(figma|sketch|photoshop|illustrator|affinity|invision|procreate|canva)/.test(n)) {
-    return { label: 'design', bg: 'rgba(240, 140, 70, 0.22)', fg: '#ffa86b' };
-  }
-  if (/(terminal|iterm|powershell|cmd|hyper|warp|alacritty|console)/.test(n)) {
-    return { label: 'shell', bg: 'rgba(64, 196, 136, 0.22)', fg: '#4dd99c' };
-  }
-  if (/(visual studio code|vscode|code\b|cursor|intellij|webstorm|pycharm|xcode|atom|sublime|zed|fleet|nvim|neovim)/.test(n)) {
-    return { label: 'editor', bg: 'rgba(96, 140, 240, 0.22)', fg: '#7fa4ff' };
-  }
-  if (/(notion|word|pages|docs|google docs|confluence|obsidian|evernote|onenote|bear|craft)/.test(n)) {
-    return { label: 'docs', bg: 'rgba(148, 163, 184, 0.18)', fg: '#cbd5e1' };
-  }
-  return { label: 'app', bg: 'rgba(255, 255, 255, 0.10)', fg: '#cfd6e3' };
 }
 
 interface NameParts {
@@ -626,7 +596,7 @@ export default function FloatingHUD(): JSX.Element {
           >
             <span className="hud-brand-mark" aria-hidden><KlipeMark /></span>
             <span className="hud-brand-caret" aria-hidden>
-              <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M6 9l6 6 6-6" />
               </svg>
             </span>
@@ -785,7 +755,9 @@ function SourceSelector({
     if (open) onRefresh();
   }, [open, onRefresh]);
 
-  const displayApp = areaInfo ? 'Area' : (parts?.app || source?.name || 'Select source');
+  const displayApp = areaInfo
+    ? 'Area'
+    : (parts?.app || source?.name || 'Select source').replace(/\s*\(Primary\)$/i, '');
   const resText = areaInfo
     ? `${areaInfo.width} × ${areaInfo.height}`
     : (source && source.width > 0 && source.height > 0
@@ -811,7 +783,7 @@ function SourceSelector({
           <span className="hud-source-trigger-meta">{resText}</span>
         </span>
         <span className="hud-source-trigger-caret">
-          <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 9l6 6 6-6" />
           </svg>
         </span>
@@ -933,13 +905,8 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose, onPickAr
   const windowSources = sources.filter((s) => s.kind === 'window');
 
   const renderItem = (s: ScreenSource): JSX.Element => {
-    const cat = categorize(s);
     const parts = splitName(s.name);
     const selected = s.id === selectedId;
-    const meta = s.width > 0 && s.height > 0
-      ? `${s.width} × ${s.height} · ${cat.label}`
-      : cat.label;
-    const iconStyle: CSSProperties = { background: cat.bg, color: cat.fg };
     return (
       <button
         key={s.id}
@@ -948,8 +915,10 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose, onPickAr
         role="option"
         aria-selected={selected}
       >
-        <span className="hud-source-icon" style={iconStyle}>
-          {s.kind === 'screen' ? <DisplayIcon /> : <WindowFrameIcon />}
+        <span className="hud-source-icon">
+          {s.thumbnail
+            ? <img src={s.thumbnail} alt="" draggable={false} />
+            : (s.kind === 'screen' ? <DisplayIcon /> : <WindowFrameIcon />)}
         </span>
         <span className="hud-source-info">
           <span className="hud-source-title">
@@ -961,7 +930,6 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose, onPickAr
               </>
             )}
           </span>
-          <span className="hud-source-meta">{meta}</span>
         </span>
         {selected && (
           <span className="hud-source-check" aria-hidden>
@@ -984,10 +952,7 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose, onPickAr
     >
       <button className="hud-source-area-btn" onClick={onPickArea} role="option" aria-selected={false}>
         <span className="hud-source-area-icon" aria-hidden><AreaIcon /></span>
-        <span className="hud-source-area-text">
-          <span className="hud-source-area-title">Select an area…</span>
-          <span className="hud-source-area-meta">Drag a custom region to record</span>
-        </span>
+        <span className="hud-source-area-title">Select an area…</span>
       </button>
 
       {sources.length === 0 && (
@@ -1015,9 +980,6 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose, onPickAr
                     {s.thumbnail
                       ? <img src={s.thumbnail} alt="" draggable={false} />
                       : <DisplayIcon />}
-                    {s.primary && (
-                      <span className="hud-source-screen-badge">Primary</span>
-                    )}
                     {selected && (
                       <span className="hud-source-screen-check" aria-hidden>
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -1027,10 +989,7 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose, onPickAr
                     )}
                   </span>
                   <span className="hud-source-screen-info">
-                    <span className="hud-source-screen-name">{s.name}</span>
-                    <span className="hud-source-screen-meta">
-                      {s.width > 0 && s.height > 0 ? `${s.width} × ${s.height}` : 'Screen'}
-                    </span>
+                    <span className="hud-source-screen-name">{s.name.replace(/\s*\(Primary\)$/i, '')}</span>
                   </span>
                 </button>
               );
@@ -1102,7 +1061,7 @@ const StackedToggle = forwardRef<HTMLButtonElement, StackedToggleProps>(
             tabIndex={-1}
             aria-label={`${label} options`}
           >
-            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 9l6 6 6-6" />
             </svg>
           </button>
