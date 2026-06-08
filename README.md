@@ -144,17 +144,24 @@ Record an Android device — over USB — straight into Klipe via bundled **scrc
 
 ## Screenshots
 
-A few shots of the editor, the floating recorder HUD and the export modal:
+The floating recorder bar — drop it on any background:
 
-<!-- Add screenshots and uncomment:
 <p align="center">
-  <img src="docs/media/screenshot-editor.png" width="800" alt="Klipe Studio editor">
-  <img src="docs/media/screenshot-recorder.png" width="800" alt="Recorder HUD">
-  <img src="docs/media/screenshot-export.png" width="800" alt="Export modal">
+  <img src="docs/media/recorder-hud.png" width="760" alt="Klipe Studio floating recorder HUD">
 </p>
--->
 
-_More screenshots coming soon._
+The editor — timeline, auto-zoom, cursor, backgrounds, title cards &amp; captions:
+
+<p align="center">
+  <img src="docs/media/screenshot-editor.png" width="880" alt="Klipe Studio editor">
+</p>
+
+Export with platform presets, and your auto-saved recordings library:
+
+<p align="center">
+  <img src="docs/media/screenshot-export.png" width="430" alt="Export modal — platform presets, resolution and quality" />
+  <img src="docs/media/screenshot-library.png" width="430" alt="My videos — recordings library" />
+</p>
 
 ---
 

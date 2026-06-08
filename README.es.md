@@ -145,17 +145,24 @@ incluidos (descargados y verificados automáticamente), compuestos dentro de un
 
 ## Capturas
 
-Algunas vistas del editor, el HUD flotante de grabación y el modal de exportación:
+La barra flotante de grabación — colócala sobre cualquier fondo:
 
-<!-- Agregar capturas y descomentar:
 <p align="center">
-  <img src="docs/media/screenshot-editor.png" width="800" alt="Editor de Klipe Studio">
-  <img src="docs/media/screenshot-recorder.png" width="800" alt="HUD de grabación">
-  <img src="docs/media/screenshot-export.png" width="800" alt="Modal de exportación">
+  <img src="docs/media/recorder-hud.png" width="760" alt="HUD flotante de grabación de Klipe Studio">
 </p>
--->
 
-_Más capturas próximamente._
+El editor — línea de tiempo, zoom automático, cursor, fondos, tarjetas y subtítulos:
+
+<p align="center">
+  <img src="docs/media/screenshot-editor.png" width="880" alt="Editor de Klipe Studio">
+</p>
+
+Exportación con presets de plataforma, y tu biblioteca de grabaciones auto-guardadas:
+
+<p align="center">
+  <img src="docs/media/screenshot-export.png" width="430" alt="Modal de exportación — presets de plataforma, resolución y calidad" />
+  <img src="docs/media/screenshot-library.png" width="430" alt="Mis videos — biblioteca de grabaciones" />
+</p>
 
 ---
 
