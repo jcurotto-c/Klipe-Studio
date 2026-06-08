@@ -71,6 +71,7 @@ export default defineConfig({
         hud: path.resolve(__dirname, 'src/hud.html'),
         cursorPreview: path.resolve(__dirname, 'src/cursor-preview.html'),
         cameraPreview: path.resolve(__dirname, 'src/camera-preview.html'),
+        areaSelect: path.resolve(__dirname, 'src/area-select.html'),
       },
     },
   },

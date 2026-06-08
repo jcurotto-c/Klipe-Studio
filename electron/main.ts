@@ -832,6 +832,145 @@ ipcMain.handle('get-screen-sources', async () => {
     });
 });
 
+// ---------------------------------------------------------------------------
+// "Area" capture — a fullscreen, INTERACTIVE overlay (unlike the click-through
+// cursor/camera previews) where the user drags a rectangle on one display. The
+// result is the screen source to record plus a NORMALIZED crop within that
+// display; the editor pre-applies the crop, so we reuse the whole crop pipeline
+// instead of cropping at capture time.
+// ---------------------------------------------------------------------------
+
+interface AreaSelectResultMain {
+  sourceId: string;
+  displayId: string;
+  crop: { x: number; y: number; width: number; height: number };
+  display: { width: number; height: number; scaleFactor: number };
+}
+
+let areaSelectWindow: BrowserWindow | null = null;
+let areaSelectDisplay: Electron.Display | null = null;
+let areaSelectResolver: ((value: AreaSelectResultMain | null) => void) | null = null;
+
+async function findScreenSourceIdForDisplay(displayId: string): Promise<string | null> {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1, height: 1 },
+    });
+    const match = sources.find((s) => String(s.display_id) === String(displayId));
+    return match ? match.id : (sources[0]?.id ?? null);
+  } catch {
+    return null;
+  }
+}
+
+function finishAreaSelect(result: AreaSelectResultMain | null): void {
+  const resolve = areaSelectResolver;
+  areaSelectResolver = null;
+  const win = areaSelectWindow;
+  areaSelectWindow = null;
+  areaSelectDisplay = null;
+  if (win && !win.isDestroyed()) win.close();
+  resolve?.(result);
+}
+
+ipcMain.handle('area-select:start', async (): Promise<AreaSelectResultMain | null> => {
+  // Cancel any previous selection still in flight.
+  if (areaSelectResolver) finishAreaSelect(null);
+
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor) || screen.getPrimaryDisplay();
+  areaSelectDisplay = display;
+  const { bounds } = display;
+
+  const win = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    focusable: true,
+    show: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  areaSelectWindow = win;
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  try { win.setContentProtection(true); } catch { /* ignore */ }
+
+  const allDisplays = screen.getAllDisplays();
+  const primaryId = screen.getPrimaryDisplay().id;
+  const idx = allDisplays.findIndex((d) => d.id === display.id);
+  const label = `Display ${idx >= 0 ? idx + 1 : 1}${display.id === primaryId ? ' (Primary)' : ''}`;
+
+  win.webContents.on('did-finish-load', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('area-select:init', { label, scaleFactor: display.scaleFactor });
+    }
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) { win.show(); win.focus(); }
+  });
+  win.on('closed', () => {
+    const resolve = areaSelectResolver;
+    if (resolve) { areaSelectResolver = null; resolve(null); }
+    if (areaSelectWindow === win) areaSelectWindow = null;
+  });
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173/area-select.html');
+  } else {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'area-select.html'));
+  }
+
+  return new Promise<AreaSelectResultMain | null>((resolve) => {
+    areaSelectResolver = resolve;
+  });
+});
+
+ipcMain.on('area-select:submit', async (_evt, rect: { x: number; y: number; width: number; height: number }) => {
+  const display = areaSelectDisplay;
+  if (!display) { finishAreaSelect(null); return; }
+  const bw = display.bounds.width || 1;
+  const bh = display.bounds.height || 1;
+  const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+  const x = clamp01(rect.x / bw);
+  const y = clamp01(rect.y / bh);
+  // Enforce a 5% minimum and keep the rect inside the frame (mirrors the
+  // editor's MIN_CROP_NORM so the resulting crop is always valid).
+  const width = Math.max(0.05, Math.min(clamp01(rect.width / bw), 1 - x));
+  const height = Math.max(0.05, Math.min(clamp01(rect.height / bh), 1 - y));
+  const sourceId = await findScreenSourceIdForDisplay(String(display.id));
+  if (!sourceId) { finishAreaSelect(null); return; }
+  finishAreaSelect({
+    sourceId,
+    displayId: String(display.id),
+    crop: { x, y, width, height },
+    display: {
+      width: Math.round(display.size.width),
+      height: Math.round(display.size.height),
+      scaleFactor: display.scaleFactor,
+    },
+  });
+});
+
+ipcMain.on('area-select:cancel', () => finishAreaSelect(null));
+
 interface SaveVideoBlobArgs {
   buffer: ArrayBuffer | Uint8Array;
   suggestedName?: string;

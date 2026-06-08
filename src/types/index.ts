@@ -138,6 +138,11 @@ export interface Recording {
   mimeType: string;
   mouse: MouseTrack;
   display: Display;
+  /**
+   * Normalized region crop {x,y,w,h} captured via "Area" mode — the editor
+   * pre-applies this crop. Null/absent = full frame (normal Display/Window).
+   */
+  areaCrop?: Crop | null;
   autoZoom?: boolean;
   name?: string;
   /** Whether the recording captured any audio track (mic and/or system). */
@@ -185,6 +190,17 @@ export interface Crop {
   y: number;
   width: number;
   height: number;
+}
+
+/**
+ * Result of an "Area" selection: the screen source to record plus the
+ * normalized crop within that display. Returned by window.klipe.startAreaSelect().
+ */
+export interface AreaSelectResult {
+  sourceId: string;
+  displayId: string;
+  crop: Crop;
+  display: Display;
 }
 
 /**
@@ -505,6 +521,8 @@ export type HudEvent =
       autoZoom: boolean;
       systemAudio: boolean;
       display: Display;
+      /** Normalized region crop when recording was started in "Area" mode. */
+      areaCrop?: Crop | null;
     }
   | { type: 'stop-recording' }
   | { type: 'source-change'; sourceId: string }

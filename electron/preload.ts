@@ -8,6 +8,7 @@ interface SaveVideoBlobArgs {
 
 contextBridge.exposeInMainWorld('klipe', {
   getScreenSources: () => ipcRenderer.invoke('get-screen-sources'),
+  startAreaSelect: () => ipcRenderer.invoke('area-select:start'),
   prepareDisplayMedia: (sourceId: string, systemAudio?: boolean) =>
     ipcRenderer.invoke('prepare-display-media', sourceId, systemAudio),
   saveVideoBlob: ({ buffer, suggestedName, mimeType }: SaveVideoBlobArgs) =>
@@ -96,6 +97,17 @@ contextBridge.exposeInMainWorld('klipeCameraPreview', {
     ipcRenderer.on('camera-preview:command', listener);
     return () => ipcRenderer.removeListener('camera-preview:command', listener);
   },
+});
+
+contextBridge.exposeInMainWorld('klipeAreaSelect', {
+  onInit: (cb: (payload: unknown) => void) => {
+    const listener = (_evt: IpcRendererEvent, payload: unknown): void => cb(payload);
+    ipcRenderer.on('area-select:init', listener);
+    return () => ipcRenderer.removeListener('area-select:init', listener);
+  },
+  submit: (rect: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.send('area-select:submit', rect),
+  cancel: () => ipcRenderer.send('area-select:cancel'),
 });
 
 contextBridge.exposeInMainWorld('klipeHud', {

@@ -10,7 +10,7 @@ import {
   type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
-import type { HudEvent, HudState, ScreenSource } from '../types';
+import type { Crop, HudEvent, HudState, ScreenSource } from '../types';
 import MobileConnectModal from './MobileConnectModal';
 import { onMobileDisconnect as subscribeMobileDisconnect } from '../lib/scrcpy-backend';
 
@@ -96,6 +96,10 @@ export default function FloatingHUD(): JSX.Element {
   const [sources, setSources] = useState<ScreenSource[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  // "Area" mode: a normalized crop within the selected display, drawn via the
+  // fullscreen overlay. areaDisplay holds the pixel size for the pill label.
+  const [areaCrop, setAreaCrop] = useState<Crop | null>(null);
+  const [areaDisplay, setAreaDisplay] = useState<{ width: number; height: number } | null>(null);
 
   const [micEnabled, setMicEnabled] = useState(true);
   const [micId, setMicId] = useState('');
@@ -312,9 +316,27 @@ export default function FloatingHUD(): JSX.Element {
 
   const onSelectSource = useCallback((id: string) => {
     setSelectedId(id);
+    setAreaCrop(null);
+    setAreaDisplay(null);
     setSourcePickerOpen(false);
     emit({ type: 'source-change', sourceId: id });
   }, [emit]);
+
+  const onPickArea = useCallback(async () => {
+    setSourcePickerOpen(false);
+    const result = await window.klipe?.startAreaSelect?.();
+    if (!result) return;
+    // Refresh the source list so it definitely contains the area's display
+    // source id — startCountdown looks the selected id up there before recording.
+    await refreshSources();
+    setSelectedId(result.sourceId);
+    setAreaCrop(result.crop);
+    setAreaDisplay({
+      width: Math.round(result.crop.width * result.display.width),
+      height: Math.round(result.crop.height * result.display.height),
+    });
+    emit({ type: 'source-change', sourceId: result.sourceId });
+  }, [emit, refreshSources]);
 
   const onPickMic = (id: string): void => {
     if (id === 'off') {
@@ -487,6 +509,7 @@ export default function FloatingHUD(): JSX.Element {
             height: source.height,
             scaleFactor: source.scaleFactor,
           },
+          areaCrop,
         });
         setRecording(true);
       } else {
@@ -497,7 +520,7 @@ export default function FloatingHUD(): JSX.Element {
     countdownTimer.current = setTimeout(tick, 1000);
   }, [
     selectedId, sources, micEnabled, micId, camEnabled, camId,
-    mobileEnabled, mobileDeviceId, autoZoom, systemAudio, emit,
+    mobileEnabled, mobileDeviceId, autoZoom, systemAudio, areaCrop, emit,
   ]);
 
   const onRecordClick = (): void => {
@@ -636,6 +659,8 @@ export default function FloatingHUD(): JSX.Element {
           sources={sources}
           selectedId={selectedId}
           onSelect={onSelectSource}
+          onPickArea={onPickArea}
+          areaInfo={areaCrop ? areaDisplay : null}
           onRefresh={refreshSources}
           disabled={isLive}
         />
@@ -746,22 +771,26 @@ interface SourceSelectorProps {
   sources: ScreenSource[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onPickArea: () => void;
+  areaInfo?: { width: number; height: number } | null;
   onRefresh: () => void;
   disabled?: boolean;
 }
 
 function SourceSelector({
-  source, parts, open, onToggle, onClose, sources, selectedId, onSelect, onRefresh, disabled,
+  source, parts, open, onToggle, onClose, sources, selectedId, onSelect, onPickArea, areaInfo, onRefresh, disabled,
 }: SourceSelectorProps): JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (open) onRefresh();
   }, [open, onRefresh]);
 
-  const displayApp = parts?.app || source?.name || 'Select source';
-  const resText = source && source.width > 0 && source.height > 0
-    ? `${source.width} × ${source.height}`
-    : (source?.kind === 'window' ? 'Window' : '');
+  const displayApp = areaInfo ? 'Area' : (parts?.app || source?.name || 'Select source');
+  const resText = areaInfo
+    ? `${areaInfo.width} × ${areaInfo.height}`
+    : (source && source.width > 0 && source.height > 0
+      ? `${source.width} × ${source.height}`
+      : (source?.kind === 'window' ? 'Window' : ''));
 
   return (
     <>
@@ -775,7 +804,7 @@ function SourceSelector({
         title={source?.name || 'Choose source'}
       >
         <span className="hud-source-trigger-icon">
-          <DisplayIcon />
+          {areaInfo ? <AreaIcon /> : <DisplayIcon />}
         </span>
         <span className="hud-source-trigger-text">
           <span className="hud-source-trigger-app">{displayApp}</span>
@@ -794,6 +823,7 @@ function SourceSelector({
           selectedId={selectedId}
           onSelect={onSelect}
           onClose={onClose}
+          onPickArea={onPickArea}
         />
       )}
     </>
@@ -806,6 +836,7 @@ interface SourcePickerProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onClose: () => void;
+  onPickArea: () => void;
 }
 
 interface PopoverPos {
@@ -838,7 +869,7 @@ function computePlacement(
   return { placeAbove, top };
 }
 
-function SourcePicker({ anchor, sources, selectedId, onSelect, onClose }: SourcePickerProps): React.ReactPortal {
+function SourcePicker({ anchor, sources, selectedId, onSelect, onClose, onPickArea }: SourcePickerProps): React.ReactPortal {
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<PopoverPos>({ top: -9999, left: -9999, ready: false, placeAbove: false });
 
@@ -951,6 +982,14 @@ function SourcePicker({ anchor, sources, selectedId, onSelect, onClose }: Source
       style={{ top: pos.top, left: pos.left }}
       role="listbox"
     >
+      <button className="hud-source-area-btn" onClick={onPickArea} role="option" aria-selected={false}>
+        <span className="hud-source-area-icon" aria-hidden><AreaIcon /></span>
+        <span className="hud-source-area-text">
+          <span className="hud-source-area-title">Select an area…</span>
+          <span className="hud-source-area-meta">Drag a custom region to record</span>
+        </span>
+      </button>
+
       {sources.length === 0 && (
         <div className="hud-popover-empty">No sources available</div>
       )}
@@ -1310,6 +1349,16 @@ function WindowFrameIcon(): JSX.Element {
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="4" width="18" height="16" rx="2" />
       <path d="M3 9h18" />
+    </svg>
+  );
+}
+function AreaIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8" />
+      <path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8" />
+      <path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16" />
+      <path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" />
     </svg>
   );
 }

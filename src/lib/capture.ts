@@ -41,6 +41,8 @@ interface DesktopMediaTrackConstraints extends MediaTrackConstraints {
     chromeMediaSourceId: string;
     minFrameRate?: number;
     maxFrameRate?: number;
+    maxWidth?: number;
+    maxHeight?: number;
   };
 }
 
@@ -67,6 +69,12 @@ async function captureWithDisplayMedia(sourceId: string): Promise<MediaStream> {
   const videoConstraints: DisplayMediaVideoConstraints = {
     cursor: 'never',
     frameRate: { ideal: 60, min: 30 },
+    // Request the source's MAX native resolution. Without a size hint
+    // getDisplayMedia can hand back a downscaled (HiDPI/logical-capped) stream,
+    // which makes cropped "Area" regions look soft. A very high ideal clamps to
+    // the display's native pixels (it never upscales beyond what actually exists).
+    width: { ideal: 7680 },
+    height: { ideal: 4320 },
   };
   const stream = await navigator.mediaDevices.getDisplayMedia({
     audio: false,
@@ -112,6 +120,9 @@ async function captureWithLegacyGetUserMedia(sourceId: string): Promise<MediaStr
         chromeMediaSourceId: sourceId,
         minFrameRate: 30,
         maxFrameRate: 60,
+        // Allow full native resolution; without a max the legacy path caps low.
+        maxWidth: 7680,
+        maxHeight: 4320,
       },
     },
   };

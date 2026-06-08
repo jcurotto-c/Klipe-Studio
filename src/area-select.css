@@ -1,0 +1,98 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#area-select-root { width: 100vw; height: 100vh; }
+
+.as-root {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Floating hint shown before the user starts drawing. */
+.as-hint {
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: rgba(16, 18, 23, 0.85);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.55);
+}
+.as-hint b { font-weight: 700; }
+
+/* The selection rectangle. Its giant box-shadow dims everything OUTSIDE it,
+   so the chosen region shows the live screen clearly (a "punched hole"). */
+.as-rect {
+  position: fixed;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.46);
+  pointer-events: none;
+}
+.as-rect.is-ready { border-color: #ffffff; }
+
+/* Live pixel-dimension readout above the rectangle. */
+.as-dims {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  pointer-events: none;
+  background: rgba(16, 18, 23, 0.92);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.5);
+}
+
+/* Confirm / cancel toolbar pinned to the bottom-center (always reachable). */
+.as-toolbar {
+  position: fixed;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  cursor: default;
+  z-index: 10;
+}
+.as-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 11px;
+  padding: 10px 18px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.55);
+  transition: background 140ms ease, transform 120ms ease;
+}
+.as-btn:active { transform: scale(0.97); }
+.as-confirm { background: #ffffff; color: #0b0e14; }
+.as-confirm:hover { background: #f1f1f4; }
+.as-cancel {
+  background: rgba(38, 40, 48, 0.95);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.as-cancel:hover { background: rgba(52, 55, 65, 0.95); }

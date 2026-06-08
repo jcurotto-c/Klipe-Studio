@@ -222,7 +222,7 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
     () => initialDoc?.background ?? { type: 'wallpaper', value: 'default', blur: 0 },
   );
   const [cropMode, setCropMode] = useState(false);
-  const [crop, setCrop] = useState<Crop | null>(() => initialDoc?.crop ?? null);
+  const [crop, setCrop] = useState<Crop | null>(() => initialDoc?.crop ?? recording.areaCrop ?? null);
   const [zoomDefaults, setZoomDefaults] = useState<ZoomDefaults>(() => initialDoc?.zoomDefaults ?? loadDefaults());
   const [segments, setSegments] = useState<ZoomSegment[]>(() =>
     initialDoc

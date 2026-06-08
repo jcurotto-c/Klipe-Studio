@@ -4,7 +4,7 @@ import {
   createRecorder,
   type RecorderController,
 } from '../lib/capture';
-import type { Display, HudEvent, Recording } from '../types';
+import type { Crop, Display, HudEvent, Recording } from '../types';
 import type { RecentProject } from '../lib/recents';
 
 const AUTO_ZOOM_KEY = 'klipe.autoZoom';
@@ -72,6 +72,8 @@ interface RecorderViewProps {
 interface ActiveRecorder {
   rec: RecorderController;
   display: Display;
+  /** Normalized region crop from "Area" mode (null for full Display/Window). */
+  areaCrop: Crop | null;
   autoZoom: boolean;
   /** Whether the mic / system audio toggles were on when recording started.
    *  Carried to the editor so it can warn only when a REQUESTED source failed. */
@@ -104,6 +106,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
     autoZoom: boolean,
     display: Display,
     systemAudio: boolean,
+    areaCrop: Crop | null,
   ) => {
     if (settingUpRef.current || recorderRef.current) {
       // A previous beginRecording is already in flight or completed —
@@ -150,6 +153,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
       recorderRef.current = {
         rec,
         display: realDisplay,
+        areaCrop,
         autoZoom,
         micRequested: withMic,
         systemAudioRequested: systemAudio,
@@ -180,7 +184,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
 
   const stopRecording = useCallback(async () => {
     if (!recorderRef.current) return;
-    const { rec, display, autoZoom, micRequested, systemAudioRequested, scrcpy } = recorderRef.current;
+    const { rec, display, areaCrop, autoZoom, micRequested, systemAudioRequested, scrcpy } = recorderRef.current;
     // Claim the recorder immediately so a second stop (double-click, or the
     // global shortcut racing the toolbar button) can't re-enter while we're
     // still finalizing blobs.
@@ -301,6 +305,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
       mimeType: result.mimeType,
       mouse: result.mouse,
       display,
+      areaCrop,
       autoZoom,
       name: generateRecordingName(),
       camera,
@@ -328,6 +333,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
             evt.autoZoom,
             evt.display,
             evt.systemAudio,
+            evt.areaCrop ?? null,
           );
           break;
         case 'stop-recording':

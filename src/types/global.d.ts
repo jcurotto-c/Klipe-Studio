@@ -1,4 +1,5 @@
 import type {
+  AreaSelectResult,
   Display,
   HudEvent,
   HudState,
@@ -14,6 +15,7 @@ declare global {
     klipe?: KlipeBridge;
     klipeHud?: KlipeHudBridge;
     klipeCameraPreview?: KlipeCameraPreviewBridge;
+    klipeAreaSelect?: KlipeAreaSelectBridge;
     klipeUpdater?: KlipeUpdaterBridge;
     webkitAudioContext?: typeof AudioContext;
   }
@@ -38,6 +40,21 @@ declare global {
     onCommand: (cb: (payload: unknown) => void) => () => void;
   }
 
+  /** Sent to the area-select overlay once it loads, on the chosen display. */
+  interface AreaSelectInit {
+    label: string;
+    scaleFactor: number;
+  }
+
+  /** Bridge used by the area-select overlay renderer (src/area-select.tsx). */
+  interface KlipeAreaSelectBridge {
+    onInit: (cb: (payload: AreaSelectInit) => void) => () => void;
+    /** Submit the drawn rectangle in CSS px (local to the overlay window). */
+    submit: (rect: { x: number; y: number; width: number; height: number }) => void;
+    /** Cancel selection (Esc / Cancel button). */
+    cancel: () => void;
+  }
+
   interface AdbDevice {
     serial: string;
     model: string;
@@ -46,6 +63,9 @@ declare global {
 
   interface KlipeBridge {
     getScreenSources: () => Promise<ScreenSource[]>;
+    /** Open the fullscreen "Area" selection overlay; resolves with the chosen
+     *  region (source + normalized crop) or null if the user cancelled. */
+    startAreaSelect: () => Promise<AreaSelectResult | null>;
     prepareDisplayMedia?: (sourceId: string, systemAudio?: boolean) => Promise<{ ok: boolean }>;
     saveVideoBlob: (params: {
       buffer: ArrayBuffer;
