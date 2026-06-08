@@ -160,8 +160,11 @@ El editor — línea de tiempo, zoom automático, cursor, fondos, tarjetas y sub
 Exportación con presets de plataforma, y tu biblioteca de grabaciones auto-guardadas:
 
 <p align="center">
-  <img src="docs/media/screenshot-export.png" width="430" alt="Modal de exportación — presets de plataforma, resolución y calidad" />
-  <img src="docs/media/screenshot-library.png" width="430" alt="Mis videos — biblioteca de grabaciones" />
+  <img src="docs/media/screenshot-export.png" width="880" alt="Modal de exportación — presets de plataforma, resolución y calidad">
+</p>
+
+<p align="center">
+  <img src="docs/media/screenshot-library.png" width="880" alt="Mis videos — biblioteca de grabaciones">
 </p>
 
 ---

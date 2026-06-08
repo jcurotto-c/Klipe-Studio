@@ -159,8 +159,11 @@ The editor — timeline, auto-zoom, cursor, backgrounds, title cards &amp; capti
 Export with platform presets, and your auto-saved recordings library:
 
 <p align="center">
-  <img src="docs/media/screenshot-export.png" width="430" alt="Export modal — platform presets, resolution and quality" />
-  <img src="docs/media/screenshot-library.png" width="430" alt="My videos — recordings library" />
+  <img src="docs/media/screenshot-export.png" width="880" alt="Export modal — platform presets, resolution and quality">
+</p>
+
+<p align="center">
+  <img src="docs/media/screenshot-library.png" width="880" alt="My videos — recordings library">
 </p>
 
 ---
