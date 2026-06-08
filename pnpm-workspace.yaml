@@ -1,11 +1,21 @@
-# pnpm settings (pnpm 11 reads these here, not from package.json's "pnpm" field).
-# Allow these dependencies to run their install/build scripts: electron's
-# postinstall downloads the Electron binary; esbuild's sets up its native binary.
+# pnpm settings.
 #
-# transformers.js pulls in onnxruntime-node (native ORT binaries), sharp (image
-# processing) and protobufjs — but captions use the WASM (onnxruntime-web)
-# runtime in the renderer, so none of those native builds are needed. Deny them
-# explicitly to keep installs lean (and to acknowledge the choice for pnpm 11).
+# IMPORTANT: pnpm 11 reads pnpm-specific config from THIS file (camelCase keys),
+# NOT from .npmrc. Settings like node-linker placed in .npmrc are silently
+# ignored (`pnpm config get node-linker` returns undefined).
+
+# Flat, npm-style node_modules (no symlinked .pnpm store at the top level).
+# electron-builder 24 cannot follow pnpm's isolated/symlinked layout, so packaged
+# apps end up missing transitive deps — e.g. electron-updater -> fs-extra, which
+# crashes the installed app with "Cannot find module 'fs-extra'". Hoisting fixes
+# it. After changing this you MUST remove node_modules and reinstall.
+nodeLinker: hoisted
+
+# Which dependencies may run install/build scripts (pnpm 11 gate — boolean values,
+# NOT onlyBuiltDependencies, which this pnpm version overwrites). electron's
+# postinstall downloads the Electron binary; esbuild's sets up its native binary.
+# The rest are denied — transformers.js's native ORT/sharp/protobuf builds aren't
+# needed because captions use the WASM (onnxruntime-web) runtime in the renderer.
 allowBuilds:
   electron: true
   esbuild: true
