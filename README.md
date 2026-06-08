@@ -291,6 +291,22 @@ klipe-studio/
 
 ---
 
+## Support
+
+Klipe Studio is **free and open source**. If it saves you time or you just enjoy
+using it, you can support my open-source work — every coffee helps keep the project
+alive and moving forward:
+
+<p align="center">
+  <a href="https://ko-fi.com/mrrobot01">
+    <img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-7C62FF?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support Klipe Studio on Ko-fi">
+  </a>
+</p>
+
+Thank you! ☕
+
+---
+
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). By contributing
