@@ -12,7 +12,7 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "dev:vite": "vite",
     "dev:electron": "pnpm build:electron && wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
-    "dev": "concurrently -k -n VITE,ELECTRON -c blue,magenta \"pnpm dev:vite\" \"pnpm dev:electron\"",
+    "dev": "concurrently -k -s first -n VITE,ELECTRON -c blue,magenta \"pnpm dev:vite\" \"pnpm dev:electron\"",
     "build:vite": "vite build",
     "build": "pnpm typecheck && pnpm build:vite && pnpm build:electron && node scripts/prepare-wincodesign.cjs && electron-builder --win --x64",
     "release": "pnpm typecheck && pnpm build:vite && pnpm build:electron && node scripts/prepare-wincodesign.cjs && node scripts/with-env.cjs electron-builder --win --x64 --publish always",

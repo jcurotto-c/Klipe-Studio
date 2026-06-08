@@ -165,50 +165,94 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
    and skips drag start when the pointer-down target is interactive. */
 .hud-bar button { cursor: pointer; }
 
-/* ───────────── Traffic-light window controls ───────────── */
+/* ───────────── Brand mark + app menu (left) ───────────── */
 
-.hud-traffic {
+.hud-brand-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 4px 0 2px;
   flex: 0 0 auto;
 }
 
-.hud-traffic-dot {
+/* Bare at rest, frames on hover / when open — same language as the toggles. */
+.hud-brand {
   appearance: none;
   border: 0;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  padding: 0;
+  background: transparent;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 48px;
+  padding: 0 6px 0 8px;
+  border-radius: 14px;
   cursor: pointer;
+  color: var(--hud-text);
+  transition: background 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
+}
+.hud-brand:hover {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
+}
+.hud-brand:active { background: rgba(255, 255, 255, 0.12); transition-duration: 70ms; }
+.hud-brand.is-open {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.10);
+}
+
+.hud-brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0); /* icon hidden until hover */
-  flex: 0 0 auto;
-  position: relative;
-  /* Monochrome neutral dot at rest — fits the white-on-black UI. Colour is
-     reserved for the close (quit) hover, where it actually signals something. */
-  background: radial-gradient(circle at 35% 30%, #3c3c3c 0%, #2c2c2c 60%, #232323 100%);
-  transition:
-    transform 160ms var(--ease-spring),
-    background 140ms var(--ease-out),
-    color 120ms ease;
-  box-shadow:
-    inset 0 0 0 0.5px var(--hud-tl-rim),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 1px 1px rgba(0, 0, 0, 0.25);
+  color: var(--hud-text);
 }
+.hud-brand-caret {
+  display: inline-flex;
+  align-items: center;
+  color: var(--hud-text-faint);
+  transition: transform 280ms var(--ease-spring), color 180ms ease;
+}
+.hud-brand:hover .hud-brand-caret { color: var(--hud-text-dim); }
+.hud-brand.is-open .hud-brand-caret { transform: rotate(180deg); color: var(--hud-text); }
 
-/* Glyphs reveal on hover, light against the dark dots. */
-.hud-traffic:hover .hud-traffic-dot { color: rgba(255, 255, 255, 0.85); }
-/* Open window: stays neutral, lifts a touch on hover. */
-.hud-traffic-dot.is-max:hover { background: radial-gradient(circle at 35% 30%, #4d4d4d 0%, #3a3a3a 60%, #2f2f2f 100%); }
-/* Close = quits the app: the only place colour earns its keep. */
-.hud-traffic-dot.is-close:hover { background: radial-gradient(circle at 35% 30%, #ff8ba0 0%, var(--danger) 60%, #e0415f 100%); }
-.hud-traffic-dot:active { transform: scale(0.88); }
+/* App menu popover */
+.hud-app-menu { min-width: 188px; padding: 5px; }
+.hud-app-item {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--hud-text);
+  padding: 0 10px;
+  height: 34px;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background 150ms var(--ease-out), color 150ms ease;
+}
+.hud-app-item:hover { background: rgba(255, 255, 255, 0.08); }
+.hud-app-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hud-text-dim);
+  flex: 0 0 auto;
+}
+.hud-app-item:hover .hud-app-item-icon { color: var(--hud-text); }
+.hud-app-item-label { flex: 1; min-width: 0; }
+.hud-app-item.is-danger,
+.hud-app-item.is-danger .hud-app-item-icon { color: #ff8a93; }
+.hud-app-item.is-danger:hover {
+  background: rgba(255, 79, 90, 0.14);
+  color: #ff9ba3;
+}
+.hud-app-item.is-danger:hover .hud-app-item-icon { color: #ff9ba3; }
 
 /* ───────────── Hairline divider ───────────── */
 
@@ -336,7 +380,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 .hud-controls {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   flex: 0 0 auto;
 }
 
@@ -347,9 +391,31 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   height: 48px;
   border-radius: 14px;
   padding: 0;
+  /* Bare at rest — NO visible frame. The frame appears only on hover
+     (wrap ::after) and when selected (.is-on), like the reference bar. */
+  background: transparent;
   transition:
     background 280ms var(--ease-out),
     box-shadow 280ms var(--ease-out);
+}
+/* Whole-cell hover/press tint — one unified surface, sits below the icons. */
+.hud-stacked-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: transparent;
+  pointer-events: none;
+  z-index: 0;
+  transition: background 200ms var(--ease-out);
+}
+.hud-stacked-wrap:hover::after {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
+}
+.hud-stacked-wrap:active::after {
+  background: rgba(255, 255, 255, 0.12);
+  transition-duration: 70ms;
 }
 .hud-stacked-wrap.is-on {
   background:
@@ -374,15 +440,18 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   appearance: none;
   background: transparent;
   border: 0;
-  color: var(--hud-text-dim);
+  color: var(--hud-text);
   width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  /* Fill the cell exactly (same height + radius as the wrap) so press/hover
+     highlight the WHOLE cell — no inner box floating inside an outer frame. */
+  height: 48px;
+  border-radius: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   position: relative;
+  z-index: 1;
   transition:
     color 200ms var(--ease-out),
     background 200ms var(--ease-out),
@@ -402,20 +471,19 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   opacity: 0;
   transition: opacity 220ms var(--ease-out);
 }
-.hud-stacked:hover {
-  color: var(--hud-text);
-  background: rgba(255, 255, 255, 0.04);
-}
-.hud-stacked:hover::before { opacity: 1; }
-.hud-stacked:active { transform: scale(0.92); }
+.hud-stacked:hover { color: var(--hud-text); }
+/* Hover/press now highlight the WHOLE cell (via .hud-stacked-wrap::after),
+   so the icon button carries no separate background — no nested inner box. */
 
 .hud-stacked-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.82;
+  opacity: 0.92;
   transition: opacity 200ms var(--ease-out), color 200ms var(--ease-out), transform 220ms var(--ease-spring);
 }
+/* Bigger, crisper glyphs — the 16px svgs were reading dim/small at rest. */
+.hud-stacked-icon svg { width: 18px; height: 18px; }
 .hud-stacked:hover .hud-stacked-icon { opacity: 1; transform: translateY(-0.5px); }
 
 /* Label is kept for screen readers but never shown */
@@ -433,6 +501,8 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
 
 .hud-stacked-wrap.is-on .hud-stacked { color: var(--hud-text); }
 .hud-stacked-wrap.is-on .hud-stacked-icon { opacity: 1; }
+/* Off toggles: dim the (now slashed) icon so OFF reads at a glance. */
+.hud-stacked-wrap:not(.is-on) .hud-stacked-icon { opacity: 0.8; }
 .hud-stacked-wrap.is-purple.is-on .hud-stacked,
 .hud-stacked-wrap.is-purple.is-on .hud-stacked-icon { color: var(--hud-purple); }
 
@@ -465,33 +535,30 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   50%      { opacity: 1;   transform: translateX(-50%) scale(1.15); }
 }
 
-/* Caret for device dropdown */
+/* Device dropdown trigger — a PERSISTENT split-button section (icon = toggle,
+   this chevron = pick device). Was a hover-only 10px sliver nobody noticed. */
+/* Chevron sits snug to the icon as a clean pair — NO divider line. The whole
+   cell highlights together (wrap ::after), so this is purely a glyph. */
 .hud-stacked-caret {
   appearance: none;
   background: transparent;
   border: 0;
-  width: 10px;
+  width: 18px;
   height: 48px;
+  align-self: center;
+  position: relative;
+  z-index: 1;
   display: inline-flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  padding-bottom: 14px;
   color: var(--hud-text-faint);
   cursor: pointer;
-  border-radius: 4px;
   margin-left: -8px;
-  opacity: 0;
-  transform: translateX(-2px);
-  transition:
-    opacity 220ms var(--ease-out),
-    transform 220ms var(--ease-out),
-    color 160ms ease;
-}
-.hud-stacked-wrap:hover .hud-stacked-caret {
-  opacity: 0.9;
-  transform: translateX(0);
+  transition: color 160ms ease;
 }
 .hud-stacked-caret:hover { color: var(--hud-text); }
+/* Narrow the icon button on split cells so icon + chevron sit closer together. */
+.hud-stacked-wrap:has(.hud-stacked-caret) .hud-stacked { width: 40px; }
 
 /* ───────────── Mobile (Phone) toolbar button — premium accent ───────── */
 
@@ -511,6 +578,8 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   align-items: center;
   height: 48px;
   border-radius: 14px;
+  /* Bare at rest — framed on hover / when connected. */
+  background: transparent;
 }
 
 .hud-mobile-btn {
@@ -524,8 +593,8 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   border: 0;
   border-radius: 12px;
   padding: 0;
-  background: rgba(255, 255, 255, 0.02);
-  color: var(--hud-text-dim);
+  background: transparent;
+  color: var(--hud-text);
   cursor: pointer;
   overflow: visible;
   transition:
@@ -542,11 +611,11 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   border-radius: 13px;
   padding: 1px;
   pointer-events: none;
-  background: linear-gradient(135deg, rgba(255, 205, 135, 0.55) 0%, rgba(255, 255, 255, 0.55) 100%);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.30) 0%, rgba(255, 255, 255, 0.55) 100%);
   -webkit-mask: linear-gradient(#000, #000) content-box, linear-gradient(#000, #000);
   -webkit-mask-composite: xor;
           mask-composite: exclude;
-  opacity: 0.55;
+  opacity: 0;
   transition: opacity 220ms var(--ease-out);
 }
 
@@ -565,9 +634,10 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.88;
+  opacity: 0.92;
   transition: opacity 200ms var(--ease-out), transform 220ms var(--ease-spring);
 }
+.hud-mobile-btn-icon svg { width: 16px; height: 16px; }
 .hud-mobile-btn:hover .hud-mobile-btn-icon { opacity: 1; transform: translateY(-0.5px); }
 
 .hud-mobile-wrap.is-connected .hud-mobile-btn { color: var(--hud-text); }
@@ -632,7 +702,7 @@ html, body { height: auto; min-height: 0; overflow: hidden; }
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #ffcd87, #ffffff);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.85), #ffffff);
   box-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
   pointer-events: none;
 }

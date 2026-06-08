@@ -128,9 +128,11 @@ export default function FloatingHUD(): JSX.Element {
 
   const [micMenuOpen, setMicMenuOpen] = useState(false);
   const [camMenuOpen, setCamMenuOpen] = useState(false);
+  const [appMenuOpen, setAppMenuOpen] = useState(false);
   const micBtnRef = useRef<HTMLButtonElement | null>(null);
   const camBtnRef = useRef<HTMLButtonElement | null>(null);
   const mobileBtnRef = useRef<HTMLDivElement | null>(null);
+  const brandBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const emit = useCallback(<E extends HudEvent>(event: E): void => {
     window.klipeHud?.emit(event);
@@ -288,6 +290,7 @@ export default function FloatingHUD(): JSX.Element {
     recording,
     countdown,
     shellTopOffset,
+    appMenuOpen,
   ]);
 
   useEffect(() => {
@@ -589,27 +592,37 @@ export default function FloatingHUD(): JSX.Element {
         data-mobile-active={mobileEnabled && mobileDeviceId ? '1' : '0'}
         onPointerDown={onBarPointerDown}
       >
-        <div className="hud-traffic" aria-hidden={false}>
+        <div className="hud-brand-wrap">
           <button
-            className="hud-traffic-dot is-close"
-            onClick={() => window.klipeHud?.quitApp?.()}
-            title="Close"
-            aria-label="Close"
+            ref={brandBtnRef}
+            className={`hud-brand ${appMenuOpen ? 'is-open' : ''}`}
+            onClick={() => setAppMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={appMenuOpen}
+            title="Klipe menu"
           >
-            <svg viewBox="0 0 12 12" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-              <path d="M3 3l6 6M9 3l-6 6" />
-            </svg>
+            <span className="hud-brand-mark" aria-hidden><KlipeMark /></span>
+            <span className="hud-brand-caret" aria-hidden>
+              <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </span>
           </button>
-          <button
-            className="hud-traffic-dot is-max"
-            onClick={() => window.klipeHud?.showMain?.()}
-            title="Open window"
-            aria-label="Open window"
-          >
-            <svg viewBox="0 0 12 12" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 5V3h2M9 7v2H7M3 7v2h2M9 5V3H7" />
-            </svg>
-          </button>
+          {appMenuOpen && (
+            <AppMenu
+              anchor={brandBtnRef}
+              items={[
+                { id: 'open', label: 'Open window', icon: <ExpandIcon /> },
+                { id: 'quit', label: 'Quit Klipe', icon: <PowerIcon />, danger: true },
+              ]}
+              onSelect={(id) => {
+                setAppMenuOpen(false);
+                if (id === 'open') window.klipeHud?.showMain?.();
+                else if (id === 'quit') window.klipeHud?.quitApp?.();
+              }}
+              onClose={() => setAppMenuOpen(false)}
+            />
+          )}
         </div>
 
         <div className="hud-drag" title="Drag to move"><span className="hud-drag-grip" /></div>
@@ -632,7 +645,7 @@ export default function FloatingHUD(): JSX.Element {
         <div className="hud-controls">
           <StackedToggle
             ref={micBtnRef}
-            icon={<MicIcon />}
+            icon={micEnabled ? <MicIcon /> : <MicOffIcon />}
             label="Mic"
             active={micEnabled}
             recording={recording && micEnabled}
@@ -651,7 +664,7 @@ export default function FloatingHUD(): JSX.Element {
 
           <StackedToggle
             ref={camBtnRef}
-            icon={<CamIcon />}
+            icon={camEnabled ? <CamIcon /> : <CamOffIcon />}
             label="Camera"
             active={camEnabled}
             recording={recording && camEnabled}
@@ -686,14 +699,14 @@ export default function FloatingHUD(): JSX.Element {
           <span className="hud-mini-divider" aria-hidden />
 
           <StackedToggle
-            icon={<SparkleIcon />}
+            icon={<ZoomIcon />}
             label="Auto-zoom"
             active={autoZoom}
             variant="purple"
             onClick={onToggleAutoZoom}
           />
           <StackedToggle
-            icon={<SpeakerIcon />}
+            icon={systemAudio ? <SpeakerIcon /> : <SpeakerOffIcon />}
             label="System audio"
             active={systemAudio}
             onClick={onToggleSystemAudio}
@@ -1050,7 +1063,7 @@ const StackedToggle = forwardRef<HTMLButtonElement, StackedToggleProps>(
             tabIndex={-1}
             aria-label={`${label} options`}
           >
-            <svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 9l6 6 6-6" />
             </svg>
           </button>
@@ -1155,6 +1168,128 @@ function DeviceMenu({ anchor, items, onSelect, onClose }: DeviceMenuProps): Reac
   );
 }
 
+interface AppMenuItem {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  danger?: boolean;
+}
+
+interface AppMenuProps {
+  anchor: RefObject<HTMLElement | null>;
+  items: AppMenuItem[];
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}
+
+function AppMenu({ anchor, items, onSelect, onClose }: AppMenuProps): React.ReactPortal {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<PopoverPos>({ top: -9999, left: -9999, ready: false, placeAbove: false });
+
+  useLayoutEffect(() => {
+    const place = (settled: boolean): void => {
+      const m = ref.current?.getBoundingClientRect();
+      const t = anchor.current?.getBoundingClientRect();
+      if (!m || !t) return;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const gap = 8;
+      const edge = 12;
+      const { placeAbove, top: rawTop } = computePlacement(t, m.height, gap, edge);
+      let left = Math.round(t.left);
+      left = Math.max(8, Math.min(left, vw - m.width - 8));
+      let top = rawTop;
+      const fitsInWindow = placeAbove ? top >= 8 : top + m.height + 8 <= vh;
+      if (settled || fitsInWindow) {
+        top = placeAbove ? Math.max(8, top) : Math.min(top, vh - m.height - 8);
+      }
+      setPos({ top, left, ready: settled || fitsInWindow, placeAbove });
+    };
+    place(false);
+    let raf = 0;
+    const onResize = (): void => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => place(true)); };
+    window.addEventListener('resize', onResize);
+    const fallback = window.setTimeout(() => place(true), 220);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.clearTimeout(fallback);
+      cancelAnimationFrame(raf);
+    };
+  }, [anchor, items.length]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as Node | null;
+      if (target && anchor.current?.contains(target)) return;
+      if (target && (target as HTMLElement).closest?.('.hud-popover')) return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [anchor, onClose]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      className={`hud-popover hud-app-menu ${pos.ready ? 'is-ready' : ''} ${pos.placeAbove ? 'is-above' : ''}`}
+      data-placement={pos.placeAbove ? 'above' : 'below'}
+      style={{ top: pos.top, left: pos.left }}
+      role="menu"
+    >
+      {items.map((it) => (
+        <button
+          key={it.id}
+          className={`hud-app-item ${it.danger ? 'is-danger' : ''}`}
+          onClick={() => onSelect(it.id)}
+          role="menuitem"
+        >
+          <span className="hud-app-item-icon" aria-hidden>{it.icon}</span>
+          <span className="hud-app-item-label">{it.label}</span>
+        </button>
+      ))}
+    </div>,
+    document.body,
+  );
+}
+
+function KlipeMark(): JSX.Element {
+  return (
+    <svg viewBox="0 0 64 64" width="18" height="18" fill="currentColor" aria-hidden>
+      <rect x="11" y="5" width="6" height="54" rx="1" />
+      <rect x="17" y="25" width="6" height="6" />
+      <rect x="23" y="19" width="6" height="6" />
+      <rect x="29" y="13" width="6" height="6" />
+      <rect x="35" y="5" width="18" height="8" rx="2" />
+      <rect x="17" y="33" width="6" height="6" />
+      <rect x="23" y="39" width="6" height="6" />
+      <rect x="29" y="45" width="6" height="6" />
+      <rect x="35" y="51" width="18" height="8" rx="2" />
+    </svg>
+  );
+}
+
+function ExpandIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+    </svg>
+  );
+}
+
+function PowerIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 4v8" />
+      <path d="M7.5 7.8a6 6 0 1 0 9 0" />
+    </svg>
+  );
+}
+
 function formatTime(ms: number): string {
   const total = Math.floor(ms / 1000);
   const m = String(Math.floor(total / 60)).padStart(2, '0');
@@ -1189,25 +1324,38 @@ function MicIcon(): JSX.Element {
 function CamIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="6" width="14" height="12" rx="2.5" />
-      <circle cx="10" cy="12" r="3" />
+      <path d="M23 7.5l-6 4.5 6 4.5v-9z" />
+      <rect x="1" y="5" width="15" height="14" rx="3" />
     </svg>
   );
 }
-function SparkleIcon(): JSX.Element {
+function ZoomIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
-      <path d="M19 14l.7 1.9L21.6 17l-1.9.7L19 19.6l-.7-1.9L16.4 17l1.9-.7L19 14z" />
+      <path d="M8.5 4H6.5A2.5 2.5 0 0 0 4 6.5V8.5" />
+      <path d="M15.5 4H17.5A2.5 2.5 0 0 1 20 6.5V8.5" />
+      <path d="M20 15.5V17.5A2.5 2.5 0 0 1 17.5 20H15.5" />
+      <path d="M8.5 20H6.5A2.5 2.5 0 0 1 4 17.5V15.5" />
+      <circle cx="12" cy="12" r="2.6" />
     </svg>
   );
 }
 
 function PhoneIcon(): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
-      <path d="M11 18.5h2" />
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="6" y="2" width="12" height="20" rx="3" />
+      <g fill="currentColor" stroke="none">
+        <circle cx="9.5" cy="7.5" r="1" />
+        <circle cx="12" cy="7.5" r="1" />
+        <circle cx="14.5" cy="7.5" r="1" />
+        <circle cx="9.5" cy="11" r="1" />
+        <circle cx="12" cy="11" r="1" />
+        <circle cx="14.5" cy="11" r="1" />
+        <circle cx="9.5" cy="14.5" r="1" />
+        <circle cx="12" cy="14.5" r="1" />
+        <circle cx="14.5" cy="14.5" r="1" />
+      </g>
     </svg>
   );
 }
@@ -1218,6 +1366,34 @@ function SpeakerIcon(): JSX.Element {
       <path d="M11 5L6 9H3v6h3l5 4V5z" />
       <path d="M16 9a3 3 0 0 1 0 6" />
       <path d="M19 6.5a7 7 0 0 1 0 11" />
+    </svg>
+  );
+}
+
+/* ── Muted / off variants: a diagonal slash so OFF reads instantly ── */
+function MicOffIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+      <path d="M4 3.5l16 17" />
+    </svg>
+  );
+}
+function CamOffIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 7.5l-6 4.5 6 4.5v-9z" />
+      <rect x="1" y="5" width="15" height="14" rx="3" />
+      <path d="M2 3l20 18" />
+    </svg>
+  );
+}
+function SpeakerOffIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 5L6 9H3v6h3l5 4V5z" />
+      <path d="M16.5 9.5l5 5M21.5 9.5l-5 5" />
     </svg>
   );
 }
