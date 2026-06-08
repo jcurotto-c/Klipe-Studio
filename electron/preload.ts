@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('klipe', {
     set: (s: { toggleRecord: string; toggleHud: string }) => ipcRenderer.invoke('shortcuts:set', s),
     getDefaults: () => ipcRenderer.invoke('shortcuts:get-defaults'),
   },
+  openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
+  getVersion: () => ipcRenderer.invoke('app:version'),
 });
 
 contextBridge.exposeInMainWorld('klipeCursorPreview', {

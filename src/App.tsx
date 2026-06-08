@@ -3,6 +3,7 @@ import RecorderView from './components/RecorderView';
 import EditorView from './components/EditorView';
 import LibraryView from './components/LibraryView';
 import UpdateBanner from './components/UpdateBanner';
+import AboutModal from './components/AboutModal';
 import type { Recording } from './types';
 import { openProject, openProjectPath, type EditDocument } from './lib/project';
 import { loadRecents, addRecent, removeRecent, type RecentProject } from './lib/recents';
@@ -20,6 +21,7 @@ export default function App(): JSX.Element {
   const [loadedDoc, setLoadedDoc] = useState<EditDocument | null>(null);
   const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentProject[]>(() => loadRecents());
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   // Refs that mirror the current recording + its project path, read by the
   // fire-and-forget library auto-save when it completes (possibly after the
@@ -135,13 +137,18 @@ export default function App(): JSX.Element {
     <div className="app">
       <header className="titlebar">
         <div className="titlebar-left">
-          <div className="brand">
+          <button
+            type="button"
+            className="brand brand-button"
+            onClick={() => setAboutOpen(true)}
+            title="About Klipe Studio"
+          >
             <img className="brand-logo" src={logoIcon} alt="Klipe Studio" />
             <span className="brand-text">
               <span className="brand-name">klipe</span>
               <span className="brand-sub">studio</span>
             </span>
-          </div>
+          </button>
 
           {view === 'editor' ? (
             // Editor "workbench" header: a single Back exit + the project name.
@@ -231,6 +238,8 @@ export default function App(): JSX.Element {
           />
         )}
       </main>
+
+      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
     </div>
   );
 }

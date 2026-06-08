@@ -1670,6 +1670,23 @@ ipcMain.handle('app:quit', () => {
   app.exit(0);
 });
 
+ipcMain.handle('app:version', () => app.getVersion());
+
+// Open an external URL (the About dialog's GitHub / Ko-fi links) in the user's
+// default browser. Restricted to https/mailto so a compromised renderer can't
+// launch arbitrary protocols or local executables.
+ipcMain.handle('app:open-external', async (_evt: IpcMainInvokeEvent, url: unknown) => {
+  if (!isTrustedSender(_evt)) return { ok: false as const };
+  if (typeof url !== 'string') return { ok: false as const };
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return { ok: false as const }; }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') {
+    return { ok: false as const };
+  }
+  await shell.openExternal(url);
+  return { ok: true as const };
+});
+
 // The in-app update banner's "Restart & install" button. Set isQuitting first:
 // the main window's close handler normally prevents close (it hides to the HUD),
 // which would block electron-updater's app.quit() and leave the freshly

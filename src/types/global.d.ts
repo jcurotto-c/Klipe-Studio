@@ -142,6 +142,10 @@ declare global {
       }>;
       getDefaults: () => Promise<GlobalShortcuts>;
     };
+    /** Open a URL (https/mailto only) in the user's default browser. */
+    openExternal: (url: string) => Promise<{ ok: boolean }>;
+    /** The running app version (e.g. "0.1.0"). */
+    getVersion: () => Promise<string>;
   }
 
   interface GlobalShortcuts {

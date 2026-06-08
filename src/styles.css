@@ -87,6 +87,18 @@ button.ghost { background: transparent; }
   display: flex; align-items: center; gap: 9px;
   flex: 0 0 auto;
 }
+.titlebar .brand.brand-button {
+  background: transparent;
+  border: 0;
+  padding: 4px 8px;
+  margin: -4px -4px;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+  transition: background 160ms ease, transform 120ms ease;
+}
+.titlebar .brand.brand-button:hover { background: var(--bg-2); }
+.titlebar .brand.brand-button:active { transform: scale(0.99); }
 
 /* Editor "workbench" breadcrumb: ‹ Back + project name */
 .titlebar-crumb { display: flex; align-items: center; gap: 12px; min-width: 0; }

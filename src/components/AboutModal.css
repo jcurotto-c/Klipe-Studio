@@ -1,0 +1,130 @@
+/* About Klipe Studio — built on .modal-backdrop / .modal-card (styles.css).
+   A small, centered card opened from the titlebar brand mark. */
+
+.about-modal {
+  position: relative;
+  max-width: 380px;
+  padding: 30px 26px 20px;
+  text-align: center;
+}
+
+.about-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.about-close:hover { background: var(--bg-2); color: var(--text-0); }
+
+.about-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+.about-logo {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 4px;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+.about-title-row {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.about-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text-0);
+}
+.about-version {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.about-tagline {
+  margin: 3px 0 0;
+  max-width: 300px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-1);
+}
+
+.about-author {
+  margin: 20px 0 16px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.about-author-name {
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+.about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.about-link {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text-0);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 120ms ease;
+}
+.about-link > span { flex: 1 1 auto; text-align: left; }
+.about-link:hover { background: var(--bg-3); border-color: rgba(255, 255, 255, 0.16); }
+.about-link:active { transform: scale(0.99); }
+.about-link svg { flex: 0 0 auto; }
+.about-link .about-link-arrow { color: var(--text-2); }
+
+.about-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-2);
+  letter-spacing: 0.2px;
+}
+.about-foot-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-2);
+  opacity: 0.55;
+}
