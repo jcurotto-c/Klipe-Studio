@@ -12,7 +12,6 @@ English | [Español](README.es.md)
 [![Windows 10 | 11](https://img.shields.io/badge/Windows%2010%20%7C%2011-7C62FF?style=for-the-badge&logo=windows&logoColor=white)](#installation)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-7C62FF?style=for-the-badge)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/jcurotto-c/Klipe-Studio?style=for-the-badge&color=7C62FF&label=Release)](https://github.com/jcurotto-c/Klipe-Studio/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/jcurotto-c/Klipe-Studio/total?style=for-the-badge&color=7C62FF)](https://github.com/jcurotto-c/Klipe-Studio/releases)
 
 ### Record. Zoom. Polish. Ship — fully open source, 100% local.
 

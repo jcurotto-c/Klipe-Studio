@@ -12,7 +12,6 @@
 [![Windows 10 | 11](https://img.shields.io/badge/Windows%2010%20%7C%2011-7C62FF?style=for-the-badge&logo=windows&logoColor=white)](#instalación)
 [![Licencia: GPL-3.0](https://img.shields.io/badge/Licencia-GPL--3.0-7C62FF?style=for-the-badge)](LICENSE)
 [![Última versión](https://img.shields.io/github/v/release/jcurotto-c/Klipe-Studio?style=for-the-badge&color=7C62FF&label=Versi%C3%B3n)](https://github.com/jcurotto-c/Klipe-Studio/releases/latest)
-[![Descargas](https://img.shields.io/github/downloads/jcurotto-c/Klipe-Studio/total?style=for-the-badge&color=7C62FF&label=Descargas)](https://github.com/jcurotto-c/Klipe-Studio/releases)
 
 ### Graba. Haz zoom. Pule. Publica — totalmente open source y 100% local.
 
