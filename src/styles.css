@@ -3844,3 +3844,15 @@ select {
 /* Size presets reuse .seg-tab — neutralize the global button press-nudge so
    they match the no-jump feel of the shape buttons and position zones. */
 .cam-size-seg .seg-tab:active:not(:disabled) { transform: none; }
+
+/* Camera background replacement (None / Blur / Image). Tabs + fine slider +
+   image grid all reuse existing controls; only the wrapper + hint are new. */
+.cam-bg { display: flex; flex-direction: column; gap: 10px; }
+.cam-bg.disabled { opacity: 0.5; pointer-events: none; }
+.cam-bg-tabs { margin-bottom: 2px; }
+.cam-bg .wallpaper-block { margin-top: 2px; }
+.cam-bg-hint {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 2px 2px 0;
+}

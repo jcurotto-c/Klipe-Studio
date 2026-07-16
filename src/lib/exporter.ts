@@ -23,6 +23,8 @@ import {
 } from './sound-fx';
 import { createMp4Encoder, isMp4ExportSupported } from './mp4-encoder';
 import { SourceDecoder, CameraFrameProvider, BackgroundVideoProvider } from './source-decoder';
+import { composeCameraFrame, ensureCameraBackgroundReady } from './camera-compositor';
+import { ensureCameraSegmenter } from './camera-segmenter';
 import { OverlayStage } from '../overlays/engine/OverlayStage';
 import type {
   AudioFxOptions,
@@ -409,6 +411,19 @@ async function exportVideoMp4({
     }
   }
 
+  // Camera background replacement: load the segmentation model + decode the
+  // background image before the frame loop, so the exported disc matches the
+  // preview. If the model fails to load the export keeps the raw background —
+  // the user must be told, or the file silently differs from what they saw.
+  const cameraBg = cameraOptions?.background;
+  if (cameraProvider && cameraBg && cameraBg.type !== 'none') {
+    await ensureCameraBackgroundReady(cameraBg);
+    const ok = await ensureCameraSegmenter();
+    if (!ok) {
+      onLog?.('WARNING: background replacement model failed to load — camera exports with its real background');
+    }
+  }
+
   // Looping video background: decode the chosen clip via Mediabunny and sample
   // the frame matching each output time, so the bake is frame-accurate (an
   // autoplaying <video> would drift against the export clock). The source is a
@@ -443,6 +458,13 @@ async function exportVideoMp4({
   // hazard is two consecutive samples computing to the *same* outSec after
   // float rounding — guard against it by nudging by 1 µs.
   let lastTimestampSec = -1;
+
+  // Memoize the composited camera frame by VideoFrame identity: the provider
+  // returns the SAME instance for every output time within one camera sample's
+  // interval, so a 30 fps camera against a 60 fps export segments each disc at
+  // most once — half the segmentations are skipped for free.
+  let lastCamFrame: VideoFrame | null = null;
+  let lastCamComposed: HTMLCanvasElement | null = null;
 
   // Dedicated Pixi stage for card text/logo, lazily created. Separate from the
   // body overlay stage so the two never fight over one canvas.
@@ -605,6 +627,16 @@ async function exportVideoMp4({
           // Pull the webcam frame for this output time (null when no provider /
           // before the camera's first frame) and let renderFrame draw the disc.
           const cameraFrame = cameraProvider ? await cameraProvider.frameAt(mediaTimeSec) : null;
+          // Replace the disc background if configured, reusing the composite for
+          // repeated frames of the same camera sample (see lastCamFrame above).
+          let cameraDraw: HTMLVideoElement | VideoFrame | HTMLCanvasElement | null = cameraFrame;
+          if (cameraFrame && cameraOptions && !cameraOptions.hide && cameraBg && cameraBg.type !== 'none') {
+            if (cameraFrame !== lastCamFrame) {
+              lastCamFrame = cameraFrame;
+              lastCamComposed = composeCameraFrame(cameraFrame, cameraBg);
+            }
+            cameraDraw = lastCamComposed ?? cameraFrame;
+          }
           // Looping background-video frame at this output time. When there's a
           // video background we always pass a defined value (frame or null) so
           // the renderer never falls back to its live preview element.
@@ -621,7 +653,7 @@ async function exportVideoMp4({
             backgroundFrame: bgFrame,
             crop,
             fitMode: fitMode ?? 'fit',
-            cameraSource: cameraFrame,
+            cameraSource: cameraDraw,
             cameraOptions,
             cursorState,
             cursorOptions,

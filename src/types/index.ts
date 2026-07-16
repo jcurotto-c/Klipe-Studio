@@ -283,6 +283,21 @@ export type CameraPosition =
  */
 export type CameraShape = 'circle' | 'card' | 'pill';
 
+/**
+ * Replaced background for the webcam disc. Editor-only (preview + export): the
+ * camera is always recorded raw, so this is non-destructive — switch or clear
+ * it any time without touching the recording. The floating disc shown *during*
+ * capture is unaffected.
+ *   - `none`  — the raw camera, real background (default; absent ⇒ none)
+ *   - `blur`  — the person's real background, blurred; `amount` 0..100
+ *   - `image` — a cover-fit image behind the person; `src` is a preset path
+ *               (`./wallpapers/x.png`) or a downscaled data URL (user upload)
+ */
+export type CameraBackground =
+  | { type: 'none' }
+  | { type: 'blur'; amount: number }
+  | { type: 'image'; src: string | null };
+
 export interface CameraOptions {
   hide: boolean;
   position: CameraPosition;
@@ -293,6 +308,8 @@ export interface CameraOptions {
   shape?: CameraShape;
   zoomDifferent: boolean;
   sizeDuringZoom: number;
+  /** Background replacement. Absent → `none` (back-compat with saved projects). */
+  background?: CameraBackground;
 }
 
 /**

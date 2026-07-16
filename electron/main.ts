@@ -1025,6 +1025,31 @@ ipcMain.handle('open-image-file', async () => {
   }
 });
 
+// Hands the MediaPipe camera-background assets to the renderer as raw bytes.
+// Production runs from file://, where a renderer fetch() to a local path fails,
+// so the WASM binary and the segmentation model can't be loaded the usual way —
+// the renderer requests them here and wraps the WASM in a blob: URL. The model
+// goes straight into MediaPipe's modelAssetBuffer (no request at all). The
+// loader .js is NOT served here: MediaPipe injects it as a <script src>, which
+// is covered by the CSP's script-src 'self'.
+//
+// Strict literal allow-list — never path.join untrusted input — so this can
+// only ever read the two files the feature ships.
+const ML_ASSETS = new Set(['vision_wasm_internal.wasm', 'selfie_segmenter_landscape.tflite']);
+
+ipcMain.handle('ml:read-asset', async (event, name: string): Promise<Uint8Array | null> => {
+  if (!isTrustedSender(event)) return null;
+  if (typeof name !== 'string' || !ML_ASSETS.has(name)) return null;
+  const base = isDev
+    ? path.join(__dirname, '..', 'public', 'mediapipe')
+    : path.join(__dirname, '..', 'dist', 'mediapipe');
+  try {
+    return await fs.promises.readFile(path.join(base, name));
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle('get-primary-display-size', () => {
   const d = screen.getPrimaryDisplay();
   return { width: d.size.width, height: d.size.height, scaleFactor: d.scaleFactor };

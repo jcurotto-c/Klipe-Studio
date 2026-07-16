@@ -5,6 +5,7 @@ import {
   type RefObject,
 } from 'react';
 import { renderFrame, computeFramePaddingScale, drawCardBackground, type CursorPlacement } from '../lib/renderer';
+import { composeCameraFrame } from '../lib/camera-compositor';
 import { createCursorState, resetCursorState } from '../lib/cursor-engine';
 import {
   createCursorFollowState,
@@ -331,6 +332,12 @@ export default function VideoCanvas({
       }
       const overlayActive = overlayRef.current !== null;
       const camera = resolveCameraFollow(p.cameraStyle ?? undefined);
+      // Replace the disc background if configured. Returns null while the model
+      // loads or nothing needs doing → fall back to the raw camera video.
+      const camRaw = cameraVideoRef?.current ?? null;
+      const camComposed = camRaw && p.cameraOptions && !p.cameraOptions.hide
+        ? composeCameraFrame(camRaw, p.cameraOptions.background)
+        : null;
       renderFrame(ctx, video, {
         tMs,
         segments: p.segments,
@@ -340,7 +347,7 @@ export default function VideoCanvas({
         background: p.background,
         crop: p.cropMode ? null : p.crop,
         fitMode: p.fitMode,
-        cameraSource: cameraVideoRef?.current ?? null,
+        cameraSource: camComposed ?? camRaw,
         cameraOptions: p.cameraOptions,
         mobileSource: mobileVideoRef?.current ?? null,
         mobileOptions: p.mobileOptions,

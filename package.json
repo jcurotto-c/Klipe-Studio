@@ -18,8 +18,9 @@
     "release": "pnpm typecheck && pnpm build:vite && pnpm build:electron && node scripts/prepare-wincodesign.cjs && node scripts/with-env.cjs electron-builder --win --x64 --publish always",
     "preview": "vite preview",
     "setup:scrcpy": "node scripts/download-scrcpy.cjs",
+    "setup:mediapipe": "node scripts/copy-mediapipe-assets.cjs",
     "setup:wincodesign": "node scripts/prepare-wincodesign.cjs",
-    "postinstall": "node scripts/download-scrcpy.cjs",
+    "postinstall": "node scripts/download-scrcpy.cjs && node scripts/copy-mediapipe-assets.cjs",
     "make:icon": "electron scripts/make-icon.cjs",
     "audit:check": "pnpm audit --audit-level=high"
   },
@@ -33,6 +34,7 @@
     "@fontsource/sora": "5.2.8",
     "@fontsource/space-grotesk": "5.2.10",
     "@huggingface/transformers": "^4.2.0",
+    "@mediapipe/tasks-vision": "^0.10.35",
     "electron-updater": "^6.8.3",
     "framer-motion": "12.38.0",
     "mediabunny": "1.44.2",
@@ -63,6 +65,9 @@
       "dist/**/*",
       "electron-dist/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "dist/mediapipe/**"
     ],
     "extraResources": [
       {

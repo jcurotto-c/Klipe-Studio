@@ -100,7 +100,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
 
   const beginRecording = useCallback(async (
     sourceId: string,
-    withMic: boolean,
+    micDeviceId: string | null,
     camDeviceId: string | null,
     mobileDeviceId: string | null,
     autoZoom: boolean,
@@ -135,7 +135,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
         }
       }
 
-      const capture = await buildScreenStream(sourceId, { withMic, camDeviceId, mobileDeviceId, systemAudio });
+      const capture = await buildScreenStream(sourceId, { micDeviceId, camDeviceId, mobileDeviceId, systemAudio });
       const track = capture.screen.getVideoTracks()[0];
       const settings = track?.getSettings?.() ?? {};
       const realW = typeof settings.width === 'number' && settings.width > 0
@@ -155,7 +155,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
         display: realDisplay,
         areaCrop,
         autoZoom,
-        micRequested: withMic,
+        micRequested: !!micDeviceId,
         systemAudioRequested: systemAudio,
         scrcpy,
       };
@@ -327,7 +327,7 @@ export default function RecorderView({ active, onRecordingDone, recents, onOpenR
           autoZoomRef.current = evt.autoZoom;
           beginRecording(
             evt.sourceId,
-            !!evt.micId,
+            evt.micId || null,
             evt.camId,
             evt.mobileId,
             evt.autoZoom,

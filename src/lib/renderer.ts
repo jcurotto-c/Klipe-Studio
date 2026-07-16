@@ -112,13 +112,18 @@ export const IMAGE_PRESETS: Record<string, ImagePreset> = Object.fromEntries(
   wallpaperManifest.map((w: WallpaperManifestEntry) => [w.key, { src: w.src, label: w.label }]),
 );
 
-interface ImageCacheEntry {
+export interface ImageCacheEntry {
   img: HTMLImageElement;
   ready: boolean;
 }
 
 const imageCache = new Map<string, ImageCacheEntry>();
-function getCachedImage(src: string | null | undefined): ImageCacheEntry | null {
+/**
+ * Decode-once cache of `<img>` elements keyed by src. Exported so the camera
+ * compositor can share the same decoded image a wallpaper background already
+ * uses — one decode whether a preset is the video background or the camera one.
+ */
+export function getCachedImage(src: string | null | undefined): ImageCacheEntry | null {
   if (!src) return null;
   const existing = imageCache.get(src);
   if (existing) return existing;
@@ -372,9 +377,12 @@ export interface RenderFrameOptions {
   /**
    * Webcam image source. `HTMLVideoElement` in the live editor; `VideoFrame`
    * in the export pipeline (which decodes the recorded camera track via
-   * WebCodecs and feeds the frame matching each output timestamp).
+   * WebCodecs and feeds the frame matching each output timestamp). May also be
+   * an `HTMLCanvasElement` when `cameraOptions.background` replaces the disc's
+   * background — the caller composites it via camera-compositor.ts and passes
+   * the result here; drawCameraOverlay draws it identically.
    */
-  cameraSource?: HTMLVideoElement | VideoFrame | null;
+  cameraSource?: HTMLVideoElement | VideoFrame | HTMLCanvasElement | null;
   cameraOptions?: CameraOptions | null;
   /**
    * Phone-screen image source. `HTMLVideoElement` in the live editor;
@@ -1410,7 +1418,7 @@ function cameraSlot(
 
 function drawCameraOverlay(
   ctx: CanvasRenderingContext2D,
-  cameraSource: HTMLVideoElement | VideoFrame | null,
+  cameraSource: HTMLVideoElement | VideoFrame | HTMLCanvasElement | null,
   cameraOptions: CameraOptions | null,
   cw: number,
   ch: number,
@@ -1538,8 +1546,13 @@ function mobileSlot(
  * loaded) the dimensions are stable, and `drawImage` on a seeking
  * video draws the last decoded frame — better than a blank placeholder.
  */
-function videoSourceDims(src: HTMLVideoElement | VideoFrame | null): { w: number; h: number } | null {
+function videoSourceDims(
+  src: HTMLVideoElement | VideoFrame | HTMLCanvasElement | null,
+): { w: number; h: number } | null {
   if (!src) return null;
+  if (src instanceof HTMLCanvasElement) {
+    return src.width > 0 && src.height > 0 ? { w: src.width, h: src.height } : null;
+  }
   if (src instanceof HTMLVideoElement) {
     if (src.videoWidth <= 0 || src.videoHeight <= 0) return null;
     return { w: src.videoWidth, h: src.videoHeight };

@@ -78,6 +78,7 @@ import {
   type CaptionStyle,
 } from '../overlays/captions';
 import { generateCaptions, type CaptionProgress } from '../lib/transcription';
+import { ensureCameraSegmenter, destroyCameraSegmenter } from '../lib/camera-segmenter';
 import { saveProject, saveProjectDoc, saveProjectToLibrary, type EditDocument } from '../lib/project';
 import { capturePoster } from '../lib/poster';
 import { releaseFilmstrip } from '../lib/filmstrip';
@@ -235,6 +236,15 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const [exportOpen, setExportOpen] = useState(false);
   const [cameraOptions, setCameraOptions] = useState<CameraOptions>(() => initialDoc?.cameraOptions ?? loadCameraOptions());
   const [cameraAvailable, setCameraAvailable] = useState(false);
+
+  // Load the selfie-segmentation model lazily — only once the user actually
+  // picks a replacement background, so viewers who never use it don't pay the
+  // ~11 MB WASM download/parse. Released when the editor unmounts.
+  const cameraBgType = cameraOptions.background?.type ?? 'none';
+  useEffect(() => {
+    if (cameraBgType === 'blur' || cameraBgType === 'image') void ensureCameraSegmenter();
+  }, [cameraBgType]);
+  useEffect(() => () => { destroyCameraSegmenter(); }, []);
   const [cursorOptions, setCursorOptions] = useState<CursorOptions>(() => initialDoc?.cursorOptions ?? loadCursorOptions());
   const [frameOptions, setFrameOptions] = useState<FrameOptions>(() => initialDoc?.frameOptions ?? loadFrameOptions());
   const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(() => initialDoc?.audioFxOptions ?? loadAudioFxOptions());
@@ -1037,8 +1047,17 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   }, []);
 
   const handleCameraOptionsChange = useCallback((next: CameraOptions) => {
-    setCameraOptions(next);
-    try { localStorage.setItem(CAMERA_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    setCameraOptions(next);   // the project keeps the full src
+    try {
+      // The global default is a STYLE, not an asset: an image data URL here
+      // would blow the ~5 MB localStorage quota (the same reason custom videos
+      // in the background panel live in-session only). Persist the mode without
+      // the src — reopening lands on the image tab with its upload prompt.
+      const forStorage: CameraOptions = next.background?.type === 'image'
+        ? { ...next, background: { type: 'image', src: null } }
+        : next;
+      localStorage.setItem(CAMERA_OPTIONS_KEY, JSON.stringify(forStorage));
+    } catch { /* ignore */ }
   }, []);
 
   const handleMobileOptionsChange = useCallback((next: MobileOptions) => {

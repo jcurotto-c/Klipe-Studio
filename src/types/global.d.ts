@@ -146,6 +146,10 @@ declare global {
     openExternal: (url: string) => Promise<{ ok: boolean }>;
     /** The running app version (e.g. "0.1.0"). */
     getVersion: () => Promise<string>;
+    /** Raw bytes of a bundled MediaPipe asset (WASM/model) by name, or null. */
+    ml: {
+      readAsset: (name: string) => Promise<Uint8Array | null>;
+    };
   }
 
   interface GlobalShortcuts {
