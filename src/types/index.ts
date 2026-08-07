@@ -260,11 +260,41 @@ export type Background =
   | BackgroundImage
   | BackgroundVideo;
 
+/**
+ * Fake OS window drawn around the recording.
+ *   - `none`    — no chrome (default)
+ *   - `macos`   — title bar with the red/yellow/green traffic lights
+ *   - `browser` — Safari-like toolbar with a centred address field
+ *   - `windows` — Windows 11 title bar, caption glyphs on the right
+ */
+export type WindowChromeStyle = 'none' | 'macos' | 'browser' | 'windows';
+
+export type WindowChromeTheme = 'dark' | 'light';
+
+export interface WindowChromeOptions {
+  style: WindowChromeStyle;
+  theme: WindowChromeTheme;
+  /** Centred in the title bar. Empty ⇒ buttons only. Unused by `browser`. */
+  title: string;
+  /** Address-bar text, `browser` only. Empty ⇒ an empty address bar. */
+  url?: string;
+}
+
 export interface FrameOptions {
   shadow: number;
   radius: number;
   padding: number;
   removeBackground: boolean;
+  /**
+   * Window chrome around the video. Absent ⇒ no chrome, so projects and
+   * localStorage blobs written before this feature load unchanged.
+   *
+   * Never read its members directly: the `{ ...DEFAULT_FRAME_OPTIONS, ...frame }`
+   * merges in the renderer and in EditorView are SHALLOW, so a partially written
+   * object survives them intact. Always normalize through `resolveWindowChrome()`
+   * (lib/window-chrome), and always WRITE a complete object.
+   */
+  window?: WindowChromeOptions;
 }
 
 export type CameraPosition =

@@ -2737,6 +2737,11 @@ select {
   outline: none;
   border-color: var(--text-1);
 }
+/* The window-chrome rows (Theme / Title / URL) carry longer labels than the
+   colour rows the 40px column was sized for. */
+.section-body .grad-row > label {
+  flex: 0 0 52px;
+}
 
 /* Toggle row variant for pro panel */
 .toggle-row.pro {

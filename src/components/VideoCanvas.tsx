@@ -4,7 +4,14 @@ import {
   useRef,
   type RefObject,
 } from 'react';
-import { renderFrame, computeFramePaddingScale, drawCardBackground, type CursorPlacement } from '../lib/renderer';
+import {
+  renderFrame,
+  computeFramePaddingScale,
+  computeFrameBarRatio,
+  drawCardBackground,
+  type CursorPlacement,
+} from '../lib/renderer';
+import { CROSS_ASPECT_EPSILON } from '../lib/layout';
 import { composeCameraFrame } from '../lib/camera-compositor';
 import { createCursorState, resetCursorState } from '../lib/cursor-engine';
 import {
@@ -397,6 +404,14 @@ export default function VideoCanvas({
   // where the source pixels do (otherwise a region drawn on the overlay
   // applies to the canvas at a slightly offset y/x).
   const overlayPaddingScale = computeFramePaddingScale(frameOptions);
+  // The renderer skips window chrome in fill mode (it bleeds past the canvas
+  // edges), so the overlays must agree or their handles land a bar-height off.
+  const srcAspect = sourceW / sourceH;
+  const targetAspect =
+    aspectRatio && isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : srcAspect;
+  const fillActive =
+    Math.abs(targetAspect - srcAspect) > CROSS_ASPECT_EPSILON && fitMode === 'fill';
+  const overlayBarRatio = fillActive ? 0 : computeFrameBarRatio(frameOptions);
 
   // While playing (and not actively editing crop/blur), hide the real OS
   // cursor over the preview so only the rendered cursor shows.
@@ -467,6 +482,7 @@ export default function VideoCanvas({
           crop={crop}
           onChange={onCropChange}
           paddingScale={overlayPaddingScale}
+          barRatio={overlayBarRatio}
         />
       )}
       {blurMode && blurRegions && onSelectBlur && onDragBlurRect && onCreateBlur && (
@@ -479,6 +495,7 @@ export default function VideoCanvas({
           fitMode={fitMode}
           crop={crop}
           paddingScale={overlayPaddingScale}
+          barRatio={overlayBarRatio}
           regions={blurRegions}
           currentSrcMs={currentSrcMs}
           selectedId={selectedBlurId}

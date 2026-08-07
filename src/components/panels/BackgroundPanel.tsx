@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react';
 import { WALLPAPER_PRESETS, IMAGE_PRESETS, DEFAULT_FRAME_OPTIONS } from '../../lib/renderer';
-import type { Background, BlurRegion, Crop, FrameOptions } from '../../types';
+import { resolveWindowChrome } from '../../lib/window-chrome';
+import type {
+  Background,
+  BlurRegion,
+  Crop,
+  FrameOptions,
+  WindowChromeOptions,
+  WindowChromeStyle,
+} from '../../types';
 
 type BgTab = 'image' | 'video' | 'color' | 'gradient';
 
@@ -49,6 +57,13 @@ const TABS: ReadonlyArray<{ id: BgTab; label: string; disabled?: boolean }> = [
   { id: 'video',    label: 'Video' },
   { id: 'color',    label: 'Color' },
   { id: 'gradient', label: 'Gradient' },
+];
+
+const WINDOW_STYLES: ReadonlyArray<{ id: WindowChromeStyle; label: string }> = [
+  { id: 'none',    label: 'None' },
+  { id: 'macos',   label: 'macOS' },
+  { id: 'browser', label: 'Browser' },
+  { id: 'windows', label: 'Windows' },
 ];
 
 function tabFromValue(bg: Background | null | undefined): BgTab {
@@ -164,12 +179,22 @@ export default function BackgroundPanel({
     onFrameChange({ ...frame, ...patch });
   };
 
+  // Named `winChrome`, not `chrome`: the latter shadows the browser global.
+  const winChrome = resolveWindowChrome(frame.window);
+  // Always write a COMPLETE object: the merges downstream (renderer,
+  // loadFrameOptions) are shallow and would not fill in missing members.
+  const setChrome = (patch: Partial<WindowChromeOptions>): void => {
+    updateFrame({ window: { ...winChrome, ...patch } });
+  };
+
   const resetBackground = (): void => {
     onChange({ type: 'wallpaper', value: 'default', blur: 0 });
     setTab('color');
   };
 
   const resetFrame = (): void => {
+    // DEFAULT_FRAME_OPTIONS carries no `window`, so this also clears the window
+    // chrome and its title — intentional: the chrome lives in the Frame card.
     onFrameChange({ ...DEFAULT_FRAME_OPTIONS, removeBackground: frame.removeBackground });
   };
 
@@ -270,6 +295,67 @@ export default function BackgroundPanel({
           step={1}
           onChange={(v) => updateFrame({ radius: v })}
         />
+
+        <div className="seg-tabs four" style={{ marginTop: 6 }}>
+          {WINDOW_STYLES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`seg-tab ${winChrome.style === s.id ? 'active' : ''}`}
+              onClick={() => setChrome({ style: s.id })}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        {winChrome.style !== 'none' && (
+          <>
+            <div className="grad-row">
+              <label>Theme</label>
+              <div className="seg-tabs" style={{ flex: 1 }}>
+                {(['dark', 'light'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`seg-tab ${winChrome.theme === t ? 'active' : ''}`}
+                    onClick={() => setChrome({ theme: t })}
+                  >
+                    {t === 'dark' ? 'Dark' : 'Light'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Browser has no title bar to put a title in — only an address
+                field — so the control is hidden rather than left inert. */}
+            {winChrome.style !== 'browser' && (
+              <div className="grad-row">
+                <label>Title</label>
+                <input
+                  type="text"
+                  className="hex-input"
+                  value={winChrome.title}
+                  placeholder="Optional"
+                  maxLength={80}
+                  onChange={(e) => setChrome({ title: e.target.value })}
+                />
+              </div>
+            )}
+            {winChrome.style === 'browser' && (
+              <div className="grad-row">
+                <label>URL</label>
+                <input
+                  type="text"
+                  className="hex-input"
+                  value={winChrome.url ?? ''}
+                  placeholder="example.com"
+                  maxLength={120}
+                  onChange={(e) => setChrome({ url: e.target.value })}
+                />
+              </div>
+            )}
+          </>
+        )}
       </SectionCard>
 
       {/* PADDING */}

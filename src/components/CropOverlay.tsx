@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import {
-  computeInsetRect,
+  computeChromedInsetRect,
   clampCrop,
   PREVIEW_PADDING_SCALE,
   MIN_CROP_NORM,
@@ -36,6 +36,11 @@ interface CropOverlayProps {
   crop: Crop | null | undefined;
   onChange: (next: Crop) => void;
   paddingScale?: number;
+  /**
+   * Window-chrome bar height ÷ card width. The bar shifts the video down and
+   * shrinks it, so the handles must account for it. 0 = no chrome.
+   */
+  barRatio?: number;
 }
 
 interface DragState {
@@ -52,13 +57,16 @@ export default function CropOverlay({
   crop,
   onChange,
   paddingScale = PREVIEW_PADDING_SCALE,
+  barRatio = 0,
 }: CropOverlayProps): JSX.Element {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
 
   const inset = useMemo(
-    () => computeInsetRect(canvasWidth, canvasHeight, sourceWidth, sourceHeight, paddingScale),
-    [canvasWidth, canvasHeight, sourceWidth, sourceHeight, paddingScale],
+    () => computeChromedInsetRect(
+      canvasWidth, canvasHeight, sourceWidth, sourceHeight, paddingScale, barRatio,
+    ),
+    [canvasWidth, canvasHeight, sourceWidth, sourceHeight, paddingScale, barRatio],
   );
 
   const baseN = useMemo(() => ({

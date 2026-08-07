@@ -4,7 +4,14 @@
  */
 
 import { sampleZoom } from './zoom-engine';
-import { computeInsetRect, CROSS_ASPECT_EPSILON } from './layout';
+import { computeChromedInsetRect, CROSS_ASPECT_EPSILON } from './layout';
+import {
+  CHROME_BAR_RATIO,
+  WINDOW_RIM,
+  drawWindowChrome,
+  resolveWindowChrome,
+  windowChromeBarRatio,
+} from './window-chrome';
 import { cameraShapeAspect } from './camera-shape';
 import { sampleCursor, DEFAULT_CURSOR_OPTIONS } from './cursor-engine';
 import {
@@ -77,9 +84,39 @@ export function computeFramePaddingScale(
   return Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
 }
 
+/**
+ * Window-chrome bar height as a fraction of the card WIDTH, for the current
+ * frame options. Overlays (CropOverlay, BlurOverlay) call this alongside
+ * computeFramePaddingScale so their handles land on the VIDEO, not on the bar.
+ */
+export function computeFrameBarRatio(
+  frame: Partial<FrameOptions> | null | undefined,
+): number {
+  return windowChromeBarRatio(frame?.window);
+}
+
 const CURSOR_BASE_RADIUS = 10;
 const CURSOR_REFERENCE_WIDTH = 1920;
 const CORNER_RADIUS_RATIO = 0.025;
+
+/** Uniform radius, or per-corner `[tl, tr, br, bl]` — what ctx.roundRect takes. */
+type CornerRadii = number | [number, number, number, number];
+
+function hasRadius(r: CornerRadii): boolean {
+  return typeof r === 'number' ? r > 0 : r.some((v) => v > 0);
+}
+
+/** Clip to a rounded rect. No-op when every corner is 0, so an unrounded frame
+ * skips the clip entirely (and keeps the caller's save/restore balanced). */
+function clipRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: CornerRadii,
+): void {
+  if (!hasRadius(r)) return;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.clip();
+}
 
 export interface WallpaperPreset {
   from: string;
@@ -666,6 +703,13 @@ export function renderFrame(
   const crossAspect = Math.abs(canvasAspect - sourceAspect) > CROSS_ASPECT_EPSILON;
   const fillFrame = crossAspect && fitMode === 'fill';
 
+  // Named `winChrome`, not `chrome`: the latter shadows the browser global.
+  const winChrome = resolveWindowChrome(fOpts.window);
+  // Fill mode bleeds past the canvas edges, so the window chrome is skipped
+  // there — the same rule the `chromeFade === 0` branch applies to the card's
+  // shadow and corner radius below.
+  const barRatio = fillFrame ? 0 : CHROME_BAR_RATIO[winChrome.style];
+
   let baseX: number;
   let baseY: number;
   let baseW: number;
@@ -680,7 +724,11 @@ export function renderFrame(
     const effectivePadding = paddingScale != null
       ? paddingScale
       : Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
-    ({ baseX, baseY, baseW, baseH } = computeInsetRect(cw, ch, swEff, shEff, effectivePadding));
+    // The chrome bar eats into the vertical margin rather than shrinking the
+    // video. baseX/Y/W/H stays the VIDEO rect, so every zoom branch below is
+    // unchanged in meaning.
+    ({ baseX, baseY, baseW, baseH } =
+      computeChromedInsetRect(cw, ch, swEff, shEff, effectivePadding, barRatio));
   }
 
   const { scale: baseScale, cx: baseCx, cy: baseCy, p: zoomP } = sampleZoom(segments, tMs);
@@ -781,15 +829,20 @@ export function renderFrame(
     // the reference vertical zoom. Interpolating the focus's canvas POSITION
     // against the FIXED contain size keeps it monotonic and on-screen — deriving
     // it from the growing draw size would swing an edge focus off-frame mid-zoom.
-    const restFocusFracX = ((cw - baseW) / 2 + u * baseW) / cw;
-    const restFocusFracY = ((ch - baseH) / 2 + v * baseH) / ch;
+    // Derived from baseX/baseY rather than assuming a canvas-centred rect: a
+    // window-chrome bar pushes the video rect down, so the two are no longer
+    // the same thing (they are identical when there's no bar).
+    const restFocusFracX = (baseX + u * baseW) / cw;
+    const restFocusFracY = (baseY + v * baseH) / ch;
     const focusFracX = restFocusFracX + (0.5 - restFocusFracX) * t;
     const focusFracY = restFocusFracY + (0.5 - restFocusFracY) * t;
     drawX = focusFracX * cw - u * drawW;
     drawY = focusFracY * ch - v * drawH;
   } else if (!focusInCrop) {
-    drawX = (cw - drawW) / 2;
-    drawY = (ch - drawH) / 2;
+    // Centred on the BASE rect, not on the canvas — a chrome bar shifts the
+    // video rect down. Equivalent to (cw - drawW) / 2 when there's no bar.
+    drawX = baseX + (baseW - drawW) / 2;
+    drawY = baseY + (baseH - drawH) / 2;
   } else if (fillFrame) {
     // Fill mode: place the source's focus point at the canvas center, then
     // clamp so the source still covers the canvas. This makes Focus X/Y act
@@ -801,8 +854,8 @@ export function renderFrame(
     drawY = Math.min(0, Math.max(ch - drawH, drawY));
   } else if (scale === 1) {
     // Contain mode at scale=1: source fits exactly, nothing to pan.
-    drawX = (cw - drawW) / 2;
-    drawY = (ch - drawH) / 2;
+    drawX = baseX + (baseW - drawW) / 2;
+    drawY = baseY + (baseH - drawH) / 2;
   } else {
     const focusBaseX = baseX + (fcx / swEff) * baseW;
     const focusBaseY = baseY + (fcy / shEff) * baseH;
@@ -818,19 +871,41 @@ export function renderFrame(
   // it's skipped entirely. Breakout grows past the edges as the zoom peaks too —
   // keeping the chrome there would paint a floating-card shadow over the
   // background mid-zoom — so fade it out as the nearest edge crosses the bound.
+  //
+  // A WINDOW is exempt from the breakout fade. The fade exists so a bare card's
+  // shadow doesn't float over the background mid-zoom, but a window is meant to
+  // read as a window: dissolving it is what made the browser bar vanish the
+  // moment a zoom started. Killing breakout instead was the wrong fix — it left
+  // the zoom pinned near the frame centre (a top focus landed at 31% of the
+  // height instead of 11%), which reads as "it zooms to the middle".
   let chromeFade: number;
   if (fillFrame) {
     chromeFade = 0;
-  } else if (breakoutZoom) {
+  } else if (breakoutZoom && barRatio <= 0) {
     const minInset = Math.min(drawX, cw - (drawX + drawW), drawY, ch - (drawY + drawH));
     chromeFade = Math.max(0, Math.min(1, minInset / Math.max(1, 0.04 * Math.min(cw, ch))));
   } else {
     chromeFade = 1;
   }
+  // The window is PART OF THE IMAGE, so the zoom scales it exactly like the
+  // video: the bar's height is a fixed fraction of the card's CURRENT width,
+  // which is the same uniform transform the video gets. Zoom into a corner and
+  // you see that corner of the window, magnified — including the bar scrolling
+  // off the top when you zoom into the video's upper edge.
+  //
+  // `barRatio > 0` already rules out fill mode and breakout, so chromeFade is 1
+  // whenever there's a bar and the chrome never half-dissolves.
+  const barH = barRatio > 0 ? drawW * barRatio : 0;
+  const winX = drawX;
+  const winY = drawY - barH;
+  const winW = drawW;
+  const winH = drawH + barH;
+
   const radius = chromeFade <= 0
     ? 0
-    : Math.min(drawW, drawH) * CORNER_RADIUS_RATIO * radiusScale * chromeFade;
+    : Math.min(winW, winH) * CORNER_RADIUS_RATIO * radiusScale * chromeFade;
 
+  // Cast by the WHOLE card, so there's no shadow seam between bar and video.
   if (fOpts.shadow > 0 && chromeFade > 0) {
     const shadowAlpha = Math.min(0.85, 0.18 + (fOpts.shadow / 100) * 0.7) * chromeFade;
     const shadowBlur = 8 + (fOpts.shadow / 100) * 70;
@@ -841,19 +916,50 @@ export function renderFrame(
     ctx.shadowOffsetY = shadowOffset;
     ctx.fillStyle = '#000';
     ctx.beginPath();
-    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+    ctx.roundRect(winX, winY, winW, winH, radius);
     ctx.fill();
     ctx.restore();
   }
 
-  ctx.save();
-  if (radius > 0) {
+  // Title bar, clipped to the card so it inherits the rounded TOP corners.
+  if (barH > 0) {
+    ctx.save();
+    ctx.globalAlpha = chromeFade;
     ctx.beginPath();
-    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+    ctx.roundRect(winX, winY, winW, winH, radius);
     ctx.clip();
+    drawWindowChrome(ctx, winX, winY, winW, barH, winChrome);
+    ctx.restore();
   }
+
+  // The video's TOP corners go square once a bar sits above it: the rounding
+  // belongs to the card, and the bar already owns those two corners.
+  const videoRadii: CornerRadii = barH > 0 ? [0, 0, radius, radius] : radius;
+
+  ctx.save();
+  clipRoundRect(ctx, drawX, drawY, drawW, drawH, videoRadii);
   ctx.drawImage(source, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH);
   ctx.restore();
+
+  // Hairline rim macOS draws around a window. Stroked on the half-pixel so the
+  // 1px line lands on one row instead of straddling two, and scaled with the
+  // card so it stays a hairline at 4K. Drawn over the video's top edge, which
+  // is why it comes after the image rather than with the bar.
+  if (barH > 0) {
+    const rim = Math.max(1, winW * 0.0007);
+    ctx.save();
+    ctx.globalAlpha = chromeFade;
+    ctx.strokeStyle = WINDOW_RIM[winChrome.theme];
+    ctx.lineWidth = rim;
+    ctx.beginPath();
+    ctx.roundRect(
+      winX + rim / 2, winY + rim / 2,
+      winW - rim, winH - rim,
+      Math.max(0, radius - rim / 2),
+    );
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Zoom motion blur — only during transitions, derived deterministically
   // from how fast the zoom scale is changing at this frame. Drawn over the
@@ -868,14 +974,14 @@ export function renderFrame(
       const fx = focusInCrop ? drawX + (fcx! / swEff) * drawW : drawX + drawW / 2;
       const fy = focusInCrop ? drawY + (fcy! / shEff) * drawH : drawY + drawH / 2;
       applyZoomBlur(ctx, source, {
-        sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius,
+        sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius: videoRadii,
       }, fx, fy, amount);
     }
   }
 
   if (blurRegions && blurRegions.length > 0) {
     applyBlurRegions(ctx, source, blurRegions, tMs, {
-      sw, sh, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius,
+      sw, sh, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius: videoRadii,
     });
   }
 
@@ -941,8 +1047,11 @@ interface BlurDrawGeometry {
   drawY: number;
   drawW: number;
   drawH: number;
-  /** Rounded-corner radius of the video frame, for clipping the blur. */
-  radius: number;
+  /**
+   * Corner radii of the video rect. Per-corner `[tl, tr, br, bl]` with the top
+   * squared off when window chrome sits above.
+   */
+  radius: CornerRadii;
 }
 
 let _blurTmpCanvas: HTMLCanvasElement | null = null;
@@ -1047,11 +1156,7 @@ function applyZoomBlur(
   };
 
   ctx.save();
-  if (radius > 0) {
-    ctx.beginPath();
-    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
-    ctx.clip();
-  }
+  clipRoundRect(ctx, drawX, drawY, drawW, drawH, radius);
   for (let i = 1; i <= ghosts; i += 1) {
     const t = i / ghosts;
     const alpha = (0.5 / ghosts) * (1 - t * 0.4) * amount;
@@ -1160,11 +1265,7 @@ function applyBlurRegions(
     // Compose onto the main canvas, clipped to the rounded video frame so
     // the feathered edge can't bleed onto the background.
     ctx.save();
-    if (radius > 0) {
-      ctx.beginPath();
-      ctx.roundRect(drawX, drawY, drawW, drawH, radius);
-      ctx.clip();
-    }
+    clipRoundRect(ctx, drawX, drawY, drawW, drawH, radius);
     ctx.drawImage(tmp, cX, cY, cW, cH);
     ctx.restore();
   }

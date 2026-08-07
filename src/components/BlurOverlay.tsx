@@ -35,6 +35,11 @@ interface BlurOverlayProps {
   fitMode?: FitMode;
   crop: Crop | null | undefined;
   paddingScale?: number;
+  /**
+   * Window-chrome bar height ÷ card width. The bar shifts the video down and
+   * shrinks it, so the handles must account for it. 0 = no chrome.
+   */
+  barRatio?: number;
   regions: BlurRegion[];
   /** Current source time (ms) — drives keyframe interpolation. */
   currentSrcMs: number;
@@ -82,6 +87,7 @@ export default function BlurOverlay({
   fitMode = 'fit',
   crop,
   paddingScale = PREVIEW_PADDING_SCALE,
+  barRatio = 0,
   regions,
   currentSrcMs,
   selectedId,
@@ -97,11 +103,11 @@ export default function BlurOverlay({
 
   // Where the visible source sits inside the wrapper, as wrapper-normalized
   // fractions [0..1] — mirrors the renderer's transform so a rect drawn here
-  // applies to the same canvas pixels at export. Shared with the renderer and
-  // the zoom-placement overlay via computeSourceInset (see lib/layout).
+  // applies to the same canvas pixels at export. Shared with the renderer via
+  // computeSourceInset (see lib/layout).
   const inset = useMemo<Inset>(
-    () => computeSourceInset(sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale),
-    [sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale],
+    () => computeSourceInset(sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale, barRatio),
+    [sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale, barRatio],
   );
 
   const cropRect: Crop = crop ?? { x: 0, y: 0, width: 1, height: 1 };
