@@ -40,6 +40,10 @@ interface BlurOverlayProps {
    * shrinks it, so the handles must account for it. 0 = no chrome.
    */
   barRatio?: number;
+  /** Brand-header band height ÷ canvas height. 0 = no header. */
+  headerRatio?: number;
+  /** Downward shift of the card, in card heights. 0 = centred. */
+  bleed?: number;
   regions: BlurRegion[];
   /** Current source time (ms) — drives keyframe interpolation. */
   currentSrcMs: number;
@@ -88,6 +92,8 @@ export default function BlurOverlay({
   crop,
   paddingScale = PREVIEW_PADDING_SCALE,
   barRatio = 0,
+  headerRatio = 0,
+  bleed = 0,
   regions,
   currentSrcMs,
   selectedId,
@@ -106,8 +112,10 @@ export default function BlurOverlay({
   // applies to the same canvas pixels at export. Shared with the renderer via
   // computeSourceInset (see lib/layout).
   const inset = useMemo<Inset>(
-    () => computeSourceInset(sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale, barRatio),
-    [sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale, barRatio],
+    () => computeSourceInset(
+      sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale, barRatio, headerRatio, bleed,
+    ),
+    [sourceWidth, sourceHeight, aspectRatio, fitMode, paddingScale, barRatio, headerRatio, bleed],
   );
 
   const cropRect: Crop = crop ?? { x: 0, y: 0, width: 1, height: 1 };

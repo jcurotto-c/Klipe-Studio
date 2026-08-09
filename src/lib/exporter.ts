@@ -56,6 +56,7 @@ import {
   type BrandScratch,
 } from './brand-reveal';
 import { ensureFontsReady } from '../overlays/fonts';
+import { ensureBrandHeaderAssets } from './brand-header';
 
 export interface Resolution {
   w: number;
@@ -631,6 +632,10 @@ async function exportVideoMp4({
     canvas.height = 0;
     if (signal) signal.removeEventListener('abort', onAbort);
   };
+
+  // Same for the brand header's logo — but it's global, not per card, so it
+  // needs warming once regardless of whether there are any cards.
+  await ensureBrandHeaderAssets(frame?.header);
 
   // A brand card's logo is drawn synchronously per frame, so a cold image cache
   // would bake its opening frames without the logo.

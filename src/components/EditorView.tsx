@@ -1092,7 +1092,19 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
 
   const handleFrameOptionsChange = useCallback((next: FrameOptions) => {
     setFrameOptions(next);
-    try { localStorage.setItem(FRAME_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    try {
+      // The brand-header logo is an inline data URL, and this runs on EVERY
+      // change — every keystroke in the headline field. Persisting it here would
+      // rewrite hundreds of KB per keypress and can blow the storage quota. It
+      // still round-trips through the project document, which is the only place
+      // it belongs; localStorage only carries "last used settings" for the next
+      // recording, and resolveBrandHeader tolerates a header with no logo.
+      const { header, ...rest } = next;
+      const slim: FrameOptions = header
+        ? { ...rest, header: { ...header, logo: undefined } }
+        : next;
+      localStorage.setItem(FRAME_OPTIONS_KEY, JSON.stringify(slim));
+    } catch { /* ignore */ }
   }, []);
 
   const handleAudioFxOptionsChange = useCallback((next: AudioFxOptions) => {

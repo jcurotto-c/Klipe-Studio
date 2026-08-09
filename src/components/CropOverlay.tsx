@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import {
-  computeChromedInsetRect,
+  computeHeaderInsetRect,
   clampCrop,
   PREVIEW_PADDING_SCALE,
   MIN_CROP_NORM,
@@ -41,6 +41,10 @@ interface CropOverlayProps {
    * shrinks it, so the handles must account for it. 0 = no chrome.
    */
   barRatio?: number;
+  /** Brand-header band height ÷ canvas height. 0 = no header. */
+  headerRatio?: number;
+  /** Downward shift of the card, in card heights. 0 = centred. */
+  bleed?: number;
 }
 
 interface DragState {
@@ -58,15 +62,18 @@ export default function CropOverlay({
   onChange,
   paddingScale = PREVIEW_PADDING_SCALE,
   barRatio = 0,
+  headerRatio = 0,
+  bleed = 0,
 }: CropOverlayProps): JSX.Element {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
 
   const inset = useMemo(
-    () => computeChromedInsetRect(
+    () => computeHeaderInsetRect(
       canvasWidth, canvasHeight, sourceWidth, sourceHeight, paddingScale, barRatio,
+      headerRatio, bleed,
     ),
-    [canvasWidth, canvasHeight, sourceWidth, sourceHeight, paddingScale, barRatio],
+    [canvasWidth, canvasHeight, sourceWidth, sourceHeight, paddingScale, barRatio, headerRatio, bleed],
   );
 
   const baseN = useMemo(() => ({

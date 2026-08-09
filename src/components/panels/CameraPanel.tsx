@@ -3,6 +3,7 @@ import type { CameraBackground, CameraOptions, CameraPosition, CameraShape } fro
 import { CAMERA_SHAPE_ASPECT, CAMERA_SHAPE_ROUNDNESS } from '../../lib/camera-shape';
 import { IMAGE_PRESETS } from '../../lib/renderer';
 import { isSegmenterReady } from '../../lib/camera-segmenter';
+import { downscaleFile } from '../../lib/image-downscale';
 
 export const CAMERA_POSITIONS: ReadonlyArray<ReadonlyArray<CameraPosition | null>> = [
   ['top-left',     'top-center',    'top-right'],
@@ -260,43 +261,6 @@ function saveCustomBgImages(list: CustomBgImage[]): void {
   }
 }
 
-/**
- * Decodes an uploaded image, caps it at CAM_BG_MAX_UPLOAD_W and re-encodes to
- * WebP so the data URL that lands in the project doc stays ~100-200 KB instead
- * of multi-MB — the disc is only ~600px wide, so a 4K photo is heavily
- * oversampled. Falls back to the raw data URL if canvas encode fails.
- */
-function downscaleToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('read failed'));
-    reader.onload = () => {
-      const raw = reader.result;
-      if (typeof raw !== 'string') { reject(new Error('not a data url')); return; }
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const scale = Math.min(1, CAM_BG_MAX_UPLOAD_W / img.naturalWidth);
-          const w = Math.max(1, Math.round(img.naturalWidth * scale));
-          const h = Math.max(1, Math.round(img.naturalHeight * scale));
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) { resolve(raw); return; }
-          ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/webp', 0.85));
-        } catch {
-          resolve(raw);
-        }
-      };
-      img.onerror = () => reject(new Error('decode failed'));
-      img.src = raw;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 interface CameraBackgroundSectionProps {
   value: CameraBackground;
   disabled?: boolean;
@@ -342,7 +306,7 @@ function CameraBackgroundSection({ value, disabled, onChange }: CameraBackground
 
   const handleFile = (file: File | null | undefined): void => {
     if (!file) return;
-    downscaleToDataUrl(file).then(addCustom).catch(() => { /* ignore bad file */ });
+    downscaleFile(file, CAM_BG_MAX_UPLOAD_W).then(addCustom).catch(() => { /* ignore bad file */ });
   };
 
   const removeCustom = (e: React.MouseEvent, item: CustomBgImage): void => {

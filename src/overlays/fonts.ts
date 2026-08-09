@@ -18,10 +18,33 @@ import '@fontsource/inter/600.css';
 import '@fontsource/inter/700.css';
 import '@fontsource/inter/800.css';
 import '@fontsource/inter/900.css';
+// Geist Sans — neo-grotesque, tight and even on the diagonals, built for UI
+// screenshots. Only the four cuts that get used: 400/500 for body, 600/700 for
+// titles. Every bundled weight is warmed on boot, so shipping 100–900 would
+// cost load time and installer size for faces nothing selects.
+import '@fontsource/geist-sans/400.css';
+import '@fontsource/geist-sans/500.css';
+import '@fontsource/geist-sans/600.css';
+import '@fontsource/geist-sans/700.css';
+import '@fontsource/schibsted-grotesk/400.css';
+import '@fontsource/schibsted-grotesk/500.css';
+import '@fontsource/schibsted-grotesk/700.css';
+import '@fontsource/instrument-sans/400.css';
+import '@fontsource/instrument-sans/500.css';
+import '@fontsource/instrument-sans/600.css';
+import '@fontsource/dm-sans/400.css';
+import '@fontsource/dm-sans/500.css';
+import '@fontsource/dm-sans/700.css';
 import '@fontsource/manrope/600.css';
 import '@fontsource/manrope/700.css';
 import '@fontsource/manrope/800.css';
 // Display
+import '@fontsource/outfit/400.css';
+import '@fontsource/outfit/500.css';
+import '@fontsource/outfit/600.css';
+import '@fontsource/syne/600.css';
+import '@fontsource/syne/700.css';
+import '@fontsource/syne/800.css';
 import '@fontsource/space-grotesk/500.css';
 import '@fontsource/space-grotesk/600.css';
 import '@fontsource/space-grotesk/700.css';
@@ -36,6 +59,8 @@ import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/600.css';
 import '@fontsource/jetbrains-mono/700.css';
+import '@fontsource/geist-mono/400.css';
+import '@fontsource/geist-mono/500.css';
 // Serif
 import '@fontsource/instrument-serif/400.css';
 import '@fontsource/fraunces/600.css';
@@ -52,15 +77,51 @@ export interface FontDef {
   /** Exact weights bundled (must match the @fontsource imports above). Used to
    * warm every shipped weight and to snap requested weights to a real cut. */
   weights: number[];
+  /**
+   * Default letter-spacing for TITLE-sized text, as a fraction of the font size
+   * (negative = tighter). Display type wants less tracking than the body cut a
+   * face is spaced for, and how much is a property of the typeface.
+   *
+   * Only read where there is NO user-facing letter-spacing control — the brand
+   * header. Text overlays carry their own `letterSpacing`, and defaulting it
+   * here would silently re-space every existing project.
+   */
+  tracking?: number;
+  /**
+   * Weight that reads as a title in this face. Absent ⇒ 700. Geist's 600 already
+   * has the stroke weight Inter needs 700 for; using one number for both makes
+   * one of them wrong.
+   */
+  titleWeight?: number;
 }
 
 export const FONT_OPTIONS: ReadonlyArray<FontDef> = [
-  { id: 'inter', label: 'Inter', category: 'sans', family: 'Inter', stack: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", weights: [400, 500, 600, 700, 800, 900] },
+  // The fallback chains below run Inter → SF Pro Display → Geist Sans, the
+  // house preference order. SF Pro Display can't be bundled (Apple's license
+  // covers Apple platforms only), so it resolves on macOS and is inert on
+  // Windows — which is why the two faces that CAN ship sit on either side of it.
+  { id: 'inter', label: 'Inter', category: 'sans', family: 'Inter', stack: "'Inter', 'SF Pro Display', -apple-system, 'Geist Sans', system-ui, 'Segoe UI', Roboto, sans-serif", weights: [400, 500, 600, 700, 800, 900], tracking: -0.012, titleWeight: 700 },
+  { id: 'geist-sans', label: 'Geist Sans', category: 'sans', family: 'Geist Sans', stack: "'Geist Sans', 'SF Pro Display', -apple-system, 'Inter', system-ui, sans-serif", weights: [400, 500, 600, 700], tracking: -0.015, titleWeight: 600 },
+  // Squarish neo-grotesque — the closest OFL face to the Akzidenz/Univers
+  // lineage that product brands in this space tend to commission.
+  { id: 'schibsted-grotesk', label: 'Schibsted Grotesk', category: 'sans', family: 'Schibsted Grotesk', stack: "'Schibsted Grotesk', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.015, titleWeight: 700 },
+  // Slightly condensed grotesque; the companion to the Instrument Serif already
+  // bundled, so a card can pair the two without leaving the family.
+  { id: 'instrument-sans', label: 'Instrument Sans', category: 'sans', family: 'Instrument Sans', stack: "'Instrument Sans', 'Inter', system-ui, sans-serif", weights: [400, 500, 600], tracking: -0.015, titleWeight: 600 },
+  // Low-contrast geometric. Spaced generously for body text, so display sizes
+  // need more pulled back than the grotesques above.
+  { id: 'dm-sans', label: 'DM Sans', category: 'sans', family: 'DM Sans', stack: "'DM Sans', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.02, titleWeight: 700 },
   { id: 'manrope', label: 'Manrope', category: 'sans', family: 'Manrope', stack: "'Manrope', 'Inter', system-ui, sans-serif", weights: [600, 700, 800] },
   { id: 'space-grotesk', label: 'Space Grotesk', category: 'display', family: 'Space Grotesk', stack: "'Space Grotesk', 'Inter', sans-serif", weights: [500, 600, 700] },
   { id: 'sora', label: 'Sora', category: 'display', family: 'Sora', stack: "'Sora', 'Inter', sans-serif", weights: [600, 700, 800] },
   { id: 'bricolage', label: 'Bricolage Grotesque', category: 'display', family: 'Bricolage Grotesque', stack: "'Bricolage Grotesque', 'Inter', sans-serif", weights: [600, 700, 800] },
+  // Pure geometric — circular bowls, wide. The one shape family the roster was
+  // missing; everything else here is grotesque-derived.
+  { id: 'outfit', label: 'Outfit', category: 'display', family: 'Outfit', stack: "'Outfit', 'Inter', sans-serif", weights: [400, 500, 600], tracking: -0.02, titleWeight: 600 },
+  { id: 'syne', label: 'Syne', category: 'display', family: 'Syne', stack: "'Syne', 'Inter', sans-serif", weights: [600, 700, 800], tracking: -0.01, titleWeight: 700 },
   { id: 'jetbrains-mono', label: 'JetBrains Mono', category: 'mono', family: 'JetBrains Mono', stack: "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace", weights: [400, 500, 600, 700] },
+  // Mono tracking stays 0: tightening a monospace defeats the point of it.
+  { id: 'geist-mono', label: 'Geist Mono', category: 'mono', family: 'Geist Mono', stack: "'Geist Mono', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace", weights: [400, 500], titleWeight: 500 },
   { id: 'instrument-serif', label: 'Instrument Serif', category: 'serif', family: 'Instrument Serif', stack: "'Instrument Serif', Georgia, 'Times New Roman', serif", weights: [400] },
   { id: 'fraunces', label: 'Fraunces', category: 'serif', family: 'Fraunces', stack: "'Fraunces', Georgia, serif", weights: [600, 700] },
 ];
@@ -82,6 +143,25 @@ export function fontStackById(fontId: string | undefined): string {
 export function fontStack(fontId: string | undefined, mono?: boolean): string {
   if (fontId && byId.has(fontId)) return byId.get(fontId)!.stack;
   return byId.get(mono ? MONO_FONT_ID : DEFAULT_FONT_ID)!.stack;
+}
+
+/**
+ * Title letter-spacing for a font, as a fraction of the font size. 0 when the
+ * face declares none. Multiply by the pixel size for `ctx.letterSpacing`.
+ *
+ * NOTE this can only ever be applied through `ctx.letterSpacing` — canvas 2D
+ * has no `fontFeatureSettings`, and the `FontFace` featureSettings descriptor
+ * is accepted but ignored by the canvas rasteriser (measured: a face's `tnum`
+ * changes DOM metrics by ~20% and canvas output by zero pixels). So typographic
+ * polish here has to come from spacing and weight, not OpenType features.
+ */
+export function fontTracking(fontId: string | undefined): number {
+  return byId.get(resolveFontId(fontId))?.tracking ?? 0;
+}
+
+/** Weight that reads as a title in this face. 700 when unspecified. */
+export function fontTitleWeight(fontId: string | undefined): number {
+  return byId.get(resolveFontId(fontId))?.titleWeight ?? 700;
 }
 
 /** The font id a text overlay is effectively using (for the picker's value). */

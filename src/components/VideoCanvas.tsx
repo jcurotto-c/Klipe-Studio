@@ -8,6 +8,8 @@ import {
   renderFrame,
   computeFramePaddingScale,
   computeFrameBarRatio,
+  computeFrameHeaderRatio,
+  computeFrameBleed,
   drawCardBackground,
   syncPreviewVideoTime,
   type CursorPlacement,
@@ -499,6 +501,10 @@ export default function VideoCanvas({
   const fillActive =
     Math.abs(targetAspect - srcAspect) > CROSS_ASPECT_EPSILON && fitMode === 'fill';
   const overlayBarRatio = fillActive ? 0 : computeFrameBarRatio(frameOptions);
+  // Same gate for the brand header: the renderer skips it in fill mode too, so
+  // the handles would sit a whole band too low if the overlays disagreed.
+  const overlayHeaderRatio = fillActive ? 0 : computeFrameHeaderRatio(frameOptions);
+  const overlayBleed = fillActive ? 0 : computeFrameBleed(frameOptions);
 
   // While playing (and not actively editing crop/blur), hide the real OS
   // cursor over the preview so only the rendered cursor shows.
@@ -570,6 +576,8 @@ export default function VideoCanvas({
           onChange={onCropChange}
           paddingScale={overlayPaddingScale}
           barRatio={overlayBarRatio}
+          headerRatio={overlayHeaderRatio}
+          bleed={overlayBleed}
         />
       )}
       {blurMode && blurRegions && onSelectBlur && onDragBlurRect && onCreateBlur && (
@@ -583,6 +591,8 @@ export default function VideoCanvas({
           crop={crop}
           paddingScale={overlayPaddingScale}
           barRatio={overlayBarRatio}
+          headerRatio={overlayHeaderRatio}
+          bleed={overlayBleed}
           regions={blurRegions}
           currentSrcMs={currentSrcMs}
           selectedId={selectedBlurId}

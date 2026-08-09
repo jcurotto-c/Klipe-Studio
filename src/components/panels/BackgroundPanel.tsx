@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react';
 import { WALLPAPER_PRESETS, IMAGE_PRESETS, DEFAULT_FRAME_OPTIONS } from '../../lib/renderer';
 import { resolveWindowChrome } from '../../lib/window-chrome';
+import {
+  HEADER_BLEED_MAX,
+  HEADER_SIZE_MAX,
+  HEADER_SIZE_MIN,
+  SHOWCASE_BACKGROUND_COLOR,
+  resolveBrandHeader,
+} from '../../lib/brand-header';
+import { LOGO_MAX_UPLOAD_W, downscaleDataUrl } from '../../lib/image-downscale';
+import { FONT_OPTIONS, fontStackById, resolveFontId } from '../../overlays/fonts';
 import type {
   Background,
   BlurRegion,
+  BrandHeaderOptions,
   Crop,
   FrameOptions,
   WindowChromeOptions,
@@ -11,6 +21,19 @@ import type {
 } from '../../types';
 
 type BgTab = 'image' | 'video' | 'color' | 'gradient';
+
+const FONT_CATEGORIES: ReadonlyArray<{ id: 'sans' | 'display' | 'mono' | 'serif'; label: string }> = [
+  { id: 'sans', label: 'Sans' },
+  { id: 'display', label: 'Display' },
+  { id: 'serif', label: 'Serif' },
+  { id: 'mono', label: 'Mono' },
+];
+
+/** Seeded on first activation so the band isn't a blank strip. */
+const SHOWCASE_SEED = {
+  brand: 'Brand',
+  headline: 'Your headline goes here.',
+} as const;
 
 const CUSTOM_IMAGES_STORAGE_KEY = 'klipe.customImagePresets.v1';
 
@@ -187,14 +210,71 @@ export default function BackgroundPanel({
     updateFrame({ window: { ...winChrome, ...patch } });
   };
 
+  // Same complete-object rule as the chrome. A disabled header keeps its copy,
+  // so switching formats back and forth doesn't lose what the user typed.
+  const header = resolveBrandHeader(frame.header);
+  const setHeader = (patch: Partial<BrandHeaderOptions>): void => {
+    updateFrame({ header: { ...header, ...patch } });
+  };
+
+  /** The Showcase format: brand header ON, and the video gets a window. */
+  const enableShowcase = (): void => {
+    const seeded = !header.brand && !header.headline ? SHOWCASE_SEED : null;
+    onFrameChange({
+      ...frame,
+      // A bare card under a headline reads as an unfinished slide, so the
+      // format brings a window with it when there isn't one yet.
+      window: winChrome.style === 'none' ? { ...winChrome, style: 'macos' } : winChrome,
+      header: { ...header, ...seeded, enabled: true },
+    });
+    // The reference look is a light page. Only claim the background when the
+    // user hasn't picked one — an explicit choice is theirs to keep.
+    if (!value || (value.type === 'wallpaper' && value.value === 'default')) {
+      onChange({ type: 'color', value: SHOWCASE_BACKGROUND_COLOR, blur: 0 });
+      setTab('color');
+    }
+  };
+
+  const selectChromeStyle = (style: WindowChromeStyle): void => {
+    onFrameChange({
+      ...frame,
+      window: { ...winChrome, style },
+      header: { ...header, enabled: false },
+    });
+  };
+
+  const pickLogo = async (): Promise<void> => {
+    const bridge = window.klipe;
+    if (!bridge?.openImageFile) return;
+    const result = await bridge.openImageFile();
+    if (!result || 'error' in result) return;
+    // Higher quality than a camera background: a logo is hard-edged type and
+    // marks, which lossy WebP smears at the default.
+    const src = await downscaleDataUrl(result.dataUrl, LOGO_MAX_UPLOAD_W, 0.92);
+    const img = new Image();
+    img.src = src;
+    await new Promise<void>((r) => { img.onload = () => r(); img.onerror = () => r(); });
+    setHeader({
+      logo: {
+        src,
+        // An SVG with no intrinsic size reports 0 — fall back to a square.
+        naturalWidth: img.naturalWidth || 512,
+        naturalHeight: img.naturalHeight || 512,
+      },
+    });
+  };
+
+  const headerFontId = resolveFontId(header.fontFamily);
+
   const resetBackground = (): void => {
     onChange({ type: 'wallpaper', value: 'default', blur: 0 });
     setTab('color');
   };
 
   const resetFrame = (): void => {
-    // DEFAULT_FRAME_OPTIONS carries no `window`, so this also clears the window
-    // chrome and its title — intentional: the chrome lives in the Frame card.
+    // DEFAULT_FRAME_OPTIONS carries neither `window` nor `header`, so this also
+    // clears the window chrome and the Showcase band — intentional: both live in
+    // the Frame card.
     onFrameChange({ ...DEFAULT_FRAME_OPTIONS, removeBackground: frame.removeBackground });
   };
 
@@ -301,12 +381,25 @@ export default function BackgroundPanel({
             <button
               key={s.id}
               type="button"
-              className={`seg-tab ${winChrome.style === s.id ? 'active' : ''}`}
-              onClick={() => setChrome({ style: s.id })}
+              className={`seg-tab ${!header.enabled && winChrome.style === s.id ? 'active' : ''}`}
+              onClick={() => selectChromeStyle(s.id)}
             >
               {s.label}
             </button>
           ))}
+        </div>
+
+        {/* Showcase gets its own full-width row: it's a LAYOUT (a brand band
+            above the window), not a fourth window style, and five labels don't
+            fit the sidebar at this type size. */}
+        <div className="seg-tabs" style={{ gridTemplateColumns: '1fr', width: '100%', marginTop: 4 }}>
+          <button
+            type="button"
+            className={`seg-tab ${header.enabled ? 'active' : ''}`}
+            onClick={enableShowcase}
+          >
+            Showcase
+          </button>
         </div>
 
         {winChrome.style !== 'none' && (
@@ -354,6 +447,164 @@ export default function BackgroundPanel({
                 />
               </div>
             )}
+          </>
+        )}
+
+        {header.enabled && (
+          <>
+            {/* The top row doubles as the Showcase on/off switch, so changing
+                the window from there would drop out of the format. This picks
+                the window WITHIN it. */}
+            <div className="grad-row">
+              <label>Window</label>
+              <div className="seg-tabs three" style={{ flex: 1 }}>
+                {WINDOW_STYLES.filter((s) => s.id !== 'none').map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={`seg-tab ${winChrome.style === s.id ? 'active' : ''}`}
+                    onClick={() => setChrome({ style: s.id })}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grad-row">
+              <label>Logo</label>
+              <div style={{ display: 'flex', gap: 6, flex: 1, alignItems: 'center' }}>
+                <button type="button" className="link-action" onClick={() => void pickLogo()}>
+                  {header.logo ? 'Replace' : 'Upload'}
+                </button>
+                {header.logo && (
+                  <>
+                    <img
+                      src={header.logo.src}
+                      alt=""
+                      style={{ height: 20, maxWidth: 72, objectFit: 'contain' }}
+                    />
+                    <button
+                      type="button"
+                      className="link-action"
+                      onClick={() => setHeader({ logo: undefined })}
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="grad-row">
+              <label>Brand</label>
+              <input
+                type="text"
+                className="hex-input"
+                value={header.brand}
+                placeholder="Optional"
+                maxLength={40}
+                onChange={(e) => setHeader({ brand: e.target.value })}
+              />
+            </div>
+
+            <div className="grad-row">
+              <label>Headline</label>
+              <textarea
+                className="hex-input"
+                rows={2}
+                value={header.headline}
+                placeholder="Drag and drop an agent."
+                maxLength={160}
+                onChange={(e) => setHeader({ headline: e.target.value })}
+              />
+            </div>
+
+            <div className="grad-row">
+              <label>Subtitle</label>
+              <input
+                type="text"
+                className="hex-input"
+                value={header.subtitle}
+                placeholder="Optional"
+                maxLength={120}
+                onChange={(e) => setHeader({ subtitle: e.target.value })}
+              />
+            </div>
+
+            <div className="grad-row">
+              <label>Font</label>
+              <select
+                className="export-select"
+                style={{ flex: 1, fontFamily: fontStackById(headerFontId) }}
+                value={headerFontId}
+                onChange={(e) => setHeader({ fontFamily: e.target.value })}
+              >
+                {FONT_CATEGORIES.map((cat) => (
+                  <optgroup key={cat.id} label={cat.label}>
+                    {FONT_OPTIONS.filter((f) => f.category === cat.id).map((f) => (
+                      <option key={f.id} value={f.id} style={{ fontFamily: f.stack }}>{f.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+
+            <div className="grad-row">
+              <label>Text</label>
+              <input
+                type="color"
+                value={header.color}
+                onChange={(e) => setHeader({ color: e.target.value })}
+              />
+              <input
+                type="text"
+                className="hex-input"
+                value={header.color}
+                onChange={(e) => setHeader({ color: e.target.value })}
+              />
+            </div>
+
+            <div className="grad-row">
+              <label>Align</label>
+              <div className="seg-tabs" style={{ flex: 1 }}>
+                {(['left', 'center'] as const).map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    className={`seg-tab ${header.align === a ? 'active' : ''}`}
+                    onClick={() => setHeader({ align: a })}
+                  >
+                    {a === 'left' ? 'Left' : 'Center'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* The band height is DECLARED, not measured from the text — the
+                overlays read it to place their handles, so it has to be a pure
+                function of the options. The copy shrinks to fit it. */}
+            <NumericRow
+              label="Header size"
+              value={Math.round(header.sizeRel * 100)}
+              unit="%"
+              min={Math.round(HEADER_SIZE_MIN * 100)}
+              max={Math.round(HEADER_SIZE_MAX * 100)}
+              step={1}
+              onChange={(v) => setHeader({ sizeRel: v / 100 })}
+            />
+            <NumericRow
+              label="Bleed"
+              value={Math.round(header.bleed * 100)}
+              unit="%"
+              min={0}
+              max={Math.round(HEADER_BLEED_MAX * 100)}
+              step={1}
+              onChange={(v) => setHeader({ bleed: v / 100 })}
+            />
+            <div className="panel-hint">
+              Bleed slides the window down past the bottom edge. Use Padding to size it.
+            </div>
           </>
         )}
       </SectionCard>

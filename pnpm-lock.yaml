@@ -11,9 +11,21 @@ importers:
       '@fontsource/bricolage-grotesque':
         specifier: 5.2.10
         version: 5.2.10
+      '@fontsource/dm-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/fraunces':
         specifier: 5.2.9
         version: 5.2.9
+      '@fontsource/geist-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/geist-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/instrument-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/instrument-serif':
         specifier: 5.2.8
         version: 5.2.8
@@ -26,12 +38,21 @@ importers:
       '@fontsource/manrope':
         specifier: 5.2.8
         version: 5.2.8
+      '@fontsource/outfit':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/schibsted-grotesk':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/sora':
         specifier: 5.2.8
         version: 5.2.8
       '@fontsource/space-grotesk':
         specifier: 5.2.10
         version: 5.2.10
+      '@fontsource/syne':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@huggingface/transformers':
         specifier: ^4.2.0
         version: 4.2.0
@@ -362,8 +383,20 @@ packages:
   '@fontsource/bricolage-grotesque@5.2.10':
     resolution: {integrity: sha512-V2xS+1P7C8IrSypXLUx/bLtX/LsTlYtV2k2CsU+S/0t8qepZ2hvKSlyJIx7Ub/iY8Bbnj+IjAuUF9nvFz+BbIg==}
 
+  '@fontsource/dm-sans@5.3.0':
+    resolution: {integrity: sha512-lYJtMXXO28q1z+yz+z8XKd0s4hXaa9QdkETzkyD760sidCv5heI86weYA0sx0Nc4pAMAQTUuyf4gO44cYKKS9g==}
+
   '@fontsource/fraunces@5.2.9':
     resolution: {integrity: sha512-XDzuddBtoC7BZgZdBn6b7hsFZY2+V1hgN7yca5fBTKuHjb/lOd45a0Ji8dTUgFhPoL7RdGupo+bC2BFSt6UH8Q==}
+
+  '@fontsource/geist-mono@5.3.0':
+    resolution: {integrity: sha512-UtJ1BBBCVpMYdIcW7nEB45UAoAw5M53ZXs2t0ciPW+IokuAAIc56M8+kW5tXbRJCTpDw4XTtU7proT6NdQAHTg==}
+
+  '@fontsource/geist-sans@5.3.0':
+    resolution: {integrity: sha512-AmG7cE1AvE4NHROPaOl1sN+a02cB5xy6pA/ZV76HXqWTCsJTV2SCBc9DTFHfJqnVOODm7HhXIYtUIb75NP5QXQ==}
+
+  '@fontsource/instrument-sans@5.3.0':
+    resolution: {integrity: sha512-QwXc4hb/px3XvSPS2CPAOgey8nyrQFxgxrmXQQ+pN+P51hKdAcchxpg8rSbjANFfPu6VKXhDqkVDucXMZ9CM5g==}
 
   '@fontsource/instrument-serif@5.2.8':
     resolution: {integrity: sha512-s+bkz+syj2rO00Rmq9g0P+PwuLig33DR1xDR8pTWmovH1pUjwnncrFk++q9mmOex8fUQ7oW80gPpPDaw7V1MMw==}
@@ -377,11 +410,20 @@ packages:
   '@fontsource/manrope@5.2.8':
     resolution: {integrity: sha512-gJHJmcuUk7qWcNCfcAri/DJQtXtBYqi9yKratr4jXhSo0I3xUtNNKI+igQIcw5c+m95g0vounk8ZnX/kb8o0TA==}
 
+  '@fontsource/outfit@5.3.0':
+    resolution: {integrity: sha512-0AVHzTTVJSxWDOxPKSfMeHhZeBFDU3cmgrcOb76ZEyhGo0+xgyG3GsLF3h9+X8w0IX7G4jzjJgFQEBiWdX6VgA==}
+
+  '@fontsource/schibsted-grotesk@5.3.0':
+    resolution: {integrity: sha512-9k+Fd2eg7umKxI2JV2HtDcOkXEM0iJx0u4Iu1b+QHikVU8Sl/MtozJ/mtZfsltR6xnVGSQjpcxXQeJPW0KGpIA==}
+
   '@fontsource/sora@5.2.8':
     resolution: {integrity: sha512-1G6iTXUx8rcCKzi3mjaTQ1DE8PQz0OmW3Qnku+64S+bqRr1o/gGeiw8fxIQhhBU9ZP8ZofIqai7o00DNOPnlDw==}
 
   '@fontsource/space-grotesk@5.2.10':
     resolution: {integrity: sha512-XNXEbT74OIITPqw2H6HXwPDp85fy43uxfBwFR5PU+9sLnjuLj12KlhVM9nZVN6q6dlKjkuN8JisW/OBxwxgUew==}
+
+  '@fontsource/syne@5.3.0':
+    resolution: {integrity: sha512-kRWNVsrdYw+08I4EM1SYPe2JovdTzUI0kMVALVRsKmjRdkrVoun1qddSlDAglz5J9LbgUpJSkWmw6BYnmKdGuw==}
 
   '@hapi/hoek@9.3.0':
     resolution: {integrity: sha512-/c6rf4UJlmHlC9b5BaNvzAcFv7HZ2QHaV0D4/HNlBdvFnvQq8RI4kYdhyPCl7Xj+oWvTWQ8ujhqS53LIgAe6KQ==}
@@ -2383,7 +2425,15 @@ snapshots:
 
   '@fontsource/bricolage-grotesque@5.2.10': {}
 
+  '@fontsource/dm-sans@5.3.0': {}
+
   '@fontsource/fraunces@5.2.9': {}
+
+  '@fontsource/geist-mono@5.3.0': {}
+
+  '@fontsource/geist-sans@5.3.0': {}
+
+  '@fontsource/instrument-sans@5.3.0': {}
 
   '@fontsource/instrument-serif@5.2.8': {}
 
@@ -2393,9 +2443,15 @@ snapshots:
 
   '@fontsource/manrope@5.2.8': {}
 
+  '@fontsource/outfit@5.3.0': {}
+
+  '@fontsource/schibsted-grotesk@5.3.0': {}
+
   '@fontsource/sora@5.2.8': {}
 
   '@fontsource/space-grotesk@5.2.10': {}
+
+  '@fontsource/syne@5.3.0': {}
 
   '@hapi/hoek@9.3.0': {}
 

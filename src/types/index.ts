@@ -280,6 +280,44 @@ export interface WindowChromeOptions {
   url?: string;
 }
 
+/** Logo bitmap for the brand header, stored inline as a data URL. */
+export interface BrandHeaderLogo {
+  src: string;
+  naturalWidth: number;
+  naturalHeight: number;
+}
+
+/**
+ * Brand header — a band reserved along the TOP of the canvas holding a logo,
+ * a brand name, a headline and an optional subtitle, with the (optionally
+ * chromed) video card below it. The "Showcase" format in the Frame panel.
+ *
+ * `sizeRel` is DECLARED, never measured from the text: the overlays read the
+ * band height through a pure function (`computeFrameHeaderRatio`) so their
+ * handles land on the video, and a height derived from `measureText` would make
+ * the renderer and the overlays disagree. The content shrinks to fit the band
+ * instead — see `drawBrandHeader` (lib/brand-header).
+ */
+export interface BrandHeaderOptions {
+  enabled: boolean;
+  logo?: BrandHeaderLogo;
+  /** Short name beside the logo. Empty ⇒ the row collapses. */
+  brand: string;
+  /** The big line. Wraps and auto-shrinks to fit the band. */
+  headline: string;
+  /** Secondary line under the headline. Empty ⇒ not drawn. */
+  subtitle: string;
+  /** Text colour, any canvas-accepted CSS colour. */
+  color: string;
+  /** Font id from `FONT_OPTIONS` (overlays/fonts). */
+  fontFamily: string;
+  align: 'left' | 'center';
+  /** Band height ÷ canvas HEIGHT. */
+  sizeRel: number;
+  /** Downward shift of the card, in card heights. 0 ⇒ centred under the band. */
+  bleed: number;
+}
+
 export interface FrameOptions {
   shadow: number;
   radius: number;
@@ -295,6 +333,17 @@ export interface FrameOptions {
    * (lib/window-chrome), and always WRITE a complete object.
    */
   window?: WindowChromeOptions;
+  /**
+   * Brand header above the video. Absent ⇒ no header, so older projects and
+   * localStorage blobs load unchanged.
+   *
+   * Same shallow-merge contract as `window`: normalize through
+   * `resolveBrandHeader()` (lib/brand-header) and always WRITE a complete
+   * object. Note EditorView strips `logo` before persisting to localStorage —
+   * the data URL would blow the quota — so a resolved header may legitimately
+   * have no logo even though the project document has one.
+   */
+  header?: BrandHeaderOptions;
 }
 
 export type CameraPosition =

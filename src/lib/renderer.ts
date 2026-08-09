@@ -4,7 +4,7 @@
  */
 
 import { sampleZoom } from './zoom-engine';
-import { computeChromedInsetRect, CROSS_ASPECT_EPSILON } from './layout';
+import { computeHeaderInsetRect, CROSS_ASPECT_EPSILON } from './layout';
 import {
   CHROME_BAR_RATIO,
   WINDOW_RIM,
@@ -12,6 +12,12 @@ import {
   resolveWindowChrome,
   windowChromeBarRatio,
 } from './window-chrome';
+import {
+  brandHeaderBleed,
+  brandHeaderRatio,
+  drawBrandHeader,
+  resolveBrandHeader,
+} from './brand-header';
 import { cameraShapeAspect } from './camera-shape';
 import { sampleCursor, DEFAULT_CURSOR_OPTIONS } from './cursor-engine';
 import {
@@ -93,6 +99,24 @@ export function computeFrameBarRatio(
   frame: Partial<FrameOptions> | null | undefined,
 ): number {
   return windowChromeBarRatio(frame?.window);
+}
+
+/**
+ * Brand-header band height as a fraction of the canvas HEIGHT, and the card's
+ * downward bleed in card heights. Overlays call these alongside
+ * computeFramePaddingScale / computeFrameBarRatio for the same reason: the
+ * header pushes the video down, so handles computed without it land high.
+ */
+export function computeFrameHeaderRatio(
+  frame: Partial<FrameOptions> | null | undefined,
+): number {
+  return brandHeaderRatio(frame?.header);
+}
+
+export function computeFrameBleed(
+  frame: Partial<FrameOptions> | null | undefined,
+): number {
+  return brandHeaderBleed(frame?.header);
 }
 
 const CURSOR_BASE_RADIUS = 10;
@@ -839,10 +863,13 @@ export function renderFrame(
   const sh = source.videoHeight || source.displayHeight || displayHeight;
   if (!sw || !sh) return;
 
-  const sx0 = crop ? crop.x * sw : 0;
-  const sy0 = crop ? crop.y * sh : 0;
-  const swEff = crop ? crop.width * sw : sw;
-  const shEff = crop ? crop.height * sh : sh;
+  // Not const: the brand-header "viewport" zoom below narrows this rect in place
+  // so every downstream source→canvas mapping follows it. The base card rect is
+  // computed from the UNNARROWED values, above that point.
+  let sx0 = crop ? crop.x * sw : 0;
+  let sy0 = crop ? crop.y * sh : 0;
+  let swEff = crop ? crop.width * sw : sw;
+  let shEff = crop ? crop.height * sh : sh;
 
   // The chosen output shape differs from what was recorded (e.g. a 16:9 PC
   // capture rendered into a 9:16 reels frame). Two ways to reconcile it:
@@ -869,6 +896,13 @@ export function renderFrame(
   // shadow and corner radius below.
   const barRatio = fillFrame ? 0 : CHROME_BAR_RATIO[winChrome.style];
 
+  // The brand header reserves a band off the top of the canvas. Skipped in fill
+  // mode for the same reason as the chrome: the video bleeds past every edge
+  // there, so there is no band left to sit in.
+  const header = resolveBrandHeader(fOpts.header);
+  const headerRatio = fillFrame ? 0 : brandHeaderRatio(header);
+  const headerBleed = fillFrame ? 0 : brandHeaderBleed(header);
+
   let baseX: number;
   let baseY: number;
   let baseW: number;
@@ -886,8 +920,17 @@ export function renderFrame(
     // The chrome bar eats into the vertical margin rather than shrinking the
     // video. baseX/Y/W/H stays the VIDEO rect, so every zoom branch below is
     // unchanged in meaning.
-    ({ baseX, baseY, baseW, baseH } =
-      computeChromedInsetRect(cw, ch, swEff, shEff, effectivePadding, barRatio));
+    ({ baseX, baseY, baseW, baseH } = computeHeaderInsetRect(
+      cw, ch, swEff, shEff, effectivePadding, barRatio, headerRatio, headerBleed,
+    ));
+  }
+
+  // Brand header: over the background, under the card. Aligned to the BASE rect
+  // so the headline's left edge lines up with the window's — and because the
+  // base rect is pre-zoom, the header stays put when a zoom comes in. The card
+  // is the thing that moves; page furniture isn't.
+  if (headerRatio > 0) {
+    drawBrandHeader(ctx, baseX, 0, baseW, ch * headerRatio, header);
   }
 
   const { scale: baseScale, cx: baseCx, cy: baseCy, p: zoomP } = sampleZoom(segments, tMs);
@@ -936,13 +979,59 @@ export function renderFrame(
     scale = 1 + (baseScale - 1) * factor;
   }
 
+  // A brand header turns the card into a VIEWPORT. The band above it is page
+  // furniture — a card that grew under zoom would slide up and cover the logo
+  // and the headline — so the card keeps its base rect and the zoom instead
+  // narrows the region of the source it samples. Same picture, but the window
+  // outline stays put and the magnification happens inside it.
+  //
+  // Narrowing the SOURCE rect rather than clipping the drawn one is what keeps
+  // this cheap: the cursor hit-test, the blur regions and the zoom blur all map
+  // through sx0/swEff + drawX/drawW, so they follow with no changes — and a
+  // cursor outside the zoomed viewport correctly stops being drawn instead of
+  // floating over the header.
+  //
+  // Runs BEFORE fcx/fcy so those derive from the FINAL source rect — and stay
+  // `const`, which is what lets the draw branches below narrow them.
+  const innerZoom = headerRatio > 0;
+  if (innerZoom && scale > 1.0001) {
+    const zw = swEff / scale;
+    const zh = shEff / scale;
+    // Same focus choice the breakout branch makes below: the CURSOR when it's
+    // visible, else the zoom centre. The auto-zoom centre is a click-cluster
+    // average and can sit well away from where the pointer ended up — and it
+    // goes null between segments while the ease-out still has scale > 1, which
+    // is precisely when a centre fallback would show.
+    const focusSrcX = cursor.visible ? cursor.x : cx;
+    const focusSrcY = cursor.visible ? cursor.y : cy;
+    // CLAMPED into the crop, never SWAPPED for the centre. A focus that lands
+    // outside — cursor-follow is crop-unaware and its spring overshoots, and the
+    // zoom centre can be null mid-ease — has to slide the viewport to the
+    // nearest edge. Swapping in the centre made the framing jump to the middle
+    // and back on the next frame, which is the tic this replaced.
+    const focusX = focusSrcX == null
+      ? swEff / 2
+      : Math.min(swEff, Math.max(0, focusSrcX - sx0));
+    const focusY = focusSrcY == null
+      ? shEff / 2
+      : Math.min(shEff, Math.max(0, focusSrcY - sy0));
+    // Clamped again on the way out so the viewport never samples past the crop
+    // and lets a black band in.
+    sx0 += Math.min(swEff - zw, Math.max(0, focusX - zw / 2));
+    sy0 += Math.min(shEff - zh, Math.max(0, focusY - zh / 2));
+    swEff = zw;
+    shEff = zh;
+  }
+
   const fcx = cx == null ? null : cx - sx0;
   const fcy = cy == null ? null : cy - sy0;
   const focusInCrop = fcx != null && fcy != null
     && fcx >= 0 && fcx <= swEff && fcy >= 0 && fcy <= shEff;
 
-  let drawW = baseW * scale;
-  let drawH = baseH * scale;
+  // The viewport zoom already lives in the source rect, so the card itself is
+  // drawn at 1:1 — scaling it here is what used to push it over the header.
+  let drawW = innerZoom ? baseW : baseW * scale;
+  let drawH = innerZoom ? baseH : baseH * scale;
   let drawX: number;
   let drawY: number;
   // Cross-aspect 'fit' + an active zoom: let the zoom break OUT of the
@@ -961,11 +1050,20 @@ export function renderFrame(
   // centre) can sit well away from where the cursor actually ended up — that's
   // why a bottom-corner cursor was landing cropped at the edge. Fall back to the
   // zoom focus when the cursor is hidden.
+  // A brand header rules breakout out: breakout is the opposite of the viewport
+  // zoom above (it deliberately grows the card past the canvas edges), and it
+  // would land the video on top of the reserved band. Still gated here rather
+  // than left to the `innerZoom` branch below, because `breakoutZoom` also
+  // decides the chrome fade.
   const breakoutFocusX = cursor.visible ? cursor.x : cx;
   const breakoutFocusY = cursor.visible ? cursor.y : cy;
-  const breakoutZoom = crossAspect && !fillFrame && scale > 1.0001
+  const breakoutZoom = crossAspect && !fillFrame && headerRatio <= 0 && scale > 1.0001
     && breakoutFocusX != null && breakoutFocusY != null;
-  if (breakoutZoom) {
+  if (innerZoom) {
+    // The card never moves: it is exactly where computeHeaderInsetRect put it.
+    drawX = baseX;
+    drawY = baseY;
+  } else if (breakoutZoom) {
     const t = Math.max(0, Math.min(1, zoomP));
     // Focus as a fraction of the visible source, clamped in case it lies in a
     // cropped-out border (the cursor / zoom centre can fall outside the crop) so
