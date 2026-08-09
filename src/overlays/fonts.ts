@@ -35,6 +35,33 @@ import '@fontsource/instrument-sans/600.css';
 import '@fontsource/dm-sans/400.css';
 import '@fontsource/dm-sans/500.css';
 import '@fontsource/dm-sans/700.css';
+import '@fontsource/archivo/400.css';
+import '@fontsource/archivo/500.css';
+import '@fontsource/archivo/700.css';
+import '@fontsource/public-sans/400.css';
+import '@fontsource/public-sans/500.css';
+import '@fontsource/public-sans/700.css';
+import '@fontsource/onest/400.css';
+import '@fontsource/onest/500.css';
+import '@fontsource/onest/700.css';
+import '@fontsource/work-sans/400.css';
+import '@fontsource/work-sans/500.css';
+import '@fontsource/work-sans/600.css';
+import '@fontsource/plus-jakarta-sans/400.css';
+import '@fontsource/plus-jakarta-sans/500.css';
+import '@fontsource/plus-jakarta-sans/700.css';
+import '@fontsource/figtree/400.css';
+import '@fontsource/figtree/500.css';
+import '@fontsource/figtree/700.css';
+import '@fontsource/poppins/400.css';
+import '@fontsource/poppins/500.css';
+import '@fontsource/poppins/600.css';
+import '@fontsource/rubik/400.css';
+import '@fontsource/rubik/500.css';
+import '@fontsource/rubik/700.css';
+import '@fontsource/lexend/400.css';
+import '@fontsource/lexend/500.css';
+import '@fontsource/lexend/600.css';
 import '@fontsource/manrope/600.css';
 import '@fontsource/manrope/700.css';
 import '@fontsource/manrope/800.css';
@@ -45,6 +72,13 @@ import '@fontsource/outfit/600.css';
 import '@fontsource/syne/600.css';
 import '@fontsource/syne/700.css';
 import '@fontsource/syne/800.css';
+import '@fontsource/unbounded/400.css';
+import '@fontsource/unbounded/600.css';
+import '@fontsource/unbounded/800.css';
+// Anton and Bebas Neue ship a single cut by design — they are display faces,
+// not families. snapWeight resolves any request to that one weight.
+import '@fontsource/anton/400.css';
+import '@fontsource/bebas-neue/400.css';
 import '@fontsource/space-grotesk/500.css';
 import '@fontsource/space-grotesk/600.css';
 import '@fontsource/space-grotesk/700.css';
@@ -61,10 +95,19 @@ import '@fontsource/jetbrains-mono/600.css';
 import '@fontsource/jetbrains-mono/700.css';
 import '@fontsource/geist-mono/400.css';
 import '@fontsource/geist-mono/500.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource/ibm-plex-mono/600.css';
 // Serif
 import '@fontsource/instrument-serif/400.css';
 import '@fontsource/fraunces/600.css';
 import '@fontsource/fraunces/700.css';
+import '@fontsource/playfair-display/400.css';
+import '@fontsource/playfair-display/600.css';
+import '@fontsource/playfair-display/800.css';
+import '@fontsource/newsreader/400.css';
+import '@fontsource/newsreader/500.css';
+import '@fontsource/newsreader/600.css';
 
 export interface FontDef {
   id: string;
@@ -111,6 +154,21 @@ export const FONT_OPTIONS: ReadonlyArray<FontDef> = [
   // Low-contrast geometric. Spaced generously for body text, so display sizes
   // need more pulled back than the grotesques above.
   { id: 'dm-sans', label: 'DM Sans', category: 'sans', family: 'DM Sans', stack: "'DM Sans', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.02, titleWeight: 700 },
+  // Grotesque with a real display range — holds up both as a headline and as
+  // the UI label text in a screen recording.
+  { id: 'archivo', label: 'Archivo', category: 'sans', family: 'Archivo', stack: "'Archivo', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.015, titleWeight: 700 },
+  // Deliberately characterless. The right pick when the product UI should be
+  // the thing you look at and the caption should disappear.
+  { id: 'public-sans', label: 'Public Sans', category: 'sans', family: 'Public Sans', stack: "'Public Sans', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.012, titleWeight: 700 },
+  { id: 'onest', label: 'Onest', category: 'sans', family: 'Onest', stack: "'Onest', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.015, titleWeight: 600 },
+  { id: 'work-sans', label: 'Work Sans', category: 'sans', family: 'Work Sans', stack: "'Work Sans', 'Inter', system-ui, sans-serif", weights: [400, 500, 600], tracking: -0.012, titleWeight: 600 },
+  { id: 'plus-jakarta-sans', label: 'Plus Jakarta Sans', category: 'sans', family: 'Plus Jakarta Sans', stack: "'Plus Jakarta Sans', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.018, titleWeight: 700 },
+  { id: 'figtree', label: 'Figtree', category: 'sans', family: 'Figtree', stack: "'Figtree', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.018, titleWeight: 700 },
+  // Geometrics are spaced wide for body text, so display sizes need the most
+  // pulled back of anything here.
+  { id: 'poppins', label: 'Poppins', category: 'sans', family: 'Poppins', stack: "'Poppins', 'Inter', system-ui, sans-serif", weights: [400, 500, 600], tracking: -0.02, titleWeight: 600 },
+  { id: 'rubik', label: 'Rubik', category: 'sans', family: 'Rubik', stack: "'Rubik', 'Inter', system-ui, sans-serif", weights: [400, 500, 700], tracking: -0.015, titleWeight: 600 },
+  { id: 'lexend', label: 'Lexend', category: 'sans', family: 'Lexend', stack: "'Lexend', 'Inter', system-ui, sans-serif", weights: [400, 500, 600], tracking: -0.015, titleWeight: 600 },
   { id: 'manrope', label: 'Manrope', category: 'sans', family: 'Manrope', stack: "'Manrope', 'Inter', system-ui, sans-serif", weights: [600, 700, 800] },
   { id: 'space-grotesk', label: 'Space Grotesk', category: 'display', family: 'Space Grotesk', stack: "'Space Grotesk', 'Inter', sans-serif", weights: [500, 600, 700] },
   { id: 'sora', label: 'Sora', category: 'display', family: 'Sora', stack: "'Sora', 'Inter', sans-serif", weights: [600, 700, 800] },
@@ -119,11 +177,22 @@ export const FONT_OPTIONS: ReadonlyArray<FontDef> = [
   // missing; everything else here is grotesque-derived.
   { id: 'outfit', label: 'Outfit', category: 'display', family: 'Outfit', stack: "'Outfit', 'Inter', sans-serif", weights: [400, 500, 600], tracking: -0.02, titleWeight: 600 },
   { id: 'syne', label: 'Syne', category: 'display', family: 'Syne', stack: "'Syne', 'Inter', sans-serif", weights: [600, 700, 800], tracking: -0.01, titleWeight: 700 },
+  { id: 'unbounded', label: 'Unbounded', category: 'display', family: 'Unbounded', stack: "'Unbounded', 'Inter', sans-serif", weights: [400, 600, 800], tracking: -0.01, titleWeight: 600 },
+  // Heavy condensed — one word across the frame. Already tight, so barely any
+  // tracking correction, and its single cut IS the title weight.
+  { id: 'anton', label: 'Anton', category: 'display', family: 'Anton', stack: "'Anton', 'Inter', sans-serif", weights: [400], tracking: -0.005, titleWeight: 400 },
+  // UPPERCASE ONLY — lowercase codepoints render as caps. That is the face
+  // working as designed, not a loading failure. Condensed caps set tight turn
+  // muddy, so this is the one entry with POSITIVE tracking.
+  { id: 'bebas-neue', label: 'Bebas Neue', category: 'display', family: 'Bebas Neue', stack: "'Bebas Neue', 'Inter', sans-serif", weights: [400], tracking: 0.015, titleWeight: 400 },
   { id: 'jetbrains-mono', label: 'JetBrains Mono', category: 'mono', family: 'JetBrains Mono', stack: "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace", weights: [400, 500, 600, 700] },
   // Mono tracking stays 0: tightening a monospace defeats the point of it.
   { id: 'geist-mono', label: 'Geist Mono', category: 'mono', family: 'Geist Mono', stack: "'Geist Mono', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace", weights: [400, 500], titleWeight: 500 },
+  { id: 'ibm-plex-mono', label: 'IBM Plex Mono', category: 'mono', family: 'IBM Plex Mono', stack: "'IBM Plex Mono', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace", weights: [400, 500, 600], titleWeight: 500 },
   { id: 'instrument-serif', label: 'Instrument Serif', category: 'serif', family: 'Instrument Serif', stack: "'Instrument Serif', Georgia, 'Times New Roman', serif", weights: [400] },
   { id: 'fraunces', label: 'Fraunces', category: 'serif', family: 'Fraunces', stack: "'Fraunces', Georgia, serif", weights: [600, 700] },
+  { id: 'playfair-display', label: 'Playfair Display', category: 'serif', family: 'Playfair Display', stack: "'Playfair Display', Georgia, serif", weights: [400, 600, 800], tracking: -0.01, titleWeight: 600 },
+  { id: 'newsreader', label: 'Newsreader', category: 'serif', family: 'Newsreader', stack: "'Newsreader', Georgia, serif", weights: [400, 500, 600], tracking: -0.005, titleWeight: 600 },
 ];
 
 export const DEFAULT_FONT_ID = 'inter';
