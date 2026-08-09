@@ -47,6 +47,14 @@ import type { Overlay } from '../overlays/types';
 import type { Card, CardSet } from '../cards/types';
 import type { CardSegment, CardTimeline } from '../cards/timeline';
 import { buildCardTimeline, resolveTransition, bodyToGlobalMs } from '../cards/timeline';
+import { brandConfigOf } from '../cards/brand-card';
+import {
+  createBrandScratch,
+  disposeBrandScratch,
+  drawBrandReveal,
+  ensureBrandAssets,
+  type BrandScratch,
+} from './brand-reveal';
 import { ensureFontsReady } from '../overlays/fonts';
 
 export interface Resolution {
@@ -312,6 +320,10 @@ async function exportVideoMp4({
   const outroSeg = tl.segments.find((s): s is CardSegment => s.kind === 'card' && s.slot === 'outro') ?? null;
   const midSegs = tl.segments.filter((s): s is CardSegment => s.kind === 'card' && s.slot === 'mid');
 
+  // Brand-card outros paint themselves rather than filling a flat background;
+  // lazily created so ordinary exports don't allocate the dot canvases.
+  let brandScratch: BrandScratch | null = null;
+
   // ---- 1) Render audio offline (fast — runs in OfflineAudioContext) -------
   onProgress?.('starting', 0);
   // "Play through cards" music is a soundtrack over the whole video, so it's
@@ -447,6 +459,49 @@ async function exportVideoMp4({
     }
   }
 
+  // Card backgrounds can be video clips too (a finished logo ident dropped in
+  // as the outro, say). One decoder per card, keyed by card id, sampled at
+  // CARD-LOCAL time so the clip starts from its first frame when the card does.
+  // Same reason as the body's provider: a live <video> would drift against the
+  // export clock, and the bake has to be frame-accurate.
+  const cardVideoProviders = new Map<string, BackgroundVideoProvider>();
+  for (const seg of tl.segments) {
+    if (seg.kind !== 'card') continue;
+    const bg = seg.card.background;
+    if (bg?.type !== 'video' || !bg.src) continue;
+    if (cardVideoProviders.has(seg.card.id)) continue;
+    const provider = new BackgroundVideoProvider();
+    try {
+      const blob = await (await fetch(bg.src)).blob();
+      if (await provider.init(blob)) {
+        cardVideoProviders.set(seg.card.id, provider);
+        onLog?.(`Card video ready for the ${seg.slot} card`);
+      } else {
+        provider.destroy();
+        onLog?.(`The ${seg.slot} card's video had no decodable track — it will render dark`);
+      }
+    } catch (e) {
+      provider.destroy();
+      onLog?.(`WARNING: the ${seg.slot} card's video failed to load (${errorMessage(e)})`);
+    }
+  }
+
+  /**
+   * The decoded frame for a card at card-local time, or `undefined` when the
+   * card isn't a video. Never returns the live element: `null` (video, frame
+   * not ready) keeps the renderer off its preview path so the bake stays
+   * deterministic.
+   */
+  const cardVideoFrameAt = async (
+    card: Card,
+    localMs: number,
+  ): Promise<CanvasImageSource | null | undefined> => {
+    if (card.background?.type !== 'video') return undefined;
+    const provider = cardVideoProviders.get(card.id);
+    if (!provider) return null;
+    return (await provider.frameAt(localMs / 1000)) ?? null;
+  };
+
   const fallbackFrameDur = 1 / fps;
   // Body output-time consumed so far (0 at the first recorded frame). The global
   // timestamp for each frame is derived from this via bodyToGlobalMs.
@@ -486,6 +541,28 @@ async function exportVideoMp4({
   // redraws the solid/gradient/image background then composites the card's
   // text/logo sampled at card-local time. Timestamps share lastTimestampSec so
   // the intro → body → outro stream stays strictly increasing.
+  /**
+   * A card's background at `localMs`. Normally a flat fill, but a brand card
+   * paints its own dot field and logo card. Single helper so the encode loop
+   * and the crossfade bake can't disagree about what a card looks like.
+   */
+  const paintCardBackground = async (
+    target: CanvasRenderingContext2D,
+    card: Card,
+    localMs: number,
+  ): Promise<void> => {
+    // Resolved once and handed to whichever painter runs: a brand card can
+    // have a video backdrop too, and it needs the decoded frame just as much.
+    const videoFrame = await cardVideoFrameAt(card, localMs);
+    const brand = brandConfigOf(card);
+    if (brand) {
+      if (!brandScratch) brandScratch = createBrandScratch();
+      drawBrandReveal(target, w, h, brand, localMs, card.durationMs, brandScratch, videoFrame);
+      return;
+    }
+    drawCardBackground(target, w, h, card.background, videoFrame);
+  };
+
   const encodeCardFrames = async (card: Card, startOutSec: number): Promise<void> => {
     const durSec = card.durationMs / 1000;
     const frameCount = Math.max(1, Math.round(durSec * fps));
@@ -497,7 +574,7 @@ async function exportVideoMp4({
     for (let i = 0; i < frameCount; i++) {
       if (aborted) break;
       const localMs = (i / fps) * 1000;
-      drawCardBackground(ctx, w, h, card.background);
+      await paintCardBackground(ctx, card, localMs);
       if (hasItems && cardStage && cardCanvas) {
         cardStage.renderAt(localMs);
         ctx.drawImage(cardCanvas, 0, 0);
@@ -519,7 +596,7 @@ async function exportVideoMp4({
     c.height = h;
     const cctx = c.getContext('2d');
     if (cctx) {
-      drawCardBackground(cctx, w, h, card.background);
+      await paintCardBackground(cctx, card, localMs);
       if (card.items.length > 0) {
         const stage = await ensureCardStage();
         await stage.setOverlays(card.items);
@@ -541,16 +618,25 @@ async function exportVideoMp4({
     sourceDecoder.destroy();
     cameraProvider?.destroy();
     bgVideoProvider?.destroy();
+    for (const p of cardVideoProviders.values()) p.destroy();
+    cardVideoProviders.clear();
     overlayStage?.dispose();
     cardStage?.dispose();
     if (overlayCanvas) { overlayCanvas.width = 0; overlayCanvas.height = 0; }
     if (cardCanvas) { cardCanvas.width = 0; cardCanvas.height = 0; }
     for (const c of bakedFrames.values()) { c.width = 0; c.height = 0; }
     bakedFrames.clear();
+    if (brandScratch) disposeBrandScratch(brandScratch);
     canvas.width = 0;
     canvas.height = 0;
     if (signal) signal.removeEventListener('abort', onAbort);
   };
+
+  // A brand card's logo is drawn synchronously per frame, so a cold image cache
+  // would bake its opening frames without the logo.
+  for (const seg of tl.segments) {
+    if (seg.kind === 'card') await ensureBrandAssets(brandConfigOf(seg.card));
+  }
 
   // Pre-bake the frozen crossfade frames for every card that has a body chunk
   // beside it (enter over the body before, exit over the body after). Card

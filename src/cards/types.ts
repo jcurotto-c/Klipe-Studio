@@ -53,6 +53,66 @@ export interface RevealConfig {
   background?: Background;
 }
 
+/**
+ * Parametric config for the "brand card" template — a halftone dot field over
+ * the card's background with a white logo card scaling up in the centre.
+ *
+ * An ordinary card in every timing respect (length, crossfade, global clock);
+ * it just paints itself with `drawBrandReveal` instead of a flat background
+ * plus overlay items, because a dot field and a measured logo card aren't
+ * expressible as a Background or an Overlay.
+ */
+/** Texture laid over the background. All share one centre-weighted falloff. */
+export type BrandPattern = 'dots' | 'grid' | 'rings' | 'none';
+
+/** How the logo/copy is plated. */
+export type BrandCardStyle = 'solid' | 'glass' | 'none';
+
+export interface BrandCardConfig {
+  /** Backdrop behind the pattern. */
+  background: Background;
+  pattern: BrandPattern;
+  /** Pattern colour. */
+  patternColor: string;
+  /** Pattern strength, 0..1. 0 leaves the plain background. */
+  patternOpacity: number;
+  cardStyle: BrandCardStyle;
+  /**
+   * Plate thickness around the content, as fractions of the canvas HEIGHT
+   * (both axes use height so the box keeps its shape across output aspects).
+   * The plate is content-sized plus this, so it can grow freely but never
+   * shrinks below the copy it holds.
+   */
+  padX: number;
+  padY: number;
+  /** Card copy. Empty strings are skipped. */
+  cardText: string;
+  cardSubtext: string;
+  /**
+   * Copy colour. A `solid` plate is white, so this wants to be dark there and
+   * light on `glass` / `none` — the presets set it to match, and it stays
+   * editable so any combination can be fixed.
+   */
+  textColor: string;
+  /** Font id from the card font registry, shared by both lines. */
+  fontFamily?: string;
+  /** Optional logo above the text, stored inline as a data URL. */
+  icon?: RevealImageRef;
+}
+
+export const DEFAULT_BRAND_CARD_CONFIG: BrandCardConfig = {
+  background: { type: 'gradient', from: '#5a7fc4', to: '#8fa6d4', angle: 160, blur: 0 },
+  pattern: 'dots',
+  patternColor: '#f2b9a0',
+  patternOpacity: 0.9,
+  cardStyle: 'solid',
+  padX: 0.075,
+  padY: 0.058,
+  cardText: 'Klipe Studio',
+  cardSubtext: '',
+  textColor: '#0b0d12',
+};
+
 export interface Card {
   id: string;
   kind: 'intro' | 'outro' | 'mid';
@@ -83,8 +143,15 @@ export interface Card {
    * so the editor regenerates `items` instead of hand-editing the choreography.
    */
   template?: string;
-  /** Parametric config for a generated card (only the 'reveal' template today). */
+  /** Parametric config for the 'reveal' template. */
   revealConfig?: RevealConfig;
+  /**
+   * Parametric config for the 'brand-card' template. Its presence is what
+   * switches the card painters onto that path, so a card claiming
+   * `template: 'brand-card'` without one falls back to an ordinary
+   * background + items card rather than rendering blank.
+   */
+  brandConfig?: BrandCardConfig;
 }
 
 /** Persisted on EditDocument. Either end may be null (no card there). */

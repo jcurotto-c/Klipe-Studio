@@ -9,8 +9,17 @@ import {
   computeFramePaddingScale,
   computeFrameBarRatio,
   drawCardBackground,
+  syncPreviewVideoTime,
   type CursorPlacement,
+  type RenderFrameOptions,
 } from '../lib/renderer';
+import {
+  createBrandScratch,
+  disposeBrandScratch,
+  drawBrandReveal,
+  type BrandScratch,
+} from '../lib/brand-reveal';
+import type { BrandCardConfig } from '../cards/types';
 import { CROSS_ASPECT_EPSILON } from '../lib/layout';
 import { composeCameraFrame } from '../lib/camera-compositor';
 import { createCursorState, resetCursorState } from '../lib/cursor-engine';
@@ -139,6 +148,13 @@ interface VideoCanvasProps {
   onSelectCardItem?: (id: string | null) => void;
   /** Called while dragging a card item; coordinates are fractional. */
   onMoveCardItem?: (id: string, base: { x: number; y: number }) => void;
+  /**
+   * When the visible card is a brand card, its config. The card layer then
+   * paints the dot field and logo card instead of a flat background.
+   */
+  cardBrandConfig?: BrandCardConfig | null;
+  /** Length of the visible card, for the brand card's own timing. */
+  cardDurationMs?: number;
 }
 
 export default function VideoCanvas({
@@ -188,6 +204,8 @@ export default function VideoCanvas({
   selectedCardItemId = null,
   onSelectCardItem,
   onMoveCardItem,
+  cardBrandConfig = null,
+  cardDurationMs = 0,
 }: VideoCanvasProps): JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -201,15 +219,25 @@ export default function VideoCanvas({
   const cursorStateRef = useRef(createCursorState());
   const followStateRef = useRef(createCursorFollowState());
   const overlayRef = useRef<PixiCursorOverlay | null>(null);
+  // Held across frames: the dot field is rebuilt into a full-size canvas, and
+  // reallocating it every tick would thrash the GC through the whole card.
+  // Created lazily — passing createBrandScratch() straight to useRef would
+  // allocate a fresh pair of canvases on every render just to discard them.
+  const brandScratchRef = useRef<BrandScratch | null>(null);
+  if (brandScratchRef.current === null) brandScratchRef.current = createBrandScratch();
+  useEffect(() => {
+    const s = brandScratchRef.current;
+    return () => { if (s) disposeBrandScratch(s); };
+  }, []);
   const cursorOutputRef = useRef<CursorPlacement>({
     visible: false, px: 0, py: 0, r: 0, rotation: 0, motionAngle: 0, motionStrength: 0,
     shape: 'arrow', contentTargetHeight: 0,
   });
   const propsRef = useRef({
-    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode, cardActive, cardBackground, cardTransition, cardTransitionAlpha,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode, cardActive, cardBackground, cardTransition, cardTransitionAlpha, cardBrandConfig, cardDurationMs, cardTimeMs, playing,
   });
   propsRef.current = {
-    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode, cardActive, cardBackground, cardTransition, cardTransitionAlpha,
+    segments, mouse, display, background, crop, cropMode, cameraOptions, mobileOptions, mobilePrimary, cursorOptions, cameraStyle, zoomBlur, frameOptions, blurRegions, fitMode, cardActive, cardBackground, cardTransition, cardTransitionAlpha, cardBrandConfig, cardDurationMs, cardTimeMs, playing,
   };
 
   useEffect(() => {
@@ -298,54 +326,29 @@ export default function VideoCanvas({
     if (!ctx) return;
     let last = performance.now();
     const minDelta = 1000 / 30;
+    /**
+     * rAF timestamps jitter by a fraction of a millisecond, and a frame landing
+     * a hair under the budget used to be dropped outright — which pushes the
+     * next draw a whole vsync later. That turned a steady 30 fps into an uneven
+     * 33/50 ms alternation (22.6 fps effective, 17 ms spread): invisible on a
+     * near-static screen recording, obvious stutter on smooth motion.
+     */
+    const deltaTolerance = 4;
+    // Always populated: it's assigned during render, which runs before effects.
+    const brandScratch = brandScratchRef.current ?? createBrandScratch();
 
-    const tick = (now: number): void => {
-      rafRef.current = requestAnimationFrame(tick);
-      if (now - last < minDelta) return;
-      last = now;
-      const p = propsRef.current;
-      const cardBg = cardBgCanvasRef.current;
-      const cardBgCtx = cardBg ? cardBg.getContext('2d') : null;
-      const cardLayer = cardLayerRef.current;
-      // Keep the card buffer at the same resolution/aspect as the body canvas
-      // (DPR-scaled OUTPUT dims) so gradient/image card backgrounds match the
-      // export pixel-for-pixel instead of stretching the source aspect.
-      if (cardBg && (cardBg.width !== canvas.width || cardBg.height !== canvas.height)) {
-        cardBg.width = canvas.width;
-        cardBg.height = canvas.height;
-      }
-      // Full intro/outro card phase: the <video> is paused upstream. Paint the
-      // card background on the dedicated group-opacity layer (fully opaque,
-      // covering video + cursor + body overlays) and keep the OS-cursor sprite
-      // hidden. The card's text/logo render on the OverlayCanvas INSIDE the same
-      // layer, so it composites background + items as a single image.
-      if (p.cardActive) {
-        if (cardBg && cardBgCtx) {
-          drawCardBackground(cardBgCtx, cardBg.width, cardBg.height, p.cardBackground);
-        }
-        if (cardLayer && cardLayer.style.opacity !== '1') cardLayer.style.opacity = '1';
-        if (overlayRef.current) {
-          overlayRef.current.render({ ...cursorOutputRef.current, visible: false });
-        }
-        return;
-      }
-      const video = videoRef.current;
-      if (!video) return;
-      const tMs = video.currentTime * 1000;
-      const lastSample = cursorStateRef.current.lastTms;
-      if (lastSample != null && Math.abs(tMs - lastSample) > 150) {
-        resetCursorState(cursorStateRef.current);
-        resetCursorFollowState(followStateRef.current);
-      }
-      const overlayActive = overlayRef.current !== null;
+    /** The renderFrame options for a body frame. */
+    const buildRenderOpts = (
+      p: typeof propsRef.current,
+      tMs: number,
+      overlayActive = false,
+    ): RenderFrameOptions => {
       const camera = resolveCameraFollow(p.cameraStyle ?? undefined);
-      // Replace the disc background if configured. Returns null while the model
-      // loads or nothing needs doing → fall back to the raw camera video.
       const camRaw = cameraVideoRef?.current ?? null;
       const camComposed = camRaw && p.cameraOptions && !p.cameraOptions.hide
         ? composeCameraFrame(camRaw, p.cameraOptions.background)
         : null;
-      renderFrame(ctx, video, {
+      return {
         tMs,
         segments: p.segments,
         mouse: p.mouse,
@@ -369,7 +372,91 @@ export default function VideoCanvas({
         cursorFollowConfig: camera.config,
         zoomBlur: p.zoomBlur ?? 0,
         blurRegions: p.blurRegions,
-      });
+      };
+    };
+
+    /**
+     * A card's artwork. Brand cards paint their own dot field and logo card;
+     * everything else is a flat background with its items on the OverlayCanvas.
+     * Used by both the full-card branch and the crossfade so a card dissolving
+     * in looks like the card it's about to become.
+     */
+    const paintCard = (
+      target: CanvasRenderingContext2D,
+      cw: number,
+      chh: number,
+      p: typeof propsRef.current,
+      localMs: number,
+    ): void => {
+      // A card whose background is a clip follows the playhead rather than
+      // free-running, so the card can be scrubbed like the rest of the timeline.
+      const bg = p.cardBrandConfig ? p.cardBrandConfig.background : p.cardBackground;
+      if (bg && typeof bg === 'object' && bg.type === 'video') {
+        // Only let the clip run while the card is actually on screen. During a
+        // crossfade the card is frozen at local time 0 (the export bakes a
+        // still there too), so playing through it would leave the clip ~half a
+        // second in by the time the card takes over — skipping its opening.
+        syncPreviewVideoTime(bg.src, localMs / 1000, p.playing && p.cardActive);
+      }
+      if (p.cardBrandConfig) {
+        drawBrandReveal(target, cw, chh, p.cardBrandConfig, localMs, p.cardDurationMs, brandScratch);
+        return;
+      }
+      drawCardBackground(target, cw, chh, p.cardBackground);
+    };
+
+    const tick = (now: number): void => {
+      rafRef.current = requestAnimationFrame(tick);
+      const p = propsRef.current;
+      // A card whose background is a clip is genuine motion and costs one
+      // drawImage to composite, so it runs at the display's rate. The 30 fps
+      // budget exists to keep the heavy body compositing off the main thread
+      // during an export; it only hurts here.
+      const cardBgNow = p.cardBrandConfig ? p.cardBrandConfig.background : p.cardBackground;
+      const videoCard = p.cardActive
+        && !!cardBgNow && typeof cardBgNow === 'object' && cardBgNow.type === 'video';
+      // A video card gets a higher budget than the body's 30 fps — but a
+      // budget, not free rein. Displays run well past 60Hz (165Hz is ordinary
+      // now), and redrawing a 30 fps clip 165 times a second is pure waste that
+      // competes with its own decoding.
+      const budget = videoCard ? 1000 / 60 : minDelta;
+      if (now - last < budget - deltaTolerance) return;
+      last = now;
+      const cardBg = cardBgCanvasRef.current;
+      const cardBgCtx = cardBg ? cardBg.getContext('2d') : null;
+      const cardLayer = cardLayerRef.current;
+      // Keep the card buffer at the same resolution/aspect as the body canvas
+      // (DPR-scaled OUTPUT dims) so gradient/image card backgrounds match the
+      // export pixel-for-pixel instead of stretching the source aspect.
+      if (cardBg && (cardBg.width !== canvas.width || cardBg.height !== canvas.height)) {
+        cardBg.width = canvas.width;
+        cardBg.height = canvas.height;
+      }
+      // Full intro/outro card phase: the <video> is paused upstream. Paint the
+      // card background on the dedicated group-opacity layer (fully opaque,
+      // covering video + cursor + body overlays) and keep the OS-cursor sprite
+      // hidden. The card's text/logo render on the OverlayCanvas INSIDE the same
+      // layer, so it composites background + items as a single image.
+      if (p.cardActive) {
+        if (cardBg && cardBgCtx) {
+          paintCard(cardBgCtx, cardBg.width, cardBg.height, p, p.cardTimeMs);
+        }
+        if (cardLayer && cardLayer.style.opacity !== '1') cardLayer.style.opacity = '1';
+        if (overlayRef.current) {
+          overlayRef.current.render({ ...cursorOutputRef.current, visible: false });
+        }
+        return;
+      }
+      const video = videoRef.current;
+      if (!video) return;
+      const tMs = video.currentTime * 1000;
+      const lastSample = cursorStateRef.current.lastTms;
+      if (lastSample != null && Math.abs(tMs - lastSample) > 150) {
+        resetCursorState(cursorStateRef.current);
+        resetCursorFollowState(followStateRef.current);
+      }
+      const overlayActive = overlayRef.current !== null;
+      renderFrame(ctx, video, buildRenderOpts(p, tMs, overlayActive));
       if (overlayActive) {
         overlayRef.current!.render(cursorOutputRef.current);
       }
@@ -383,7 +470,7 @@ export default function VideoCanvas({
           const a = video.seeking ? 1 : Math.min(1, Math.max(0, p.cardTransitionAlpha));
           const s = String(a);
           if (cardLayer.style.opacity !== s) cardLayer.style.opacity = s;
-          drawCardBackground(cardBgCtx, cardBg.width, cardBg.height, p.cardBackground);
+          paintCard(cardBgCtx, cardBg.width, cardBg.height, p, p.cardTimeMs);
         } else if (cardLayer.style.opacity !== '0') {
           cardLayer.style.opacity = '0';
         }

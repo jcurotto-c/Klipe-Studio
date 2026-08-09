@@ -68,6 +68,14 @@ export interface IdleFloat {
 export interface Typewriter {
   startMs: number;
   charsPerSecond: number;
+  /**
+   * Per-keystroke timing variation, 0..1. Absent → the engine's default; a
+   * flat 0 gives the old machine-even reveal. Derived from the character index
+   * by hash, so preview and export stay identical.
+   */
+  humanize?: number;
+  /** Blinking caret while and after typing. Absent → on. */
+  caret?: boolean;
 }
 
 interface OverlayCommon {

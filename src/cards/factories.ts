@@ -8,6 +8,7 @@
 
 import type { Overlay, TextOverlay } from '../overlays/types';
 import { createTextOverlay } from '../overlays/factories';
+import { makeTypewriter } from '../overlays/engine/typewriter';
 import type { Card } from './types';
 import { DEFAULT_CARD_DURATION_MS, DEFAULT_CARD_TRANSITION_MS } from './types';
 
@@ -90,10 +91,7 @@ export function createCardText(
     },
   };
   if (opts.typewriter) {
-    overlay.typewriter = {
-      startMs: fromMs,
-      charsPerSecond: Math.max(8, Math.min(60, text.length * 4)),
-    };
+    overlay.typewriter = makeTypewriter(text, fromMs, span);
   }
   return overlay;
 }

@@ -44,7 +44,7 @@ import type {
 } from '../types';
 import type { Overlay } from '../overlays/types';
 import type { Caption, CaptionStyle } from '../overlays/captions';
-import type { CardSet } from '../cards/types';
+import type { Card, CardSet } from '../cards/types';
 
 export const PROJECT_VERSION = 1;
 
@@ -124,7 +124,32 @@ export interface ProjectManifest {
      * projects saved before the feature.
      */
     bgVideo?: MediaRef | null;
+    /**
+     * Video clips used as intro/outro/mid-roll card backgrounds, keyed by slot
+     * (see `cardVideoKey`). An array rather than a fixed field because there
+     * can be any number of mid-roll cards. Same volatile-URL → stored-file
+     * treatment as `bgVideo`. Absent on projects saved before the feature.
+     */
+    cardVideos?: Array<{ key: string; ref: MediaRef }>;
   };
+}
+
+/**
+ * Stable identity for a card's stored video, used as both the manifest key and
+ * the media filename. Mid-roll cards key off their own id so reordering or
+ * adding cards can't make two of them collide.
+ */
+export function cardVideoKey(slot: 'intro' | 'outro' | 'mid', card: Card): string {
+  return slot === 'mid' ? `mid:${card.id}` : slot;
+}
+
+/** Every card in a document, paired with its slot. */
+function cardEntries(doc: EditDocument): Array<{ slot: 'intro' | 'outro' | 'mid'; card: Card }> {
+  const out: Array<{ slot: 'intro' | 'outro' | 'mid'; card: Card }> = [];
+  if (doc.cards?.intro) out.push({ slot: 'intro', card: doc.cards.intro });
+  if (doc.cards?.outro) out.push({ slot: 'outro', card: doc.cards.outro });
+  for (const c of doc.cards?.mid ?? []) out.push({ slot: 'mid', card: c });
+  return out;
 }
 
 export interface SaveProjectResult {
@@ -229,11 +254,36 @@ async function readBgVideoMedia(
   }
 }
 
+/**
+ * Read every card-background video clip from its volatile object URL. Same
+ * pattern as {@link readBgVideoMedia}, once per card that uses one.
+ */
+async function readCardVideoMedia(
+  doc: EditDocument,
+): Promise<Array<{ key: string; ref: MediaRef; bytes: Uint8Array }>> {
+  const out: Array<{ key: string; ref: MediaRef; bytes: Uint8Array }> = [];
+  for (const { slot, card } of cardEntries(doc)) {
+    if (card.background?.type !== 'video' || !card.background.src) continue;
+    try {
+      const res = await fetch(card.background.src);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const mimeType = res.headers.get('content-type') || 'video/mp4';
+      const key = cardVideoKey(slot, card);
+      // Colons aren't safe in filenames on Windows; the key keeps them, the
+      // stored file doesn't.
+      const safe = key.replace(/[^a-zA-Z0-9_-]/g, '_');
+      out.push({ key, ref: { file: `cardvideo-${safe}.${extFor(mimeType, 'mp4')}`, mimeType }, bytes });
+    } catch { /* clip unreadable — skip it rather than fail the save */ }
+  }
+  return out;
+}
+
 function buildManifest(
   recording: Recording,
   doc: EditDocument,
   musicRef: MediaRef | null,
   bgVideoRef: MediaRef | null,
+  cardVideoRefs: Array<{ key: string; ref: MediaRef }>,
   durationMs?: number,
 ): ProjectManifest {
   const refs = mediaRefsFor(recording);
@@ -247,6 +297,22 @@ function buildManifest(
   }
   if (docToStore.background?.type === 'video' && docToStore.background.src) {
     docToStore = { ...docToStore, background: { ...docToStore.background, src: null } };
+  }
+  // Same for card-background clips: open() rebuilds each src from its file.
+  if (docToStore.cards && cardEntries(docToStore).some((e) => e.card.background?.type === 'video')) {
+    const strip = (card: Card): Card =>
+      card.background?.type === 'video' && card.background.src
+        ? { ...card, background: { ...card.background, src: null } }
+        : card;
+    docToStore = {
+      ...docToStore,
+      cards: {
+        ...docToStore.cards,
+        intro: docToStore.cards.intro ? strip(docToStore.cards.intro) : null,
+        outro: docToStore.cards.outro ? strip(docToStore.cards.outro) : null,
+        ...(docToStore.cards.mid ? { mid: docToStore.cards.mid.map(strip) } : {}),
+      },
+    };
   }
   return {
     klipeProject: true,
@@ -266,6 +332,7 @@ function buildManifest(
       micAudio: refs.micAudio,
       systemAudio: refs.systemAudio,
       bgVideo: bgVideoRef,
+      ...(cardVideoRefs.length > 0 ? { cardVideos: cardVideoRefs } : {}),
     },
   };
 }
@@ -302,8 +369,10 @@ export async function saveProject(
   if (music) media.push({ name: music.ref.file, bytes: music.bytes });
   const bgVideo = await readBgVideoMedia(doc);
   if (bgVideo) media.push({ name: bgVideo.ref.file, bytes: bgVideo.bytes });
+  const cardVideos = await readCardVideoMedia(doc);
+  for (const cv of cardVideos) media.push({ name: cv.ref.file, bytes: cv.bytes });
 
-  const manifest = buildManifest(recording, doc, music?.ref ?? null, bgVideo?.ref ?? null);
+  const manifest = buildManifest(recording, doc, music?.ref ?? null, bgVideo?.ref ?? null, cardVideos.map((c) => ({ key: c.key, ref: c.ref })));
   return bridge.save({
     manifestJson: JSON.stringify(manifest),
     media,
@@ -351,6 +420,8 @@ export async function saveProjectToLibrary(
   if (music) media.push({ name: music.ref.file, bytes: music.bytes });
   const bgVideo = await readBgVideoMedia(doc);
   if (bgVideo) media.push({ name: bgVideo.ref.file, bytes: bgVideo.bytes });
+  const cardVideos = await readCardVideoMedia(doc);
+  for (const cv of cardVideos) media.push({ name: cv.ref.file, bytes: cv.bytes });
   if (options?.thumbnail && options.thumbnail.byteLength > 0) {
     media.push({ name: 'thumbnail.jpg', bytes: options.thumbnail });
   }
@@ -360,6 +431,7 @@ export async function saveProjectToLibrary(
     doc,
     music?.ref ?? null,
     bgVideo?.ref ?? null,
+    cardVideos.map((c) => ({ key: c.key, ref: c.ref })),
     options?.durationMs ?? undefined,
   );
   return bridge.save({
@@ -383,10 +455,12 @@ export async function saveProjectDoc(
   if (!bridge?.saveDoc) return { ok: false, error: 'Project saving is unavailable in this build.' };
   const music = await readMusicMedia(doc);
   const bgVideo = await readBgVideoMedia(doc);
-  const manifest = buildManifest(recording, doc, music?.ref ?? null, bgVideo?.ref ?? null);
+  const cardVideos = await readCardVideoMedia(doc);
+  const manifest = buildManifest(recording, doc, music?.ref ?? null, bgVideo?.ref ?? null, cardVideos.map((c) => ({ key: c.key, ref: c.ref })));
   const media: Array<{ name: string; bytes: Uint8Array }> = [];
   if (music) media.push({ name: music.ref.file, bytes: music.bytes });
   if (bgVideo) media.push({ name: bgVideo.ref.file, bytes: bgVideo.bytes });
+  for (const cv of cardVideos) media.push({ name: cv.ref.file, bytes: cv.bytes });
   return bridge.saveDoc({
     projectPath,
     manifestJson: JSON.stringify(manifest),
@@ -432,6 +506,24 @@ function reconstructProject(result: ReadResult | null): OpenedProject | null {
   // Rebuild the video background's volatile object URL from its stored clip.
   if (doc.background?.type === 'video') {
     doc.background = { ...doc.background, src: bgVideo?.url ?? null };
+  }
+  // Same for card-background clips, matched back up by their stored key.
+  const storedCardVideos = manifest.media.cardVideos ?? [];
+  if (storedCardVideos.length > 0 && doc.cards) {
+    const urlFor = (slot: 'intro' | 'outro' | 'mid', card: Card): string | null => {
+      const hit = storedCardVideos.find((c) => c.key === cardVideoKey(slot, card));
+      return hit ? (blobFor(hit.ref)?.url ?? null) : null;
+    };
+    const restore = (slot: 'intro' | 'outro' | 'mid') => (card: Card): Card =>
+      card.background?.type === 'video'
+        ? { ...card, background: { ...card.background, src: urlFor(slot, card) } }
+        : card;
+    doc.cards = {
+      ...doc.cards,
+      intro: doc.cards.intro ? restore('intro')(doc.cards.intro) : null,
+      outro: doc.cards.outro ? restore('outro')(doc.cards.outro) : null,
+      ...(doc.cards.mid ? { mid: doc.cards.mid.map(restore('mid')) } : {}),
+    };
   }
 
   const recording: Recording = {

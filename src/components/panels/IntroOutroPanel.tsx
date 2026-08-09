@@ -7,16 +7,19 @@
  * rebuilds the opacity envelope so the bar always animates in/out cleanly.
  */
 
-import { type CSSProperties, useMemo, useState } from 'react';
+import { type CSSProperties, useMemo, useRef, useState } from 'react';
 import type { Background } from '../../types';
 import type { ImageOverlay, Overlay, OverlayTransform, TextOverlay } from '../../overlays/types';
 import { createImageOverlay, applyAnimation } from '../../overlays/factories';
 import type { Card, CardSet, RevealConfig, RevealImageRef } from '../../cards/types';
 import { MAX_CARD_DURATION_MS, MAX_CARD_TRANSITION_MS, MIN_CARD_DURATION_MS } from '../../cards/types';
 import { createCard, createCardText, sequenceWindows } from '../../cards/factories';
-import { CARD_TEMPLATES, buildTemplate } from '../../cards/templates';
+import { buildTemplate, templatesFor } from '../../cards/templates';
 import { buildRevealCard } from '../../cards/reveal';
+import { brandConfigOf } from '../../cards/brand-card';
+import type { BrandCardConfig } from '../../cards/types';
 import { FONT_OPTIONS, fontStackById, resolveFontId } from '../../overlays/fonts';
+import { makeTypewriter } from '../../overlays/engine/typewriter';
 
 type Side = 'intro' | 'outro' | 'mid';
 type TextAnim = 'fade' | 'rise' | 'zoom' | 'blur' | 'typewriter';
@@ -37,11 +40,69 @@ function bgStyle(bg: Background): CSSProperties {
   return { background: '#0b0d12' };
 }
 
+/**
+ * CSS stand-in for a brand card: its pattern as a repeating background plus its
+ * plate. Returns null for every other template.
+ */
+function brandThumb(card: Card): JSX.Element | null {
+  const cfg = brandConfigOf(card);
+  if (!cfg) return null;
+  const dot = cfg.patternColor;
+  const pattern: CSSProperties =
+    cfg.pattern === 'dots'
+      ? { backgroundImage: `radial-gradient(${dot} 22%, transparent 23%)`, backgroundSize: '6px 6px' }
+      : cfg.pattern === 'grid'
+        ? {
+            backgroundImage: `linear-gradient(${dot} 1px, transparent 1px), linear-gradient(90deg, ${dot} 1px, transparent 1px)`,
+            backgroundSize: '9px 9px',
+          }
+        : cfg.pattern === 'rings'
+          ? { backgroundImage: `repeating-radial-gradient(circle at 50% 48%, ${dot} 0 1px, transparent 1px 9px)` }
+          : {};
+  return (
+    <>
+      {cfg.pattern !== 'none' && (
+        <span
+          style={{
+            position: 'absolute', inset: 0, opacity: cfg.patternOpacity * 0.85,
+            // Mirrors the painter's centre-weighted falloff.
+            WebkitMaskImage: 'radial-gradient(circle at 50% 48%, #000 0%, rgba(0,0,0,0.55) 45%, transparent 100%)',
+            ...pattern,
+          }}
+        />
+      )}
+      {cfg.cardStyle !== 'none' && (
+        <span
+          style={{
+            position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
+            width: '30%', aspectRatio: '1', borderRadius: 4,
+            background: cfg.cardStyle === 'glass' ? 'rgba(255,255,255,0.18)' : '#fff',
+            border: cfg.cardStyle === 'glass' ? '1px solid rgba(255,255,255,0.4)' : 'none',
+            boxShadow: cfg.cardStyle === 'glass' ? 'none' : '0 4px 10px rgba(0,0,0,0.25)',
+          }}
+        />
+      )}
+      {cfg.cardStyle === 'none' && (
+        <span
+          style={{
+            position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
+            width: '34%', height: '9%', borderRadius: 2, background: cfg.textColor, opacity: 0.85,
+          }}
+        />
+      )}
+    </>
+  );
+}
+
 /** A 16:9 thumbnail approximating a template (bg + its text), CSS-rendered. */
 function TemplateThumb({ card, label, onClick }: { card: Card; label: string; onClick: () => void }): JSX.Element {
   return (
     <button type="button" className="tpl-thumb" onClick={onClick} title={`Apply the “${label}” template`}>
       <span className="tpl-thumb-bg" style={bgStyle(card.background)} />
+      {/* Brand cards paint themselves on the canvas rather than through card
+          items, so the thumbnail approximates them in CSS — otherwise every
+          preset in the family would show as a bare gradient. */}
+      {brandThumb(card)}
       {card.items
         .filter((o): o is TextOverlay => o.type === 'text')
         .map((o) => (
@@ -145,9 +206,7 @@ function applyTextTiming(item: TextOverlay, fromMs: number, toMs: number, anim: 
     visibleFrom: fromMs,
     visibleTo: toMs,
     transform,
-    typewriter: anim === 'typewriter'
-      ? { startMs: fromMs, charsPerSecond: Math.max(8, Math.min(60, item.text.length * 4)) }
-      : undefined,
+    typewriter: anim === 'typewriter' ? makeTypewriter(item.text, fromMs, span) : undefined,
   };
 }
 
@@ -207,7 +266,7 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
   const [capturingHero, setCapturingHero] = useState(false);
   // Build each template once per side for the thumbnail previews.
   const templatePreviews = useMemo(
-    () => CARD_TEMPLATES.map((t) => ({ t, preview: buildTemplate(t.id, side === 'outro' ? 'outro' : 'intro') })),
+    () => templatesFor(side).map((t) => ({ t, preview: buildTemplate(t.id, side === 'outro' ? 'outro' : 'intro') })),
     [side],
   );
   const midCards = cards.mid ?? [];
@@ -296,6 +355,39 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
   };
   const setRevealConfig = (next: RevealConfig): void => {
     if (card) rebuildReveal(next, card.durationMs);
+  };
+
+  // --- Brand card (parametric card) -----------------------------------------
+  const brandConfig: BrandCardConfig | null = brandConfigOf(card);
+  const isBrand = brandConfig !== null;
+
+  /** Rewrite the brand card from a config, keeping its identity and timing. */
+  const patchBrand = (patch: Partial<BrandCardConfig>): void => {
+    if (!card || !brandConfig) return;
+    const next = { ...brandConfig, ...patch };
+    setCard({
+      ...card,
+      background: next.background,
+      brandConfig: next,
+    });
+  };
+
+  const pickBrandIcon = async (): Promise<void> => {
+    if (!brandConfig) return;
+    const bridge = window.klipe;
+    if (!bridge?.openImageFile) return;
+    const result = await bridge.openImageFile();
+    if (!result || 'error' in result) return;
+    const img = new Image();
+    img.src = result.dataUrl;
+    await new Promise<void>((resolve) => { img.onload = () => resolve(); img.onerror = () => resolve(); });
+    patchBrand({
+      icon: {
+        src: result.dataUrl,
+        naturalWidth: img.naturalWidth || 512,
+        naturalHeight: img.naturalHeight || 512,
+      },
+    });
   };
 
   /** Toggle the auto-hero: capture the recording's first (intro) / last (outro)
@@ -466,7 +558,7 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
           </div>
 
           {/* DURATION & TRANSITION */}
-          <div className="section-card">
+            <div className="section-card">
             <div className="section-head"><span className="section-title">Duration</span></div>
             <div className="section-body">
               <NumRow
@@ -503,13 +595,25 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
 
           {/* BACKGROUND */}
           <div className="section-card">
-            <div className="section-head"><span className="section-title">Background</span></div>
+            <div className="section-head">
+              <span className="section-title">Background</span>
+            </div>
             <div className="section-body">
               <CardBackground
                 value={card.background}
                 onChange={(bg) => {
-                  if (isReveal && revealConfig) setCard({ ...card, background: bg, revealConfig: { ...revealConfig, background: bg } });
+                  if (isBrand) patchBrand({ background: bg });
+                  else if (isReveal && revealConfig) setCard({ ...card, background: bg, revealConfig: { ...revealConfig, background: bg } });
                   else updateCard({ background: bg });
+                }}
+                onVideoPicked={(src, durationSec) => {
+                  // Size the card to the clip so a finished animation plays end
+                  // to end instead of being cut off or freezing on its last frame.
+                  const ms = Math.round(durationSec * 1000);
+                  updateCard({
+                    background: { type: 'video', src, blur: 0 },
+                    durationMs: Math.max(MIN_CARD_DURATION_MS, Math.min(MAX_CARD_DURATION_MS, ms)),
+                  });
                 }}
               />
               <button
@@ -537,6 +641,155 @@ export default function IntroOutroPanel({ cards, onChange, onAddMidCardAtPlayhea
               </button>
             </div>
           </div>
+
+          {isBrand && brandConfig && (
+            <div className="section-card">
+              <div className="section-head"><span className="section-title">Brand card</span></div>
+              <div className="section-body">
+                <input
+                  className="export-select"
+                  style={{ width: '100%' }}
+                  type="text"
+                  value={brandConfig.cardText}
+                  placeholder="Brand name"
+                  onChange={(e) => patchBrand({ cardText: e.target.value })}
+                />
+                <input
+                  className="export-select"
+                  style={{ width: '100%', marginTop: 6 }}
+                  type="text"
+                  value={brandConfig.cardSubtext}
+                  placeholder="Subtitle (optional)"
+                  onChange={(e) => patchBrand({ cardSubtext: e.target.value })}
+                />
+                <div className="grad-row" style={{ marginTop: 8 }}>
+                  <label>Font</label>
+                  <select
+                    className="export-select"
+                    style={{ flex: 1, fontFamily: fontStackById(resolveFontId(brandConfig.fontFamily)) }}
+                    value={resolveFontId(brandConfig.fontFamily)}
+                    onChange={(e) => patchBrand({ fontFamily: e.target.value })}
+                  >
+                    {FONT_CATEGORIES.map((cat) => (
+                      <optgroup key={cat.id} label={cat.label}>
+                        {FONT_OPTIONS.filter((f) => f.category === cat.id).map((f) => (
+                          <option key={f.id} value={f.id} style={{ fontFamily: f.stack }}>{f.label}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <button type="button" className="upload-btn" style={{ marginTop: 8 }} onClick={() => void pickBrandIcon()}>
+                  <UploadIcon />
+                  <span>{brandConfig.icon ? 'Replace logo' : 'Add logo'}</span>
+                </button>
+                {brandConfig.icon && (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    style={{ marginTop: 6 }}
+                    onClick={() => patchBrand({ icon: undefined })}
+                  >
+                    Remove logo
+                  </button>
+                )}
+                <div className="grad-row" style={{ marginTop: 10 }}>
+                  <label>Text</label>
+                  <input
+                    type="color"
+                    value={brandConfig.textColor}
+                    onChange={(e) => patchBrand({ textColor: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isBrand && brandConfig && (
+            <div className="section-card">
+              <div className="section-head"><span className="section-title">Style</span></div>
+              <div className="section-body">
+                <label className="grad-row" style={{ marginBottom: 6 }}><span>Plate</span></label>
+                <div className="seg-tabs" style={{ marginBottom: 10 }}>
+                  {([['solid', 'Card'], ['glass', 'Glass'], ['none', 'None']] as const).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`seg-tab${brandConfig.cardStyle === id ? ' active' : ''}`}
+                      onClick={() => patchBrand({
+                        cardStyle: id,
+                        // A white plate needs dark copy; without one the copy
+                        // sits on the backdrop and wants to be light. Flip it
+                        // with the plate so no combination lands unreadable.
+                        textColor: id === 'solid' ? '#0b0d12' : '#ffffff',
+                      })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {brandConfig.cardStyle !== 'none' && (
+                  <>
+                    <NumRow
+                      label="Box width"
+                      value={Math.round(brandConfig.padX * 100)}
+                      unit="%"
+                      min={0}
+                      max={45}
+                      step={1}
+                      onChange={(v) => patchBrand({ padX: v / 100 })}
+                    />
+                    <NumRow
+                      label="Box height"
+                      value={Math.round(brandConfig.padY * 100)}
+                      unit="%"
+                      min={0}
+                      max={40}
+                      step={1}
+                      onChange={(v) => patchBrand({ padY: v / 100 })}
+                    />
+                    <p style={{ fontSize: 11, opacity: 0.6, margin: '2px 0 10px' }}>
+                      Space around the logo and copy, so the box grows but never clips them.
+                    </p>
+                  </>
+                )}
+                <label className="grad-row" style={{ marginBottom: 6 }}><span>Pattern</span></label>
+                <div className="seg-tabs">
+                  {([['dots', 'Dots'], ['grid', 'Grid'], ['rings', 'Rings'], ['none', 'None']] as const).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`seg-tab${brandConfig.pattern === id ? ' active' : ''}`}
+                      onClick={() => patchBrand({ pattern: id })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {brandConfig.pattern !== 'none' && (
+                  <>
+                    <div className="grad-row" style={{ marginTop: 10 }}>
+                      <label>Colour</label>
+                      <input
+                        type="color"
+                        value={brandConfig.patternColor}
+                        onChange={(e) => patchBrand({ patternColor: e.target.value })}
+                      />
+                    </div>
+                    <NumRow
+                      label="Strength"
+                      value={Math.round(brandConfig.patternOpacity * 100)}
+                      unit="%"
+                      min={0}
+                      max={100}
+                      step={5}
+                      onChange={(v) => patchBrand({ patternOpacity: v / 100 })}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          )}
 
           {isReveal && revealConfig ? (
             <>
@@ -936,13 +1189,22 @@ function TextBlockEditor({ index, item, durationMs, onChange, onRemove }: TextBl
 // Card background (color | gradient | image), compact
 // ---------------------------------------------------------------------------
 
-function CardBackground({ value, onChange }: { value: Background; onChange: (bg: Background) => void }): JSX.Element {
-  const tab: 'color' | 'gradient' | 'image' =
-    value.type === 'gradient' ? 'gradient' : value.type === 'image' ? 'image' : 'color';
+function CardBackground({ value, onChange, onVideoPicked }: {
+  value: Background;
+  onChange: (bg: Background) => void;
+  /** Fires with the clip's own length so the card can be sized to match it. */
+  onVideoPicked?: (src: string, durationSec: number) => void;
+}): JSX.Element {
+  const tab: 'color' | 'gradient' | 'image' | 'video' =
+    value.type === 'gradient' ? 'gradient'
+      : value.type === 'image' ? 'image'
+        : value.type === 'video' ? 'video' : 'color';
   const color = value.type === 'color' ? value.value : '#0b0d12';
   const from = value.type === 'gradient' ? value.from : '#7c5cff';
   const to = value.type === 'gradient' ? value.to : '#5cc4ff';
   const angle = value.type === 'gradient' && value.angle != null ? value.angle : 135;
+  const videoSrc = value.type === 'video' ? value.src : null;
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
 
   const pickImage = async (): Promise<void> => {
     const bridge = window.klipe;
@@ -952,13 +1214,55 @@ function CardBackground({ value, onChange }: { value: Background; onChange: (bg:
     onChange({ type: 'image', src: result.dataUrl, blur: 0 });
   };
 
+  const readVideo = (file: File | null | undefined): void => {
+    if (!file) return;
+    // Object URL, NOT a data URL: the clip is referenced by a short blob: string
+    // in the document. project.ts persists the bytes to a separate file and
+    // rebuilds this URL on open (readCardVideoMedia / reconstructProject).
+    const url = URL.createObjectURL(file);
+    onChange({ type: 'video', src: url, blur: 0 });
+    // Probe the length so the card can be trimmed to the clip: an ident that
+    // runs 4s inside a 3s card would be cut off mid-animation.
+    const probe = document.createElement('video');
+    probe.preload = 'metadata';
+    probe.onloadedmetadata = () => {
+      const d = probe.duration;
+      if (isFinite(d) && d > 0) onVideoPicked?.(url, d);
+      probe.removeAttribute('src');
+    };
+    probe.src = url;
+  };
+
   return (
     <div className="grad-block">
       <div className="seg-tabs">
         <button className={`seg-tab ${tab === 'color' ? 'active' : ''}`} onClick={() => onChange({ type: 'color', value: color, blur: 0 })}>Color</button>
         <button className={`seg-tab ${tab === 'gradient' ? 'active' : ''}`} onClick={() => onChange({ type: 'gradient', from, to, angle, blur: 0 })}>Gradient</button>
         <button className={`seg-tab ${tab === 'image' ? 'active' : ''}`} onClick={() => void pickImage()}>Image</button>
+        <button className={`seg-tab ${tab === 'video' ? 'active' : ''}`} onClick={() => videoInputRef.current?.click()}>Video</button>
       </div>
+
+      <input
+        ref={videoInputRef}
+        type="file"
+        accept="video/*"
+        style={{ display: 'none' }}
+        onChange={(e) => { readVideo(e.target.files?.[0]); e.target.value = ''; }}
+      />
+
+      {tab === 'video' && (
+        <div style={{ marginTop: 8 }}>
+          <button type="button" className="upload-btn" onClick={() => videoInputRef.current?.click()}>
+            <UploadIcon />
+            <span>{videoSrc ? 'Replace clip' : 'Choose a video…'}</span>
+          </button>
+          <p style={{ fontSize: 11, opacity: 0.6, margin: '6px 0 0' }}>
+            {videoSrc
+              ? 'The card length is matched to the clip. It loops if the card is longer.'
+              : 'Drop in a finished animation (a logo ident, for example) to play as this card.'}
+          </p>
+        </div>
+      )}
 
       {tab === 'color' && (
         <div className="grad-row">

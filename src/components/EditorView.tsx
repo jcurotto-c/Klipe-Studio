@@ -38,7 +38,7 @@ import {
 import { DEFAULT_CAMERA_OPTIONS } from './panels/CameraPanel';
 import { DEFAULT_MOBILE_OPTIONS, migrateMobileOptions } from './panels/MobilePanel';
 import { DEFAULT_CURSOR_OPTIONS } from '../lib/cursor-engine';
-import { DEFAULT_FRAME_OPTIONS, WALLPAPER_PRESETS } from '../lib/renderer';
+import { DEFAULT_FRAME_OPTIONS, WALLPAPER_PRESETS, setPinnedPreviewVideos } from '../lib/renderer';
 import { DEFAULT_AUDIO_FX } from '../lib/sound-fx';
 import { useAudioFx } from '../lib/use-audio-fx';
 import { getPlatform, type PlatformId } from '../lib/platforms';
@@ -84,6 +84,7 @@ import { capturePoster } from '../lib/poster';
 import { releaseFilmstrip } from '../lib/filmstrip';
 import type { Card, CardSet } from '../cards/types';
 import { createMidCard } from '../cards/factories';
+import { brandConfigOf } from '../cards/brand-card';
 import {
   buildCardTimeline,
   resolvePhase,
@@ -501,6 +502,25 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   // frame the transition froze (enter → first frame, exit → last frame).
   const cardLocalMs = cardActive ? phase.localMs : (transition?.localMs ?? 0);
   const hasCards = !!(cards.intro || cards.outro || (cards.mid && cards.mid.length > 0));
+
+  // A brand card paints its own artwork; the canvas needs its config and the
+  // card's length so the logo card can time its own entrance.
+  const cardBrandConfig = useMemo(() => brandConfigOf(visualCard), [visualCard]);
+
+  // Keep every card's video clip decoded and parked on frame 0. A card sits at
+  // the far end of the timeline, so a lazily created element would still be
+  // cold when the playhead reaches it and the card would open on the fallback
+  // fill instead of the clip.
+  useEffect(() => {
+    const srcs: string[] = [];
+    for (const card of [cards.intro, cards.outro, ...(cards.mid ?? [])]) {
+      const bg = card?.background;
+      if (bg?.type === 'video' && bg.src) srcs.push(bg.src);
+      const brandBg = card?.brandConfig?.background;
+      if (brandBg?.type === 'video' && brandBg.src) srcs.push(brandBg.src);
+    }
+    setPinnedPreviewVideos(srcs);
+  }, [cards]);
   // Body output-seconds for the current global playhead. Drives body overlay
   // sampling, audio FX, and source mapping; during a card it freezes at the
   // card's body anchor.
@@ -2078,10 +2098,12 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
               cardTimeMs={cardLocalMs}
               cardTransition={cardTransition}
               cardTransitionAlpha={cardTransitionAlpha}
-              cardEditable={visualCard?.template !== 'reveal'}
+              cardEditable={visualCard?.template !== 'reveal' && visualCard?.template !== 'brand-card'}
               selectedCardItemId={selectedCardItemId}
               onSelectCardItem={handleSelectCardItem}
               onMoveCardItem={handleMoveCardItem}
+              cardBrandConfig={cardBrandConfig}
+              cardDurationMs={visualCard?.durationMs ?? 0}
             />
             <video
               ref={cameraVideoRef}

@@ -185,30 +185,162 @@ export function getCachedImage(src: string | null | undefined): ImageCacheEntry 
 interface BgVideoSlot {
   src: string;
   el: HTMLVideoElement;
+  /** Wall-clock of the last request, for LRU eviction. */
+  usedAt: number;
+  /** Last time asked for by syncPreviewVideoTime, to detect playhead jumps. */
+  lastWant?: number;
 }
-let bgVideoSlot: BgVideoSlot | null = null;
 
 /**
- * Tear down the live-preview bg-video element (pause + drop its src) so its
- * decoder stops. Called when the background changes to a different video, away
- * from video entirely, or has its clip cleared — otherwise the element keeps
- * decoding/playing forever in the background. A no-op when nothing is cached.
+ * Clips that must stay decoded even while nothing is drawing them.
+ *
+ * A card's video sits at the far end of the timeline: created lazily it would
+ * be cold when the card arrives, and the first frames would show the fallback
+ * fill instead of the clip. Pinning keeps it warm and parked on frame 0.
  */
-function releaseBgVideo(): void {
-  if (!bgVideoSlot) return;
+const pinnedVideoSrcs = new Set<string>();
+
+/**
+ * Declare the clips belonging to cards that currently exist. Creates and parks
+ * each one, and exempts it from the idle sweep. Call with the full set — srcs
+ * that drop out are unpinned and reaped normally.
+ */
+export function setPinnedPreviewVideos(srcs: ReadonlyArray<string>): void {
+  pinnedVideoSrcs.clear();
+  for (const src of srcs) {
+    if (!src) continue;
+    pinnedVideoSrcs.add(src);
+    const existed = bgVideoSlots.some((s) => s.src === src);
+    const el = getCachedBgVideo(src);
+    // Park a freshly created element on its first frame rather than letting it
+    // loop unseen in the background. An element already in the pool is left
+    // alone — it may be the body background, which is supposed to be playing.
+    if (el && !existed) {
+      el.loop = false;
+      const park = (): void => { try { el.pause(); el.currentTime = 0; } catch { /* ignore */ } };
+      if (el.readyState >= 1) park();
+      else el.addEventListener('loadedmetadata', park, { once: true });
+    }
+  }
+}
+/**
+ * A SMALL pool, not one slot: a video card in the intro/outro and a video
+ * BODY background are two different clips that both want a live element, and
+ * with a single slot the two tore each other down on every card boundary —
+ * one recreate per frame. Still bounded, because every live element keeps a
+ * decoder alive.
+ */
+const MAX_BG_VIDEO_SLOTS = 3;
+const bgVideoSlots: BgVideoSlot[] = [];
+
+function disposeSlot(slot: BgVideoSlot): void {
   try {
-    bgVideoSlot.el.pause();
-    bgVideoSlot.el.removeAttribute('src');
-    bgVideoSlot.el.load();
+    slot.el.pause();
+    slot.el.removeAttribute('src');
+    slot.el.load();
+    slot.el.remove();
   } catch { /* ignore */ }
-  bgVideoSlot = null;
+}
+
+/** How long a slot may go unrequested before its decoder is torn down. */
+const BG_VIDEO_IDLE_MS = 2000;
+
+/**
+ * Drop the elements nothing has drawn recently, so their decoders stop.
+ *
+ * Idle-based rather than "release everything the body isn't using": a video
+ * CARD and a video BODY background are drawn from different branches, and only
+ * one of them runs on any given frame. A blanket release from the body's
+ * branch would tear the card's element down once per frame — recreating a
+ * decoder every tick — and vice versa. Going by last-use lets both survive
+ * while either is on screen, and still reaps them when the composition stops
+ * using video at all.
+ */
+function sweepBgVideos(): void {
+  const now = performance.now();
+  for (let i = bgVideoSlots.length - 1; i >= 0; i--) {
+    const slot = bgVideoSlots[i]!;
+    if (pinnedVideoSrcs.has(slot.src)) continue;
+    if (now - slot.usedAt < BG_VIDEO_IDLE_MS) continue;
+    disposeSlot(slot);
+    bgVideoSlots.splice(i, 1);
+  }
+}
+
+/**
+ * Park a preview clip at a specific time instead of letting it free-run.
+ *
+ * A looping BODY background is ambient — nobody cares which frame it's on. A
+ * card whose background IS an animation has a beginning and an end, so the
+ * preview has to follow the playhead or the card can't be scrubbed.
+ *
+ * Only corrects when it has drifted past `tolSec`: assigning `currentTime`
+ * every frame re-seeks the decoder and stutters playback. Within tolerance the
+ * element is left to play on its own, which is what keeps it smooth.
+ */
+export function syncPreviewVideoTime(
+  src: string | null | undefined,
+  timeSec: number,
+  playing: boolean,
+): void {
+  if (!src) return;
+  const el = getCachedBgVideo(src);
+  const slot = bgVideoSlots.find((s) => s.src === src);
+  if (!el || !slot) return;
+
+  // A card clip is not wallpaper: it holds its last frame instead of wrapping.
+  // Looping made the tail of the card snap back to frame 0 whenever the card
+  // ran a hair longer than the clip.
+  el.loop = false;
+  const dur = isFinite(el.duration) && el.duration > 0 ? el.duration : Infinity;
+  // Never ask for a time at or past the end — there is no frame there, and the
+  // element reports "not ready", which paints the fallback fill.
+  const want = Math.min(Math.max(0, timeSec), dur - 1 / 60);
+  const prev = slot.lastWant;
+  slot.lastWant = timeSec;
+
+  if (!playing) {
+    if (!el.paused) el.pause();
+    if (el.readyState >= 1 && Math.abs(el.currentTime - want) > 0.02) el.currentTime = want;
+    return;
+  }
+
+  // While playing, re-seek ONLY when the playhead jumped — entering the card,
+  // scrubbing, or restarting. Correcting continuous drift was the stutter: the
+  // element and the global clock advance independently, so a tolerance check
+  // fires every couple of seconds and every seek is a visible hitch.
+  const jumped = prev == null || timeSec < prev - 0.05 || timeSec > prev + 0.4;
+  if (jumped && el.readyState >= 1) el.currentTime = want;
+  // Past the clip's end there is nothing to play; leaving it paused holds the
+  // final frame rather than blanking.
+  if (el.paused && want < dur - 1 / 30) void el.play().catch(() => { /* retried next tick */ });
+}
+
+/**
+ * Tear down every live-preview bg-video element at once. Exported for editor
+ * teardown; the per-frame path uses {@link sweepBgVideos} instead.
+ */
+export function releaseAllBgVideos(): void {
+  for (const slot of bgVideoSlots) disposeSlot(slot);
+  bgVideoSlots.length = 0;
 }
 
 function getCachedBgVideo(src: string | null | undefined): HTMLVideoElement | null {
   if (!src) return null;
-  if (bgVideoSlot && bgVideoSlot.src === src) return bgVideoSlot.el;
-  // Different source (or first use): release the previous element's decoder.
-  releaseBgVideo();
+  const hit = bgVideoSlots.find((s) => s.src === src);
+  if (hit) {
+    hit.usedAt = performance.now();
+    return hit.el;
+  }
+  // Pool full: evict the element nobody has asked for in the longest.
+  if (bgVideoSlots.length >= MAX_BG_VIDEO_SLOTS) {
+    let oldest = 0;
+    for (let i = 1; i < bgVideoSlots.length; i++) {
+      if (bgVideoSlots[i]!.usedAt < bgVideoSlots[oldest]!.usedAt) oldest = i;
+    }
+    disposeSlot(bgVideoSlots[oldest]!);
+    bgVideoSlots.splice(oldest, 1);
+  }
   const el = document.createElement('video');
   el.crossOrigin = 'anonymous';
   el.muted = true;
@@ -217,11 +349,33 @@ function getCachedBgVideo(src: string | null | undefined): HTMLVideoElement | nu
   el.playsInline = true;
   el.preload = 'auto';
   el.src = src;
+  // IN the document, not detached. A <video> that isn't in the DOM decodes,
+  // and drawImage reads from it, but the browser doesn't drive its frame
+  // production on a steady cadence — sampled onto a canvas that shows up as
+  // stutter. The recording's own element is in the DOM, which is exactly why
+  // the body plays smoothly and a detached card clip did not. Off-screen and
+  // 1px rather than display:none, which would suspend rendering again.
+  bgVideoHost().appendChild(el);
   // Autoplay should fire on its own (muted), but call play() too in case a
   // gesture-policy quirk holds it back; ignore the promise rejection.
   void el.play().catch(() => { /* will retry as the loop ticks */ });
-  bgVideoSlot = { src, el };
+  bgVideoSlots.push({ src, el, usedAt: performance.now() });
   return el;
+}
+
+let bgVideoHostEl: HTMLDivElement | null = null;
+
+/** Off-screen container keeping pooled clips attached to the document. */
+function bgVideoHost(): HTMLDivElement {
+  if (bgVideoHostEl && bgVideoHostEl.isConnected) return bgVideoHostEl;
+  const host = document.createElement('div');
+  host.setAttribute('data-klipe-video-pool', '');
+  host.style.cssText =
+    'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;'
+    + 'opacity:0;pointer-events:none;z-index:-1;';
+  document.body.appendChild(host);
+  bgVideoHostEl = host;
+  return host;
 }
 
 function drawCoverSource(
@@ -363,8 +517,17 @@ export function drawCardBackground(
   w: number,
   h: number,
   bg: Background | string | null | undefined,
+  /**
+   * Decoded frame for a `type: 'video'` card background, supplied by the
+   * export pipeline (one VideoFrame per card-local time). Omit in the live
+   * preview — the renderer then drives its own looping <video> element. Same
+   * contract as `RenderFrameOptions.backgroundFrame`: `null` means "video, but
+   * no frame ready" and draws the dark base rather than reaching for the live
+   * element, which would make the export non-deterministic.
+   */
+  frame?: CanvasImageSource | null,
 ): void {
-  drawBackground(ctx, w, h, normalizeBackground(bg));
+  drawBackground(ctx, w, h, normalizeBackground(bg), frame);
 }
 
 /**
@@ -656,15 +819,11 @@ export function renderFrame(
   } else {
     ctx.clearRect(0, 0, cw, ch);
   }
-  // Release the live-preview bg-video decoder whenever this frame doesn't draw
-  // it via the preview path — i.e. the background isn't a video, has no clip, is
-  // hidden by removeBackground, or the caller (export) supplied its own frame.
-  // This is the ONLY release site: it lives in renderFrame, not drawBackground,
-  // so the card-background path (which shares this module slot during a
-  // crossfade) never tears the body's element down. No-op when nothing cached.
-  const usesPreviewBgVideo =
-    normBg.type === 'video' && !!normBg.src && backgroundFrame === undefined && !fOpts.removeBackground;
-  if (!usesPreviewBgVideo) releaseBgVideo();
+  // Reap preview video elements nothing has drawn for a while. A sweep, NOT a
+  // blanket release: card backgrounds can be videos too, and they're drawn from
+  // a different branch than this one, so releasing "everything the body isn't
+  // using" would recreate the card's decoder on every body frame.
+  sweepBgVideos();
 
   // Phone-primary mode: the phone is the recording's main subject. Render
   // the phone frame on the background; skip the screen source, cursor, camera,
