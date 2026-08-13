@@ -19,8 +19,30 @@ function openExternal(url: string): void {
   void window.klipe?.openExternal?.(url);
 }
 
+// What the update row is showing. Distinct from UpdaterStatus['state'] because
+// the button collapses 'available' into 'downloading' (autoDownload is on, so
+// "available" lasts a fraction of a second) and adds 'idle'/'dev', which the
+// main process never emits.
+type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'downloaded' | 'latest' | 'error' | 'dev';
+
+function phaseFromStatus(state: UpdaterStatus['state']): UpdatePhase | null {
+  switch (state) {
+    case 'checking': return 'checking';
+    case 'available':
+    case 'downloading': return 'downloading';
+    case 'downloaded': return 'downloaded';
+    case 'none': return 'latest';
+    case 'error': return 'error';
+    default: return null;
+  }
+}
+
 export default function AboutModal({ onClose }: AboutModalProps): JSX.Element {
   const [version, setVersion] = useState<string>('');
+  const [phase, setPhase] = useState<UpdatePhase>('idle');
+  const [percent, setPercent] = useState(0);
+  const [newVersion, setNewVersion] = useState('');
+  const [installing, setInstalling] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -28,6 +50,56 @@ export default function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     if (p) void p.then((v) => { if (alive) setVersion(v); });
     return () => { alive = false; };
   }, []);
+
+  // Live lifecycle from the main process — the same channel the top banner
+  // listens on, so both stay in sync whichever one started the download.
+  useEffect(() => {
+    const off = window.klipeUpdater?.onStatus?.((s) => {
+      const next = phaseFromStatus(s.state);
+      if (!next) return;
+      setPhase(next);
+      if (s.percent != null) setPercent(s.percent);
+      if (s.version) setNewVersion(s.version);
+    });
+    return () => { off?.(); };
+  }, []);
+
+  // Catch up on whatever the startup check already did. Only the download
+  // phases are replayed: an "up to date" answer from hours ago would be a stale
+  // claim, so the button stays idle and the user can ask for a fresh check.
+  useEffect(() => {
+    let alive = true;
+    const p = window.klipeUpdater?.getStatus?.();
+    if (p) void p.then((s) => {
+      if (!alive || !s) return;
+      if (s.state === 'available' || s.state === 'downloading') {
+        setPhase('downloading');
+        setPercent(s.percent ?? 0);
+      } else if (s.state === 'downloaded') {
+        setPhase('downloaded');
+        setNewVersion(s.version ?? '');
+      }
+    });
+    return () => { alive = false; };
+  }, []);
+
+  async function checkForUpdates(): Promise<void> {
+    setPhase('checking');
+    const result = await window.klipeUpdater?.check?.();
+    if (!result) { setPhase('error'); return; }
+    if (result.dev) { setPhase('dev'); return; }
+    if (!result.ok) { setPhase('error'); return; }
+    // Success: the status events above decide what comes next (latest /
+    // downloading / downloaded), so don't overwrite the phase here.
+  }
+
+  const busy = phase === 'checking' || phase === 'downloading';
+  const note =
+    phase === 'latest' ? 'You are running the latest version'
+      : phase === 'downloaded' ? 'The update installs when the app restarts'
+        : phase === 'error' ? 'Could not reach the update server'
+          : phase === 'dev' ? 'Updates only run in the installed app'
+            : null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose(); };
@@ -65,6 +137,47 @@ export default function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           Built by <span className="about-author-name">{AUTHOR_NAME}</span>
         </p>
 
+        <div className="about-update">
+          {phase === 'downloaded' ? (
+            <button
+              className="about-update-btn is-ready"
+              disabled={installing}
+              onClick={() => {
+                setInstalling(true);
+                void window.klipeUpdater?.quitAndInstall?.();
+              }}
+            >
+              <InstallIcon />
+              <span>
+                {installing
+                  ? 'Restarting…'
+                  : `Restart & install${newVersion ? ` v${newVersion}` : ''}`}
+              </span>
+            </button>
+          ) : (
+            <button
+              className="about-update-btn"
+              disabled={busy}
+              onClick={() => void checkForUpdates()}
+            >
+              <RefreshIcon spinning={phase === 'checking'} />
+              <span>
+                {phase === 'checking'
+                  ? 'Checking for updates…'
+                  : phase === 'downloading'
+                    ? `Downloading update… ${percent}%`
+                    : 'Check for updates'}
+              </span>
+            </button>
+          )}
+          {phase === 'downloading' && (
+            <div className="about-update-bar" role="progressbar" aria-valuenow={percent}>
+              <span style={{ width: `${percent}%` }} />
+            </div>
+          )}
+          {note && <p className="about-update-note">{note}</p>}
+        </div>
+
         <div className="about-links">
           <button className="about-link" onClick={() => openExternal(REPO_URL)}>
             <GitHubIcon />
@@ -91,6 +204,29 @@ export default function AboutModal({ onClose }: AboutModalProps): JSX.Element {
       </div>
     </div>,
     document.body,
+  );
+}
+
+function RefreshIcon({ spinning }: { spinning: boolean }): JSX.Element {
+  return (
+    <svg
+      className={spinning ? 'about-update-spin' : undefined}
+      viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+    >
+      <path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" />
+      <path d="M20.5 4.5V10H15" />
+    </svg>
+  );
+}
+
+function InstallIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 3v11" />
+      <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+      <path d="M4.5 18.5h15" />
+    </svg>
   );
 }
 

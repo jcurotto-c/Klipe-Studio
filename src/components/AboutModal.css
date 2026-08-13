@@ -83,6 +83,73 @@
   font-weight: 600;
 }
 
+/* Manual update row: one button that walks through check → download → install,
+   plus a one-line result note. Mirrors the .about-link shape so it reads as
+   part of the same stack. */
+.about-update {
+  margin: 0 0 14px;
+}
+.about-update-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text-0);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 120ms ease;
+}
+.about-update-btn:hover:not(:disabled) { background: var(--bg-3); border-color: rgba(255, 255, 255, 0.16); }
+.about-update-btn:active:not(:disabled) { transform: scale(0.99); }
+.about-update-btn:disabled { cursor: default; color: var(--text-1); }
+.about-update-btn svg { flex: 0 0 auto; }
+/* Ready to install — solid accent fill, so the label/icon must go dark. */
+.about-update-btn.is-ready {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--bg-0);
+  font-weight: 600;
+}
+.about-update-btn.is-ready:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: transparent;
+  opacity: 0.9;
+}
+.about-update-btn.is-ready:disabled { color: var(--bg-0); opacity: 0.6; }
+
+.about-update-spin { animation: about-update-spin 900ms linear infinite; }
+@keyframes about-update-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.about-update-bar {
+  height: 3px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.about-update-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 200ms ease;
+}
+
+.about-update-note {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
 .about-links {
   display: flex;
   flex-direction: column;

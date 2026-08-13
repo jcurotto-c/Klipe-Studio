@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld('klipeUpdater', {
     return () => ipcRenderer.removeListener('updater:status', listener);
   },
   quitAndInstall: () => ipcRenderer.invoke('update:quit-and-install'),
+  check: () => ipcRenderer.invoke('update:check'),
+  getStatus: () => ipcRenderer.invoke('update:status'),
 });
 
 contextBridge.exposeInMainWorld('klipeCameraPreview', {

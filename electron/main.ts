@@ -575,7 +575,13 @@ function applyGlobalShortcuts(s: GlobalShortcuts): ShortcutRegResult[] {
 // missed; the banner only acts on 'downloading'/'downloaded', which land seconds
 // later once the background download runs.
 type UpdaterState = 'checking' | 'available' | 'downloading' | 'downloaded' | 'none' | 'error';
-function sendUpdaterStatus(payload: { state: UpdaterState; version?: string; percent?: number }): void {
+interface UpdaterStatusPayload { state: UpdaterState; version?: string; percent?: number }
+// Last tick, kept so a late subscriber can catch up: the About modal may open
+// long after the startup check already downloaded an update, and events only
+// reach whoever was listening at the time.
+let lastUpdaterStatus: UpdaterStatusPayload | null = null;
+function sendUpdaterStatus(payload: UpdaterStatusPayload): void {
+  lastUpdaterStatus = payload;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('updater:status', payload);
   }
@@ -1727,6 +1733,26 @@ ipcMain.handle('update:quit-and-install', () => {
   }
   return { ok: true as const };
 });
+
+// On-demand "Check for updates" (the About modal button). The lifecycle
+// listeners are attached once in initAutoUpdate(), so this only kicks off a
+// check — progress and the result still reach the renderer through the same
+// `updater:status` channel the banner uses. In dev there is no app-update.yml,
+// so a check would only throw: report it instead of pretending to look.
+ipcMain.handle('update:check', async () => {
+  if (isDev) return { ok: false as const, dev: true as const };
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { ok: true as const, version: result?.updateInfo?.version };
+  } catch (err) {
+    console.error('[updater] manual check failed:', err);
+    sendUpdaterStatus({ state: 'error' });
+    return { ok: false as const, error: String(err) };
+  }
+});
+
+/** Replay the last updater tick for a renderer that subscribed late. */
+ipcMain.handle('update:status', () => lastUpdaterStatus);
 
 ipcMain.handle('main:show', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
