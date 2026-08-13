@@ -26,7 +26,11 @@ export interface ScreenCapture {
 }
 
 export interface BuildScreenStreamOptions {
-  withMic?: boolean;
+  /**
+   * Microphone device id to record, or null/empty for no mic. 'default' (and,
+   * after a fallback, an id that's gone stale) uses the OS default input.
+   */
+  micDeviceId?: string | null;
   /** Camera device id to record alongside the screen, or null/empty for none. */
   camDeviceId?: string | null;
   /** Mobile (phone-as-video-device) id, or null/empty for none. */
@@ -131,6 +135,39 @@ async function captureWithLegacyGetUserMedia(sourceId: string): Promise<MediaStr
   );
 }
 
+/**
+ * Microphone stream for recording. Tries the device the user picked in the
+ * toolbar first; if that id is stale (unplugged since the HUD enumerated, OS
+ * reinstall changed the ids) falls back to the OS default input rather than
+ * losing the narration — same graceful-degradation pattern as the camera
+ * preview's device fallback.
+ */
+async function acquireMicStream(deviceId: string): Promise<MediaStream | null> {
+  const base = {
+    echoCancellation: false,
+    noiseSuppression: true,
+    autoGainControl: false,
+  };
+  // 'default' is Chromium's pseudo-id for the OS default input — no constraint
+  // needed, and { exact: 'default' } can reject on some machines.
+  if (deviceId && deviceId !== 'default') {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: { ...base, deviceId: { exact: deviceId } },
+        video: false,
+      });
+    } catch (err) {
+      console.warn('[capture] selected microphone unavailable, falling back to default input:', err);
+    }
+  }
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: base, video: false });
+  } catch (err) {
+    console.warn('Microphone unavailable:', err);
+    return null;
+  }
+}
+
 async function acquireCameraStream(deviceId: string): Promise<MediaStream | null> {
   // Recording resolution is higher than the live preview disc — the user can
   // upscale it freely in the editor without softening. Bitrate is tuned for
@@ -154,7 +191,7 @@ async function acquireCameraStream(deviceId: string): Promise<MediaStream | null
 export async function buildScreenStream(
   sourceId: string,
   {
-    withMic = false,
+    micDeviceId = null,
     camDeviceId = null,
     mobileDeviceId = null,
     systemAudio = false,
@@ -172,21 +209,7 @@ export async function buildScreenStream(
     screenStream = await captureWithLegacyGetUserMedia(sourceId);
   }
 
-  let micStream: MediaStream | null = null;
-  if (withMic) {
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: true,
-          autoGainControl: false,
-        },
-        video: false,
-      });
-    } catch (err) {
-      console.warn('Microphone unavailable:', err);
-    }
-  }
+  const micStream = micDeviceId ? await acquireMicStream(micDeviceId) : null;
 
   // System/desktop audio via a separate, dedicated loopback capture.
   const systemAudioStream = systemAudio ? await captureLoopbackAudio(sourceId) : null;

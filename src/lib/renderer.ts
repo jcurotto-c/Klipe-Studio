@@ -4,7 +4,20 @@
  */
 
 import { sampleZoom } from './zoom-engine';
-import { computeInsetRect, CROSS_ASPECT_EPSILON } from './layout';
+import { computeHeaderInsetRect, CROSS_ASPECT_EPSILON } from './layout';
+import {
+  CHROME_BAR_RATIO,
+  WINDOW_RIM,
+  drawWindowChrome,
+  resolveWindowChrome,
+  windowChromeBarRatio,
+} from './window-chrome';
+import {
+  brandHeaderBleed,
+  brandHeaderRatio,
+  drawBrandHeader,
+  resolveBrandHeader,
+} from './brand-header';
 import { cameraShapeAspect } from './camera-shape';
 import { sampleCursor, DEFAULT_CURSOR_OPTIONS } from './cursor-engine';
 import {
@@ -77,9 +90,57 @@ export function computeFramePaddingScale(
   return Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
 }
 
+/**
+ * Window-chrome bar height as a fraction of the card WIDTH, for the current
+ * frame options. Overlays (CropOverlay, BlurOverlay) call this alongside
+ * computeFramePaddingScale so their handles land on the VIDEO, not on the bar.
+ */
+export function computeFrameBarRatio(
+  frame: Partial<FrameOptions> | null | undefined,
+): number {
+  return windowChromeBarRatio(frame?.window);
+}
+
+/**
+ * Brand-header band height as a fraction of the canvas HEIGHT, and the card's
+ * downward bleed in card heights. Overlays call these alongside
+ * computeFramePaddingScale / computeFrameBarRatio for the same reason: the
+ * header pushes the video down, so handles computed without it land high.
+ */
+export function computeFrameHeaderRatio(
+  frame: Partial<FrameOptions> | null | undefined,
+): number {
+  return brandHeaderRatio(frame?.header);
+}
+
+export function computeFrameBleed(
+  frame: Partial<FrameOptions> | null | undefined,
+): number {
+  return brandHeaderBleed(frame?.header);
+}
+
 const CURSOR_BASE_RADIUS = 10;
 const CURSOR_REFERENCE_WIDTH = 1920;
 const CORNER_RADIUS_RATIO = 0.025;
+
+/** Uniform radius, or per-corner `[tl, tr, br, bl]` — what ctx.roundRect takes. */
+type CornerRadii = number | [number, number, number, number];
+
+function hasRadius(r: CornerRadii): boolean {
+  return typeof r === 'number' ? r > 0 : r.some((v) => v > 0);
+}
+
+/** Clip to a rounded rect. No-op when every corner is 0, so an unrounded frame
+ * skips the clip entirely (and keeps the caller's save/restore balanced). */
+function clipRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: CornerRadii,
+): void {
+  if (!hasRadius(r)) return;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.clip();
+}
 
 export interface WallpaperPreset {
   from: string;
@@ -112,13 +173,18 @@ export const IMAGE_PRESETS: Record<string, ImagePreset> = Object.fromEntries(
   wallpaperManifest.map((w: WallpaperManifestEntry) => [w.key, { src: w.src, label: w.label }]),
 );
 
-interface ImageCacheEntry {
+export interface ImageCacheEntry {
   img: HTMLImageElement;
   ready: boolean;
 }
 
 const imageCache = new Map<string, ImageCacheEntry>();
-function getCachedImage(src: string | null | undefined): ImageCacheEntry | null {
+/**
+ * Decode-once cache of `<img>` elements keyed by src. Exported so the camera
+ * compositor can share the same decoded image a wallpaper background already
+ * uses — one decode whether a preset is the video background or the camera one.
+ */
+export function getCachedImage(src: string | null | undefined): ImageCacheEntry | null {
   if (!src) return null;
   const existing = imageCache.get(src);
   if (existing) return existing;
@@ -143,30 +209,162 @@ function getCachedImage(src: string | null | undefined): ImageCacheEntry | null 
 interface BgVideoSlot {
   src: string;
   el: HTMLVideoElement;
+  /** Wall-clock of the last request, for LRU eviction. */
+  usedAt: number;
+  /** Last time asked for by syncPreviewVideoTime, to detect playhead jumps. */
+  lastWant?: number;
 }
-let bgVideoSlot: BgVideoSlot | null = null;
 
 /**
- * Tear down the live-preview bg-video element (pause + drop its src) so its
- * decoder stops. Called when the background changes to a different video, away
- * from video entirely, or has its clip cleared — otherwise the element keeps
- * decoding/playing forever in the background. A no-op when nothing is cached.
+ * Clips that must stay decoded even while nothing is drawing them.
+ *
+ * A card's video sits at the far end of the timeline: created lazily it would
+ * be cold when the card arrives, and the first frames would show the fallback
+ * fill instead of the clip. Pinning keeps it warm and parked on frame 0.
  */
-function releaseBgVideo(): void {
-  if (!bgVideoSlot) return;
+const pinnedVideoSrcs = new Set<string>();
+
+/**
+ * Declare the clips belonging to cards that currently exist. Creates and parks
+ * each one, and exempts it from the idle sweep. Call with the full set — srcs
+ * that drop out are unpinned and reaped normally.
+ */
+export function setPinnedPreviewVideos(srcs: ReadonlyArray<string>): void {
+  pinnedVideoSrcs.clear();
+  for (const src of srcs) {
+    if (!src) continue;
+    pinnedVideoSrcs.add(src);
+    const existed = bgVideoSlots.some((s) => s.src === src);
+    const el = getCachedBgVideo(src);
+    // Park a freshly created element on its first frame rather than letting it
+    // loop unseen in the background. An element already in the pool is left
+    // alone — it may be the body background, which is supposed to be playing.
+    if (el && !existed) {
+      el.loop = false;
+      const park = (): void => { try { el.pause(); el.currentTime = 0; } catch { /* ignore */ } };
+      if (el.readyState >= 1) park();
+      else el.addEventListener('loadedmetadata', park, { once: true });
+    }
+  }
+}
+/**
+ * A SMALL pool, not one slot: a video card in the intro/outro and a video
+ * BODY background are two different clips that both want a live element, and
+ * with a single slot the two tore each other down on every card boundary —
+ * one recreate per frame. Still bounded, because every live element keeps a
+ * decoder alive.
+ */
+const MAX_BG_VIDEO_SLOTS = 3;
+const bgVideoSlots: BgVideoSlot[] = [];
+
+function disposeSlot(slot: BgVideoSlot): void {
   try {
-    bgVideoSlot.el.pause();
-    bgVideoSlot.el.removeAttribute('src');
-    bgVideoSlot.el.load();
+    slot.el.pause();
+    slot.el.removeAttribute('src');
+    slot.el.load();
+    slot.el.remove();
   } catch { /* ignore */ }
-  bgVideoSlot = null;
+}
+
+/** How long a slot may go unrequested before its decoder is torn down. */
+const BG_VIDEO_IDLE_MS = 2000;
+
+/**
+ * Drop the elements nothing has drawn recently, so their decoders stop.
+ *
+ * Idle-based rather than "release everything the body isn't using": a video
+ * CARD and a video BODY background are drawn from different branches, and only
+ * one of them runs on any given frame. A blanket release from the body's
+ * branch would tear the card's element down once per frame — recreating a
+ * decoder every tick — and vice versa. Going by last-use lets both survive
+ * while either is on screen, and still reaps them when the composition stops
+ * using video at all.
+ */
+function sweepBgVideos(): void {
+  const now = performance.now();
+  for (let i = bgVideoSlots.length - 1; i >= 0; i--) {
+    const slot = bgVideoSlots[i]!;
+    if (pinnedVideoSrcs.has(slot.src)) continue;
+    if (now - slot.usedAt < BG_VIDEO_IDLE_MS) continue;
+    disposeSlot(slot);
+    bgVideoSlots.splice(i, 1);
+  }
+}
+
+/**
+ * Park a preview clip at a specific time instead of letting it free-run.
+ *
+ * A looping BODY background is ambient — nobody cares which frame it's on. A
+ * card whose background IS an animation has a beginning and an end, so the
+ * preview has to follow the playhead or the card can't be scrubbed.
+ *
+ * Only corrects when it has drifted past `tolSec`: assigning `currentTime`
+ * every frame re-seeks the decoder and stutters playback. Within tolerance the
+ * element is left to play on its own, which is what keeps it smooth.
+ */
+export function syncPreviewVideoTime(
+  src: string | null | undefined,
+  timeSec: number,
+  playing: boolean,
+): void {
+  if (!src) return;
+  const el = getCachedBgVideo(src);
+  const slot = bgVideoSlots.find((s) => s.src === src);
+  if (!el || !slot) return;
+
+  // A card clip is not wallpaper: it holds its last frame instead of wrapping.
+  // Looping made the tail of the card snap back to frame 0 whenever the card
+  // ran a hair longer than the clip.
+  el.loop = false;
+  const dur = isFinite(el.duration) && el.duration > 0 ? el.duration : Infinity;
+  // Never ask for a time at or past the end — there is no frame there, and the
+  // element reports "not ready", which paints the fallback fill.
+  const want = Math.min(Math.max(0, timeSec), dur - 1 / 60);
+  const prev = slot.lastWant;
+  slot.lastWant = timeSec;
+
+  if (!playing) {
+    if (!el.paused) el.pause();
+    if (el.readyState >= 1 && Math.abs(el.currentTime - want) > 0.02) el.currentTime = want;
+    return;
+  }
+
+  // While playing, re-seek ONLY when the playhead jumped — entering the card,
+  // scrubbing, or restarting. Correcting continuous drift was the stutter: the
+  // element and the global clock advance independently, so a tolerance check
+  // fires every couple of seconds and every seek is a visible hitch.
+  const jumped = prev == null || timeSec < prev - 0.05 || timeSec > prev + 0.4;
+  if (jumped && el.readyState >= 1) el.currentTime = want;
+  // Past the clip's end there is nothing to play; leaving it paused holds the
+  // final frame rather than blanking.
+  if (el.paused && want < dur - 1 / 30) void el.play().catch(() => { /* retried next tick */ });
+}
+
+/**
+ * Tear down every live-preview bg-video element at once. Exported for editor
+ * teardown; the per-frame path uses {@link sweepBgVideos} instead.
+ */
+export function releaseAllBgVideos(): void {
+  for (const slot of bgVideoSlots) disposeSlot(slot);
+  bgVideoSlots.length = 0;
 }
 
 function getCachedBgVideo(src: string | null | undefined): HTMLVideoElement | null {
   if (!src) return null;
-  if (bgVideoSlot && bgVideoSlot.src === src) return bgVideoSlot.el;
-  // Different source (or first use): release the previous element's decoder.
-  releaseBgVideo();
+  const hit = bgVideoSlots.find((s) => s.src === src);
+  if (hit) {
+    hit.usedAt = performance.now();
+    return hit.el;
+  }
+  // Pool full: evict the element nobody has asked for in the longest.
+  if (bgVideoSlots.length >= MAX_BG_VIDEO_SLOTS) {
+    let oldest = 0;
+    for (let i = 1; i < bgVideoSlots.length; i++) {
+      if (bgVideoSlots[i]!.usedAt < bgVideoSlots[oldest]!.usedAt) oldest = i;
+    }
+    disposeSlot(bgVideoSlots[oldest]!);
+    bgVideoSlots.splice(oldest, 1);
+  }
   const el = document.createElement('video');
   el.crossOrigin = 'anonymous';
   el.muted = true;
@@ -175,11 +373,33 @@ function getCachedBgVideo(src: string | null | undefined): HTMLVideoElement | nu
   el.playsInline = true;
   el.preload = 'auto';
   el.src = src;
+  // IN the document, not detached. A <video> that isn't in the DOM decodes,
+  // and drawImage reads from it, but the browser doesn't drive its frame
+  // production on a steady cadence — sampled onto a canvas that shows up as
+  // stutter. The recording's own element is in the DOM, which is exactly why
+  // the body plays smoothly and a detached card clip did not. Off-screen and
+  // 1px rather than display:none, which would suspend rendering again.
+  bgVideoHost().appendChild(el);
   // Autoplay should fire on its own (muted), but call play() too in case a
   // gesture-policy quirk holds it back; ignore the promise rejection.
   void el.play().catch(() => { /* will retry as the loop ticks */ });
-  bgVideoSlot = { src, el };
+  bgVideoSlots.push({ src, el, usedAt: performance.now() });
   return el;
+}
+
+let bgVideoHostEl: HTMLDivElement | null = null;
+
+/** Off-screen container keeping pooled clips attached to the document. */
+function bgVideoHost(): HTMLDivElement {
+  if (bgVideoHostEl && bgVideoHostEl.isConnected) return bgVideoHostEl;
+  const host = document.createElement('div');
+  host.setAttribute('data-klipe-video-pool', '');
+  host.style.cssText =
+    'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;'
+    + 'opacity:0;pointer-events:none;z-index:-1;';
+  document.body.appendChild(host);
+  bgVideoHostEl = host;
+  return host;
 }
 
 function drawCoverSource(
@@ -321,8 +541,17 @@ export function drawCardBackground(
   w: number,
   h: number,
   bg: Background | string | null | undefined,
+  /**
+   * Decoded frame for a `type: 'video'` card background, supplied by the
+   * export pipeline (one VideoFrame per card-local time). Omit in the live
+   * preview — the renderer then drives its own looping <video> element. Same
+   * contract as `RenderFrameOptions.backgroundFrame`: `null` means "video, but
+   * no frame ready" and draws the dark base rather than reaching for the live
+   * element, which would make the export non-deterministic.
+   */
+  frame?: CanvasImageSource | null,
 ): void {
-  drawBackground(ctx, w, h, normalizeBackground(bg));
+  drawBackground(ctx, w, h, normalizeBackground(bg), frame);
 }
 
 /**
@@ -372,9 +601,12 @@ export interface RenderFrameOptions {
   /**
    * Webcam image source. `HTMLVideoElement` in the live editor; `VideoFrame`
    * in the export pipeline (which decodes the recorded camera track via
-   * WebCodecs and feeds the frame matching each output timestamp).
+   * WebCodecs and feeds the frame matching each output timestamp). May also be
+   * an `HTMLCanvasElement` when `cameraOptions.background` replaces the disc's
+   * background — the caller composites it via camera-compositor.ts and passes
+   * the result here; drawCameraOverlay draws it identically.
    */
-  cameraSource?: HTMLVideoElement | VideoFrame | null;
+  cameraSource?: HTMLVideoElement | VideoFrame | HTMLCanvasElement | null;
   cameraOptions?: CameraOptions | null;
   /**
    * Phone-screen image source. `HTMLVideoElement` in the live editor;
@@ -611,15 +843,11 @@ export function renderFrame(
   } else {
     ctx.clearRect(0, 0, cw, ch);
   }
-  // Release the live-preview bg-video decoder whenever this frame doesn't draw
-  // it via the preview path — i.e. the background isn't a video, has no clip, is
-  // hidden by removeBackground, or the caller (export) supplied its own frame.
-  // This is the ONLY release site: it lives in renderFrame, not drawBackground,
-  // so the card-background path (which shares this module slot during a
-  // crossfade) never tears the body's element down. No-op when nothing cached.
-  const usesPreviewBgVideo =
-    normBg.type === 'video' && !!normBg.src && backgroundFrame === undefined && !fOpts.removeBackground;
-  if (!usesPreviewBgVideo) releaseBgVideo();
+  // Reap preview video elements nothing has drawn for a while. A sweep, NOT a
+  // blanket release: card backgrounds can be videos too, and they're drawn from
+  // a different branch than this one, so releasing "everything the body isn't
+  // using" would recreate the card's decoder on every body frame.
+  sweepBgVideos();
 
   // Phone-primary mode: the phone is the recording's main subject. Render
   // the phone frame on the background; skip the screen source, cursor, camera,
@@ -635,10 +863,13 @@ export function renderFrame(
   const sh = source.videoHeight || source.displayHeight || displayHeight;
   if (!sw || !sh) return;
 
-  const sx0 = crop ? crop.x * sw : 0;
-  const sy0 = crop ? crop.y * sh : 0;
-  const swEff = crop ? crop.width * sw : sw;
-  const shEff = crop ? crop.height * sh : sh;
+  // Not const: the brand-header "viewport" zoom below narrows this rect in place
+  // so every downstream source→canvas mapping follows it. The base card rect is
+  // computed from the UNNARROWED values, above that point.
+  let sx0 = crop ? crop.x * sw : 0;
+  let sy0 = crop ? crop.y * sh : 0;
+  let swEff = crop ? crop.width * sw : sw;
+  let shEff = crop ? crop.height * sh : sh;
 
   // The chosen output shape differs from what was recorded (e.g. a 16:9 PC
   // capture rendered into a 9:16 reels frame). Two ways to reconcile it:
@@ -658,6 +889,20 @@ export function renderFrame(
   const crossAspect = Math.abs(canvasAspect - sourceAspect) > CROSS_ASPECT_EPSILON;
   const fillFrame = crossAspect && fitMode === 'fill';
 
+  // Named `winChrome`, not `chrome`: the latter shadows the browser global.
+  const winChrome = resolveWindowChrome(fOpts.window);
+  // Fill mode bleeds past the canvas edges, so the window chrome is skipped
+  // there — the same rule the `chromeFade === 0` branch applies to the card's
+  // shadow and corner radius below.
+  const barRatio = fillFrame ? 0 : CHROME_BAR_RATIO[winChrome.style];
+
+  // The brand header reserves a band off the top of the canvas. Skipped in fill
+  // mode for the same reason as the chrome: the video bleeds past every edge
+  // there, so there is no band left to sit in.
+  const header = resolveBrandHeader(fOpts.header);
+  const headerRatio = fillFrame ? 0 : brandHeaderRatio(header);
+  const headerBleed = fillFrame ? 0 : brandHeaderBleed(header);
+
   let baseX: number;
   let baseY: number;
   let baseW: number;
@@ -672,7 +917,20 @@ export function renderFrame(
     const effectivePadding = paddingScale != null
       ? paddingScale
       : Math.max(0.4, Math.min(1, 1 - (fOpts.padding / 100) * 1.6));
-    ({ baseX, baseY, baseW, baseH } = computeInsetRect(cw, ch, swEff, shEff, effectivePadding));
+    // The chrome bar eats into the vertical margin rather than shrinking the
+    // video. baseX/Y/W/H stays the VIDEO rect, so every zoom branch below is
+    // unchanged in meaning.
+    ({ baseX, baseY, baseW, baseH } = computeHeaderInsetRect(
+      cw, ch, swEff, shEff, effectivePadding, barRatio, headerRatio, headerBleed,
+    ));
+  }
+
+  // Brand header: over the background, under the card. Aligned to the BASE rect
+  // so the headline's left edge lines up with the window's — and because the
+  // base rect is pre-zoom, the header stays put when a zoom comes in. The card
+  // is the thing that moves; page furniture isn't.
+  if (headerRatio > 0) {
+    drawBrandHeader(ctx, baseX, 0, baseW, ch * headerRatio, header);
   }
 
   const { scale: baseScale, cx: baseCx, cy: baseCy, p: zoomP } = sampleZoom(segments, tMs);
@@ -721,13 +979,59 @@ export function renderFrame(
     scale = 1 + (baseScale - 1) * factor;
   }
 
+  // A brand header turns the card into a VIEWPORT. The band above it is page
+  // furniture — a card that grew under zoom would slide up and cover the logo
+  // and the headline — so the card keeps its base rect and the zoom instead
+  // narrows the region of the source it samples. Same picture, but the window
+  // outline stays put and the magnification happens inside it.
+  //
+  // Narrowing the SOURCE rect rather than clipping the drawn one is what keeps
+  // this cheap: the cursor hit-test, the blur regions and the zoom blur all map
+  // through sx0/swEff + drawX/drawW, so they follow with no changes — and a
+  // cursor outside the zoomed viewport correctly stops being drawn instead of
+  // floating over the header.
+  //
+  // Runs BEFORE fcx/fcy so those derive from the FINAL source rect — and stay
+  // `const`, which is what lets the draw branches below narrow them.
+  const innerZoom = headerRatio > 0;
+  if (innerZoom && scale > 1.0001) {
+    const zw = swEff / scale;
+    const zh = shEff / scale;
+    // Same focus choice the breakout branch makes below: the CURSOR when it's
+    // visible, else the zoom centre. The auto-zoom centre is a click-cluster
+    // average and can sit well away from where the pointer ended up — and it
+    // goes null between segments while the ease-out still has scale > 1, which
+    // is precisely when a centre fallback would show.
+    const focusSrcX = cursor.visible ? cursor.x : cx;
+    const focusSrcY = cursor.visible ? cursor.y : cy;
+    // CLAMPED into the crop, never SWAPPED for the centre. A focus that lands
+    // outside — cursor-follow is crop-unaware and its spring overshoots, and the
+    // zoom centre can be null mid-ease — has to slide the viewport to the
+    // nearest edge. Swapping in the centre made the framing jump to the middle
+    // and back on the next frame, which is the tic this replaced.
+    const focusX = focusSrcX == null
+      ? swEff / 2
+      : Math.min(swEff, Math.max(0, focusSrcX - sx0));
+    const focusY = focusSrcY == null
+      ? shEff / 2
+      : Math.min(shEff, Math.max(0, focusSrcY - sy0));
+    // Clamped again on the way out so the viewport never samples past the crop
+    // and lets a black band in.
+    sx0 += Math.min(swEff - zw, Math.max(0, focusX - zw / 2));
+    sy0 += Math.min(shEff - zh, Math.max(0, focusY - zh / 2));
+    swEff = zw;
+    shEff = zh;
+  }
+
   const fcx = cx == null ? null : cx - sx0;
   const fcy = cy == null ? null : cy - sy0;
   const focusInCrop = fcx != null && fcy != null
     && fcx >= 0 && fcx <= swEff && fcy >= 0 && fcy <= shEff;
 
-  let drawW = baseW * scale;
-  let drawH = baseH * scale;
+  // The viewport zoom already lives in the source rect, so the card itself is
+  // drawn at 1:1 — scaling it here is what used to push it over the header.
+  let drawW = innerZoom ? baseW : baseW * scale;
+  let drawH = innerZoom ? baseH : baseH * scale;
   let drawX: number;
   let drawY: number;
   // Cross-aspect 'fit' + an active zoom: let the zoom break OUT of the
@@ -746,11 +1050,20 @@ export function renderFrame(
   // centre) can sit well away from where the cursor actually ended up — that's
   // why a bottom-corner cursor was landing cropped at the edge. Fall back to the
   // zoom focus when the cursor is hidden.
+  // A brand header rules breakout out: breakout is the opposite of the viewport
+  // zoom above (it deliberately grows the card past the canvas edges), and it
+  // would land the video on top of the reserved band. Still gated here rather
+  // than left to the `innerZoom` branch below, because `breakoutZoom` also
+  // decides the chrome fade.
   const breakoutFocusX = cursor.visible ? cursor.x : cx;
   const breakoutFocusY = cursor.visible ? cursor.y : cy;
-  const breakoutZoom = crossAspect && !fillFrame && scale > 1.0001
+  const breakoutZoom = crossAspect && !fillFrame && headerRatio <= 0 && scale > 1.0001
     && breakoutFocusX != null && breakoutFocusY != null;
-  if (breakoutZoom) {
+  if (innerZoom) {
+    // The card never moves: it is exactly where computeHeaderInsetRect put it.
+    drawX = baseX;
+    drawY = baseY;
+  } else if (breakoutZoom) {
     const t = Math.max(0, Math.min(1, zoomP));
     // Focus as a fraction of the visible source, clamped in case it lies in a
     // cropped-out border (the cursor / zoom centre can fall outside the crop) so
@@ -773,15 +1086,20 @@ export function renderFrame(
     // the reference vertical zoom. Interpolating the focus's canvas POSITION
     // against the FIXED contain size keeps it monotonic and on-screen — deriving
     // it from the growing draw size would swing an edge focus off-frame mid-zoom.
-    const restFocusFracX = ((cw - baseW) / 2 + u * baseW) / cw;
-    const restFocusFracY = ((ch - baseH) / 2 + v * baseH) / ch;
+    // Derived from baseX/baseY rather than assuming a canvas-centred rect: a
+    // window-chrome bar pushes the video rect down, so the two are no longer
+    // the same thing (they are identical when there's no bar).
+    const restFocusFracX = (baseX + u * baseW) / cw;
+    const restFocusFracY = (baseY + v * baseH) / ch;
     const focusFracX = restFocusFracX + (0.5 - restFocusFracX) * t;
     const focusFracY = restFocusFracY + (0.5 - restFocusFracY) * t;
     drawX = focusFracX * cw - u * drawW;
     drawY = focusFracY * ch - v * drawH;
   } else if (!focusInCrop) {
-    drawX = (cw - drawW) / 2;
-    drawY = (ch - drawH) / 2;
+    // Centred on the BASE rect, not on the canvas — a chrome bar shifts the
+    // video rect down. Equivalent to (cw - drawW) / 2 when there's no bar.
+    drawX = baseX + (baseW - drawW) / 2;
+    drawY = baseY + (baseH - drawH) / 2;
   } else if (fillFrame) {
     // Fill mode: place the source's focus point at the canvas center, then
     // clamp so the source still covers the canvas. This makes Focus X/Y act
@@ -793,8 +1111,8 @@ export function renderFrame(
     drawY = Math.min(0, Math.max(ch - drawH, drawY));
   } else if (scale === 1) {
     // Contain mode at scale=1: source fits exactly, nothing to pan.
-    drawX = (cw - drawW) / 2;
-    drawY = (ch - drawH) / 2;
+    drawX = baseX + (baseW - drawW) / 2;
+    drawY = baseY + (baseH - drawH) / 2;
   } else {
     const focusBaseX = baseX + (fcx / swEff) * baseW;
     const focusBaseY = baseY + (fcy / shEff) * baseH;
@@ -810,19 +1128,41 @@ export function renderFrame(
   // it's skipped entirely. Breakout grows past the edges as the zoom peaks too —
   // keeping the chrome there would paint a floating-card shadow over the
   // background mid-zoom — so fade it out as the nearest edge crosses the bound.
+  //
+  // A WINDOW is exempt from the breakout fade. The fade exists so a bare card's
+  // shadow doesn't float over the background mid-zoom, but a window is meant to
+  // read as a window: dissolving it is what made the browser bar vanish the
+  // moment a zoom started. Killing breakout instead was the wrong fix — it left
+  // the zoom pinned near the frame centre (a top focus landed at 31% of the
+  // height instead of 11%), which reads as "it zooms to the middle".
   let chromeFade: number;
   if (fillFrame) {
     chromeFade = 0;
-  } else if (breakoutZoom) {
+  } else if (breakoutZoom && barRatio <= 0) {
     const minInset = Math.min(drawX, cw - (drawX + drawW), drawY, ch - (drawY + drawH));
     chromeFade = Math.max(0, Math.min(1, minInset / Math.max(1, 0.04 * Math.min(cw, ch))));
   } else {
     chromeFade = 1;
   }
+  // The window is PART OF THE IMAGE, so the zoom scales it exactly like the
+  // video: the bar's height is a fixed fraction of the card's CURRENT width,
+  // which is the same uniform transform the video gets. Zoom into a corner and
+  // you see that corner of the window, magnified — including the bar scrolling
+  // off the top when you zoom into the video's upper edge.
+  //
+  // `barRatio > 0` already rules out fill mode and breakout, so chromeFade is 1
+  // whenever there's a bar and the chrome never half-dissolves.
+  const barH = barRatio > 0 ? drawW * barRatio : 0;
+  const winX = drawX;
+  const winY = drawY - barH;
+  const winW = drawW;
+  const winH = drawH + barH;
+
   const radius = chromeFade <= 0
     ? 0
-    : Math.min(drawW, drawH) * CORNER_RADIUS_RATIO * radiusScale * chromeFade;
+    : Math.min(winW, winH) * CORNER_RADIUS_RATIO * radiusScale * chromeFade;
 
+  // Cast by the WHOLE card, so there's no shadow seam between bar and video.
   if (fOpts.shadow > 0 && chromeFade > 0) {
     const shadowAlpha = Math.min(0.85, 0.18 + (fOpts.shadow / 100) * 0.7) * chromeFade;
     const shadowBlur = 8 + (fOpts.shadow / 100) * 70;
@@ -833,19 +1173,50 @@ export function renderFrame(
     ctx.shadowOffsetY = shadowOffset;
     ctx.fillStyle = '#000';
     ctx.beginPath();
-    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+    ctx.roundRect(winX, winY, winW, winH, radius);
     ctx.fill();
     ctx.restore();
   }
 
-  ctx.save();
-  if (radius > 0) {
+  // Title bar, clipped to the card so it inherits the rounded TOP corners.
+  if (barH > 0) {
+    ctx.save();
+    ctx.globalAlpha = chromeFade;
     ctx.beginPath();
-    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
+    ctx.roundRect(winX, winY, winW, winH, radius);
     ctx.clip();
+    drawWindowChrome(ctx, winX, winY, winW, barH, winChrome);
+    ctx.restore();
   }
+
+  // The video's TOP corners go square once a bar sits above it: the rounding
+  // belongs to the card, and the bar already owns those two corners.
+  const videoRadii: CornerRadii = barH > 0 ? [0, 0, radius, radius] : radius;
+
+  ctx.save();
+  clipRoundRect(ctx, drawX, drawY, drawW, drawH, videoRadii);
   ctx.drawImage(source, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH);
   ctx.restore();
+
+  // Hairline rim macOS draws around a window. Stroked on the half-pixel so the
+  // 1px line lands on one row instead of straddling two, and scaled with the
+  // card so it stays a hairline at 4K. Drawn over the video's top edge, which
+  // is why it comes after the image rather than with the bar.
+  if (barH > 0) {
+    const rim = Math.max(1, winW * 0.0007);
+    ctx.save();
+    ctx.globalAlpha = chromeFade;
+    ctx.strokeStyle = WINDOW_RIM[winChrome.theme];
+    ctx.lineWidth = rim;
+    ctx.beginPath();
+    ctx.roundRect(
+      winX + rim / 2, winY + rim / 2,
+      winW - rim, winH - rim,
+      Math.max(0, radius - rim / 2),
+    );
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Zoom motion blur — only during transitions, derived deterministically
   // from how fast the zoom scale is changing at this frame. Drawn over the
@@ -860,14 +1231,14 @@ export function renderFrame(
       const fx = focusInCrop ? drawX + (fcx! / swEff) * drawW : drawX + drawW / 2;
       const fy = focusInCrop ? drawY + (fcy! / shEff) * drawH : drawY + drawH / 2;
       applyZoomBlur(ctx, source, {
-        sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius,
+        sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius: videoRadii,
       }, fx, fy, amount);
     }
   }
 
   if (blurRegions && blurRegions.length > 0) {
     applyBlurRegions(ctx, source, blurRegions, tMs, {
-      sw, sh, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius,
+      sw, sh, sx0, sy0, swEff, shEff, drawX, drawY, drawW, drawH, radius: videoRadii,
     });
   }
 
@@ -933,8 +1304,11 @@ interface BlurDrawGeometry {
   drawY: number;
   drawW: number;
   drawH: number;
-  /** Rounded-corner radius of the video frame, for clipping the blur. */
-  radius: number;
+  /**
+   * Corner radii of the video rect. Per-corner `[tl, tr, br, bl]` with the top
+   * squared off when window chrome sits above.
+   */
+  radius: CornerRadii;
 }
 
 let _blurTmpCanvas: HTMLCanvasElement | null = null;
@@ -1039,11 +1413,7 @@ function applyZoomBlur(
   };
 
   ctx.save();
-  if (radius > 0) {
-    ctx.beginPath();
-    ctx.roundRect(drawX, drawY, drawW, drawH, radius);
-    ctx.clip();
-  }
+  clipRoundRect(ctx, drawX, drawY, drawW, drawH, radius);
   for (let i = 1; i <= ghosts; i += 1) {
     const t = i / ghosts;
     const alpha = (0.5 / ghosts) * (1 - t * 0.4) * amount;
@@ -1152,11 +1522,7 @@ function applyBlurRegions(
     // Compose onto the main canvas, clipped to the rounded video frame so
     // the feathered edge can't bleed onto the background.
     ctx.save();
-    if (radius > 0) {
-      ctx.beginPath();
-      ctx.roundRect(drawX, drawY, drawW, drawH, radius);
-      ctx.clip();
-    }
+    clipRoundRect(ctx, drawX, drawY, drawW, drawH, radius);
     ctx.drawImage(tmp, cX, cY, cW, cH);
     ctx.restore();
   }
@@ -1410,7 +1776,7 @@ function cameraSlot(
 
 function drawCameraOverlay(
   ctx: CanvasRenderingContext2D,
-  cameraSource: HTMLVideoElement | VideoFrame | null,
+  cameraSource: HTMLVideoElement | VideoFrame | HTMLCanvasElement | null,
   cameraOptions: CameraOptions | null,
   cw: number,
   ch: number,
@@ -1538,8 +1904,13 @@ function mobileSlot(
  * loaded) the dimensions are stable, and `drawImage` on a seeking
  * video draws the last decoded frame — better than a blank placeholder.
  */
-function videoSourceDims(src: HTMLVideoElement | VideoFrame | null): { w: number; h: number } | null {
+function videoSourceDims(
+  src: HTMLVideoElement | VideoFrame | HTMLCanvasElement | null,
+): { w: number; h: number } | null {
   if (!src) return null;
+  if (src instanceof HTMLCanvasElement) {
+    return src.width > 0 && src.height > 0 ? { w: src.width, h: src.height } : null;
+  }
   if (src instanceof HTMLVideoElement) {
     if (src.videoWidth <= 0 || src.videoHeight <= 0) return null;
     return { w: src.videoWidth, h: src.videoHeight };

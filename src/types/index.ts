@@ -260,11 +260,90 @@ export type Background =
   | BackgroundImage
   | BackgroundVideo;
 
+/**
+ * Fake OS window drawn around the recording.
+ *   - `none`    — no chrome (default)
+ *   - `macos`   — title bar with the red/yellow/green traffic lights
+ *   - `browser` — Safari-like toolbar with a centred address field
+ *   - `windows` — Windows 11 title bar, caption glyphs on the right
+ */
+export type WindowChromeStyle = 'none' | 'macos' | 'browser' | 'windows';
+
+export type WindowChromeTheme = 'dark' | 'light';
+
+export interface WindowChromeOptions {
+  style: WindowChromeStyle;
+  theme: WindowChromeTheme;
+  /** Centred in the title bar. Empty ⇒ buttons only. Unused by `browser`. */
+  title: string;
+  /** Address-bar text, `browser` only. Empty ⇒ an empty address bar. */
+  url?: string;
+}
+
+/** Logo bitmap for the brand header, stored inline as a data URL. */
+export interface BrandHeaderLogo {
+  src: string;
+  naturalWidth: number;
+  naturalHeight: number;
+}
+
+/**
+ * Brand header — a band reserved along the TOP of the canvas holding a logo,
+ * a brand name, a headline and an optional subtitle, with the (optionally
+ * chromed) video card below it. The "Showcase" format in the Frame panel.
+ *
+ * `sizeRel` is DECLARED, never measured from the text: the overlays read the
+ * band height through a pure function (`computeFrameHeaderRatio`) so their
+ * handles land on the video, and a height derived from `measureText` would make
+ * the renderer and the overlays disagree. The content shrinks to fit the band
+ * instead — see `drawBrandHeader` (lib/brand-header).
+ */
+export interface BrandHeaderOptions {
+  enabled: boolean;
+  logo?: BrandHeaderLogo;
+  /** Short name beside the logo. Empty ⇒ the row collapses. */
+  brand: string;
+  /** The big line. Wraps and auto-shrinks to fit the band. */
+  headline: string;
+  /** Secondary line under the headline. Empty ⇒ not drawn. */
+  subtitle: string;
+  /** Text colour, any canvas-accepted CSS colour. */
+  color: string;
+  /** Font id from `FONT_OPTIONS` (overlays/fonts). */
+  fontFamily: string;
+  align: 'left' | 'center';
+  /** Band height ÷ canvas HEIGHT. */
+  sizeRel: number;
+  /** Downward shift of the card, in card heights. 0 ⇒ centred under the band. */
+  bleed: number;
+}
+
 export interface FrameOptions {
   shadow: number;
   radius: number;
   padding: number;
   removeBackground: boolean;
+  /**
+   * Window chrome around the video. Absent ⇒ no chrome, so projects and
+   * localStorage blobs written before this feature load unchanged.
+   *
+   * Never read its members directly: the `{ ...DEFAULT_FRAME_OPTIONS, ...frame }`
+   * merges in the renderer and in EditorView are SHALLOW, so a partially written
+   * object survives them intact. Always normalize through `resolveWindowChrome()`
+   * (lib/window-chrome), and always WRITE a complete object.
+   */
+  window?: WindowChromeOptions;
+  /**
+   * Brand header above the video. Absent ⇒ no header, so older projects and
+   * localStorage blobs load unchanged.
+   *
+   * Same shallow-merge contract as `window`: normalize through
+   * `resolveBrandHeader()` (lib/brand-header) and always WRITE a complete
+   * object. Note EditorView strips `logo` before persisting to localStorage —
+   * the data URL would blow the quota — so a resolved header may legitimately
+   * have no logo even though the project document has one.
+   */
+  header?: BrandHeaderOptions;
 }
 
 export type CameraPosition =
@@ -283,6 +362,21 @@ export type CameraPosition =
  */
 export type CameraShape = 'circle' | 'card' | 'pill';
 
+/**
+ * Replaced background for the webcam disc. Editor-only (preview + export): the
+ * camera is always recorded raw, so this is non-destructive — switch or clear
+ * it any time without touching the recording. The floating disc shown *during*
+ * capture is unaffected.
+ *   - `none`  — the raw camera, real background (default; absent ⇒ none)
+ *   - `blur`  — the person's real background, blurred; `amount` 0..100
+ *   - `image` — a cover-fit image behind the person; `src` is a preset path
+ *               (`./wallpapers/x.png`) or a downscaled data URL (user upload)
+ */
+export type CameraBackground =
+  | { type: 'none' }
+  | { type: 'blur'; amount: number }
+  | { type: 'image'; src: string | null };
+
 export interface CameraOptions {
   hide: boolean;
   position: CameraPosition;
@@ -293,6 +387,8 @@ export interface CameraOptions {
   shape?: CameraShape;
   zoomDifferent: boolean;
   sizeDuringZoom: number;
+  /** Background replacement. Absent → `none` (back-compat with saved projects). */
+  background?: CameraBackground;
 }
 
 /**

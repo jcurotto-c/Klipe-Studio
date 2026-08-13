@@ -575,7 +575,13 @@ function applyGlobalShortcuts(s: GlobalShortcuts): ShortcutRegResult[] {
 // missed; the banner only acts on 'downloading'/'downloaded', which land seconds
 // later once the background download runs.
 type UpdaterState = 'checking' | 'available' | 'downloading' | 'downloaded' | 'none' | 'error';
-function sendUpdaterStatus(payload: { state: UpdaterState; version?: string; percent?: number }): void {
+interface UpdaterStatusPayload { state: UpdaterState; version?: string; percent?: number }
+// Last tick, kept so a late subscriber can catch up: the About modal may open
+// long after the startup check already downloaded an update, and events only
+// reach whoever was listening at the time.
+let lastUpdaterStatus: UpdaterStatusPayload | null = null;
+function sendUpdaterStatus(payload: UpdaterStatusPayload): void {
+  lastUpdaterStatus = payload;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('updater:status', payload);
   }
@@ -1022,6 +1028,31 @@ ipcMain.handle('open-image-file', async () => {
     return { dataUrl: `data:image/${mime};base64,${buf.toString('base64')}`, name: path.basename(filePath) };
   } catch (err) {
     return { error: String(err) };
+  }
+});
+
+// Hands the MediaPipe camera-background assets to the renderer as raw bytes.
+// Production runs from file://, where a renderer fetch() to a local path fails,
+// so the WASM binary and the segmentation model can't be loaded the usual way —
+// the renderer requests them here and wraps the WASM in a blob: URL. The model
+// goes straight into MediaPipe's modelAssetBuffer (no request at all). The
+// loader .js is NOT served here: MediaPipe injects it as a <script src>, which
+// is covered by the CSP's script-src 'self'.
+//
+// Strict literal allow-list — never path.join untrusted input — so this can
+// only ever read the two files the feature ships.
+const ML_ASSETS = new Set(['vision_wasm_internal.wasm', 'selfie_segmenter_landscape.tflite']);
+
+ipcMain.handle('ml:read-asset', async (event, name: string): Promise<Uint8Array | null> => {
+  if (!isTrustedSender(event)) return null;
+  if (typeof name !== 'string' || !ML_ASSETS.has(name)) return null;
+  const base = isDev
+    ? path.join(__dirname, '..', 'public', 'mediapipe')
+    : path.join(__dirname, '..', 'dist', 'mediapipe');
+  try {
+    return await fs.promises.readFile(path.join(base, name));
+  } catch {
+    return null;
   }
 });
 
@@ -1702,6 +1733,26 @@ ipcMain.handle('update:quit-and-install', () => {
   }
   return { ok: true as const };
 });
+
+// On-demand "Check for updates" (the About modal button). The lifecycle
+// listeners are attached once in initAutoUpdate(), so this only kicks off a
+// check — progress and the result still reach the renderer through the same
+// `updater:status` channel the banner uses. In dev there is no app-update.yml,
+// so a check would only throw: report it instead of pretending to look.
+ipcMain.handle('update:check', async () => {
+  if (isDev) return { ok: false as const, dev: true as const };
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { ok: true as const, version: result?.updateInfo?.version };
+  } catch (err) {
+    console.error('[updater] manual check failed:', err);
+    sendUpdaterStatus({ state: 'error' });
+    return { ok: false as const, error: String(err) };
+  }
+});
+
+/** Replay the last updater tick for a renderer that subscribed late. */
+ipcMain.handle('update:status', () => lastUpdaterStatus);
 
 ipcMain.handle('main:show', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {

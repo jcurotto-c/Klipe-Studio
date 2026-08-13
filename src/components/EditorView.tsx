@@ -38,7 +38,7 @@ import {
 import { DEFAULT_CAMERA_OPTIONS } from './panels/CameraPanel';
 import { DEFAULT_MOBILE_OPTIONS, migrateMobileOptions } from './panels/MobilePanel';
 import { DEFAULT_CURSOR_OPTIONS } from '../lib/cursor-engine';
-import { DEFAULT_FRAME_OPTIONS, WALLPAPER_PRESETS } from '../lib/renderer';
+import { DEFAULT_FRAME_OPTIONS, WALLPAPER_PRESETS, setPinnedPreviewVideos } from '../lib/renderer';
 import { DEFAULT_AUDIO_FX } from '../lib/sound-fx';
 import { useAudioFx } from '../lib/use-audio-fx';
 import { getPlatform, type PlatformId } from '../lib/platforms';
@@ -78,11 +78,13 @@ import {
   type CaptionStyle,
 } from '../overlays/captions';
 import { generateCaptions, type CaptionProgress } from '../lib/transcription';
+import { ensureCameraSegmenter, destroyCameraSegmenter } from '../lib/camera-segmenter';
 import { saveProject, saveProjectDoc, saveProjectToLibrary, type EditDocument } from '../lib/project';
 import { capturePoster } from '../lib/poster';
 import { releaseFilmstrip } from '../lib/filmstrip';
 import type { Card, CardSet } from '../cards/types';
 import { createMidCard } from '../cards/factories';
+import { brandConfigOf } from '../cards/brand-card';
 import {
   buildCardTimeline,
   resolvePhase,
@@ -235,6 +237,15 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   const [exportOpen, setExportOpen] = useState(false);
   const [cameraOptions, setCameraOptions] = useState<CameraOptions>(() => initialDoc?.cameraOptions ?? loadCameraOptions());
   const [cameraAvailable, setCameraAvailable] = useState(false);
+
+  // Load the selfie-segmentation model lazily — only once the user actually
+  // picks a replacement background, so viewers who never use it don't pay the
+  // ~11 MB WASM download/parse. Released when the editor unmounts.
+  const cameraBgType = cameraOptions.background?.type ?? 'none';
+  useEffect(() => {
+    if (cameraBgType === 'blur' || cameraBgType === 'image') void ensureCameraSegmenter();
+  }, [cameraBgType]);
+  useEffect(() => () => { destroyCameraSegmenter(); }, []);
   const [cursorOptions, setCursorOptions] = useState<CursorOptions>(() => initialDoc?.cursorOptions ?? loadCursorOptions());
   const [frameOptions, setFrameOptions] = useState<FrameOptions>(() => initialDoc?.frameOptions ?? loadFrameOptions());
   const [audioFxOptions, setAudioFxOptions] = useState<AudioFxOptions>(() => initialDoc?.audioFxOptions ?? loadAudioFxOptions());
@@ -491,6 +502,25 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   // frame the transition froze (enter → first frame, exit → last frame).
   const cardLocalMs = cardActive ? phase.localMs : (transition?.localMs ?? 0);
   const hasCards = !!(cards.intro || cards.outro || (cards.mid && cards.mid.length > 0));
+
+  // A brand card paints its own artwork; the canvas needs its config and the
+  // card's length so the logo card can time its own entrance.
+  const cardBrandConfig = useMemo(() => brandConfigOf(visualCard), [visualCard]);
+
+  // Keep every card's video clip decoded and parked on frame 0. A card sits at
+  // the far end of the timeline, so a lazily created element would still be
+  // cold when the playhead reaches it and the card would open on the fallback
+  // fill instead of the clip.
+  useEffect(() => {
+    const srcs: string[] = [];
+    for (const card of [cards.intro, cards.outro, ...(cards.mid ?? [])]) {
+      const bg = card?.background;
+      if (bg?.type === 'video' && bg.src) srcs.push(bg.src);
+      const brandBg = card?.brandConfig?.background;
+      if (brandBg?.type === 'video' && brandBg.src) srcs.push(brandBg.src);
+    }
+    setPinnedPreviewVideos(srcs);
+  }, [cards]);
   // Body output-seconds for the current global playhead. Drives body overlay
   // sampling, audio FX, and source mapping; during a card it freezes at the
   // card's body anchor.
@@ -1037,8 +1067,17 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
   }, []);
 
   const handleCameraOptionsChange = useCallback((next: CameraOptions) => {
-    setCameraOptions(next);
-    try { localStorage.setItem(CAMERA_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    setCameraOptions(next);   // the project keeps the full src
+    try {
+      // The global default is a STYLE, not an asset: an image data URL here
+      // would blow the ~5 MB localStorage quota (the same reason custom videos
+      // in the background panel live in-session only). Persist the mode without
+      // the src — reopening lands on the image tab with its upload prompt.
+      const forStorage: CameraOptions = next.background?.type === 'image'
+        ? { ...next, background: { type: 'image', src: null } }
+        : next;
+      localStorage.setItem(CAMERA_OPTIONS_KEY, JSON.stringify(forStorage));
+    } catch { /* ignore */ }
   }, []);
 
   const handleMobileOptionsChange = useCallback((next: MobileOptions) => {
@@ -1053,7 +1092,19 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
 
   const handleFrameOptionsChange = useCallback((next: FrameOptions) => {
     setFrameOptions(next);
-    try { localStorage.setItem(FRAME_OPTIONS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    try {
+      // The brand-header logo is an inline data URL, and this runs on EVERY
+      // change — every keystroke in the headline field. Persisting it here would
+      // rewrite hundreds of KB per keypress and can blow the storage quota. It
+      // still round-trips through the project document, which is the only place
+      // it belongs; localStorage only carries "last used settings" for the next
+      // recording, and resolveBrandHeader tolerates a header with no logo.
+      const { header, ...rest } = next;
+      const slim: FrameOptions = header
+        ? { ...rest, header: { ...header, logo: undefined } }
+        : next;
+      localStorage.setItem(FRAME_OPTIONS_KEY, JSON.stringify(slim));
+    } catch { /* ignore */ }
   }, []);
 
   const handleAudioFxOptionsChange = useCallback((next: AudioFxOptions) => {
@@ -2059,10 +2110,12 @@ export default function EditorView({ recording, navExtraEl, initialDoc, projectP
               cardTimeMs={cardLocalMs}
               cardTransition={cardTransition}
               cardTransitionAlpha={cardTransitionAlpha}
-              cardEditable={visualCard?.template !== 'reveal'}
+              cardEditable={visualCard?.template !== 'reveal' && visualCard?.template !== 'brand-card'}
               selectedCardItemId={selectedCardItemId}
               onSelectCardItem={handleSelectCardItem}
               onMoveCardItem={handleMoveCardItem}
+              cardBrandConfig={cardBrandConfig}
+              cardDurationMs={visualCard?.durationMs ?? 0}
             />
             <video
               ref={cameraVideoRef}

@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import type { CameraOptions, CameraPosition, CameraShape } from '../../types';
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import type { CameraBackground, CameraOptions, CameraPosition, CameraShape } from '../../types';
 import { CAMERA_SHAPE_ASPECT, CAMERA_SHAPE_ROUNDNESS } from '../../lib/camera-shape';
+import { IMAGE_PRESETS } from '../../lib/renderer';
+import { isSegmenterReady } from '../../lib/camera-segmenter';
+import { downscaleFile } from '../../lib/image-downscale';
 
 export const CAMERA_POSITIONS: ReadonlyArray<ReadonlyArray<CameraPosition | null>> = [
   ['top-left',     'top-center',    'top-right'],
@@ -17,6 +20,7 @@ export const DEFAULT_CAMERA_OPTIONS: CameraOptions = {
   shape: 'circle',
   zoomDifferent: true,
   sizeDuringZoom: 12,
+  background: { type: 'none' },
 };
 
 /** Size presets (% of canvas width) surfaced by the segmented control. */
@@ -166,6 +170,17 @@ export default function CameraPanel({ value, onChange, available = true }: Camer
       <div className="panel-divider" />
 
       <div className="panel-section">
+        <div className="panel-sublabel">Background</div>
+        <CameraBackgroundSection
+          value={opts.background ?? { type: 'none' }}
+          disabled={opts.hide}
+          onChange={(bg) => update({ background: bg })}
+        />
+      </div>
+
+      <div className="panel-divider" />
+
+      <div className="panel-section">
         <ToggleRow
           label="Mirror camera"
           checked={opts.mirror}
@@ -201,6 +216,222 @@ export default function CameraPanel({ value, onChange, available = true }: Camer
         )}
       </div>
     </div>
+  );
+}
+
+// ── Camera background replacement ───────────────────────────────────────────
+
+type CamBgTab = 'none' | 'blur' | 'image';
+
+const CAM_BG_TABS: ReadonlyArray<{ id: CamBgTab; label: string }> = [
+  { id: 'none',  label: 'None' },
+  { id: 'blur',  label: 'Blur' },
+  { id: 'image', label: 'Image' },
+];
+
+const CAM_BG_CUSTOM_KEY = 'klipe.cameraBackgroundPresets.v1';
+const CAM_BG_DEFAULT_BLUR = 60;
+const CAM_BG_MAX_UPLOAD_W = 1280;
+
+interface CustomBgImage { id: string; src: string; label: string }
+
+function loadCustomBgImages(): CustomBgImage[] {
+  try {
+    const raw = localStorage.getItem(CAM_BG_CUSTOM_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (x): x is CustomBgImage =>
+        !!x && typeof x === 'object'
+        && typeof (x as CustomBgImage).id === 'string'
+        && typeof (x as CustomBgImage).src === 'string'
+        && typeof (x as CustomBgImage).label === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomBgImages(list: CustomBgImage[]): void {
+  try {
+    localStorage.setItem(CAM_BG_CUSTOM_KEY, JSON.stringify(list));
+  } catch {
+    /* storage may be unavailable; ignore */
+  }
+}
+
+interface CameraBackgroundSectionProps {
+  value: CameraBackground;
+  disabled?: boolean;
+  onChange: (next: CameraBackground) => void;
+}
+
+function CameraBackgroundSection({ value, disabled, onChange }: CameraBackgroundSectionProps): JSX.Element {
+  const [customImages, setCustomImages] = useState<CustomBgImage[]>(() => loadCustomBgImages());
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const presetEntries = Object.entries(IMAGE_PRESETS);
+
+  // Poll readiness while a replacement mode is active so the "Preparing…" hint
+  // clears once the model loads (init is fired from EditorView, ~200-400ms).
+  const [ready, setReady] = useState(isSegmenterReady());
+  useEffect(() => {
+    if (value.type === 'none' || ready) return;
+    const id = window.setInterval(() => {
+      if (isSegmenterReady()) { setReady(true); window.clearInterval(id); }
+    }, 200);
+    return () => window.clearInterval(id);
+  }, [value.type, ready]);
+
+  const switchTab = (id: CamBgTab): void => {
+    if (id === 'none') { onChange({ type: 'none' }); return; }
+    if (id === 'blur') {
+      onChange({ type: 'blur', amount: value.type === 'blur' ? value.amount : CAM_BG_DEFAULT_BLUR });
+      return;
+    }
+    const keep = value.type === 'image' ? value.src : null;
+    onChange({ type: 'image', src: keep ?? presetEntries[0]?.[1].src ?? null });
+  };
+
+  const addCustom = (src: string): void => {
+    const item: CustomBgImage = { id: `cbg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, src, label: 'Custom' };
+    setCustomImages((prev) => {
+      const next = [item, ...prev].slice(0, 24);
+      saveCustomBgImages(next);
+      return next;
+    });
+    onChange({ type: 'image', src });
+  };
+
+  const handleFile = (file: File | null | undefined): void => {
+    if (!file) return;
+    downscaleFile(file, CAM_BG_MAX_UPLOAD_W).then(addCustom).catch(() => { /* ignore bad file */ });
+  };
+
+  const removeCustom = (e: React.MouseEvent, item: CustomBgImage): void => {
+    e.stopPropagation();
+    setCustomImages((prev) => {
+      const next = prev.filter((c) => c.id !== item.id);
+      saveCustomBgImages(next);
+      return next;
+    });
+    if (value.type === 'image' && value.src === item.src) {
+      onChange({ type: 'image', src: presetEntries[0]?.[1].src ?? null });
+    }
+  };
+
+  const currentSrc = value.type === 'image' ? value.src : null;
+
+  return (
+    <div className={`cam-bg ${disabled ? 'disabled' : ''}`}>
+      <div className="seg-tabs three cam-bg-tabs">
+        {CAM_BG_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`seg-tab ${value.type === t.id ? 'active' : ''}`}
+            disabled={disabled}
+            aria-pressed={value.type === t.id}
+            onClick={() => switchTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {value.type !== 'none' && !ready && (
+        <div className="cam-bg-hint">Preparing background…</div>
+      )}
+
+      {value.type === 'blur' && (
+        <div className="cam-fine">
+          <SliderField
+            label="Blur amount"
+            value={value.amount}
+            min={0}
+            max={100}
+            step={1}
+            unit="%"
+            disabled={disabled}
+            onChange={(v) => onChange({ type: 'blur', amount: v })}
+            onReset={() => onChange({ type: 'blur', amount: CAM_BG_DEFAULT_BLUR })}
+          />
+        </div>
+      )}
+
+      {value.type === 'image' && (
+        <div className="wallpaper-block">
+          <button
+            type="button"
+            className={`upload-btn ${dragging ? 'dragging' : ''}`}
+            disabled={disabled}
+            onClick={() => inputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e: DragEvent<HTMLButtonElement>) => {
+              e.preventDefault();
+              setDragging(false);
+              handleFile(Array.from(e.dataTransfer.files || []).find((f) => f.type.startsWith('image/')));
+            }}
+          >
+            <UploadIcon />
+            <span>Upload Custom</span>
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => { handleFile(e.target.files?.[0]); e.target.value = ''; }}
+            />
+          </button>
+
+          <div className="wallpaper-grid-pro">
+            {presetEntries.map(([key, p]) => (
+              <button
+                key={key}
+                type="button"
+                className={`wallpaper-swatch-pro image-swatch ${currentSrc === p.src ? 'active' : ''}`}
+                style={{ backgroundImage: `url(${p.src})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+                disabled={disabled}
+                onClick={() => onChange({ type: 'image', src: p.src })}
+                title={p.label || key}
+              />
+            ))}
+            {customImages.map((c) => (
+              <div
+                key={c.id}
+                className={`wallpaper-swatch-pro image-swatch custom-swatch ${currentSrc === c.src ? 'active' : ''}`}
+                style={{ backgroundImage: `url(${c.src})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+                onClick={() => !disabled && onChange({ type: 'image', src: c.src })}
+                title={c.label}
+                role="button"
+              >
+                <button
+                  type="button"
+                  className="custom-swatch-remove"
+                  title="Remove"
+                  aria-label="Remove custom background"
+                  onClick={(e) => removeCustom(e, c)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UploadIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
   );
 }
 

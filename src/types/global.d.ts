@@ -29,11 +29,25 @@ declare global {
     percent?: number;
   }
 
+  /** Outcome of a manual check; the actual progress arrives via `onStatus`. */
+  interface UpdaterCheckResult {
+    ok: boolean;
+    /** Running unpackaged — there is no update feed to query. */
+    dev?: boolean;
+    /** Latest version in the feed (may equal the running one). */
+    version?: string;
+    error?: string;
+  }
+
   interface KlipeUpdaterBridge {
     /** Subscribe to update lifecycle events; returns an unsubscribe fn. */
     onStatus: (cb: (status: UpdaterStatus) => void) => () => void;
     /** Quit and install the downloaded update (relaunches the app). */
     quitAndInstall: () => Promise<{ ok: boolean }>;
+    /** Check the feed now (About modal button); auto-downloads if there's one. */
+    check: () => Promise<UpdaterCheckResult>;
+    /** Last lifecycle tick, or null if nothing has happened yet this session. */
+    getStatus: () => Promise<UpdaterStatus | null>;
   }
 
   interface KlipeCameraPreviewBridge {
@@ -146,6 +160,10 @@ declare global {
     openExternal: (url: string) => Promise<{ ok: boolean }>;
     /** The running app version (e.g. "0.1.0"). */
     getVersion: () => Promise<string>;
+    /** Raw bytes of a bundled MediaPipe asset (WASM/model) by name, or null. */
+    ml: {
+      readAsset: (name: string) => Promise<Uint8Array | null>;
+    };
   }
 
   interface GlobalShortcuts {

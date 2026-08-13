@@ -28,6 +28,7 @@ import {
 import type { ImageOverlay, LineOverlay, Overlay, TextOverlay } from '../types';
 import { fontStack, snapWeight } from '../fonts';
 import { sampleNumber, sampleVec } from './sample';
+import { CARET_CHAR, resolveTypewriter, typewriterText } from './typewriter';
 
 interface OverlayNode {
   overlay: Overlay;
@@ -325,9 +326,15 @@ export class OverlayStage {
       // viewed in 9:16). Measures the FULL text so a typewriter reveal doesn't
       // make the scale jump as characters appear.
       let fit = 1;
+      // The caret occupies a character slot at the end of the line, so it has
+      // to be in the measurement or the finished line can overflow by one cell.
+      const fullForFit = node.typewriterFullText
+        ? node.typewriterFullText
+          + (overlay.type === 'text' && overlay.typewriter && (overlay.typewriter.caret ?? true) ? CARET_CHAR : '')
+        : null;
       const naturalW = node.text
-        ? (node.typewriterFullText
-          ? CanvasTextMetrics.measureText(node.typewriterFullText, node.text.style).width
+        ? (fullForFit
+          ? CanvasTextMetrics.measureText(fullForFit, node.text.style).width
           : node.text.width)
         : (node.sprite ? node.sprite.width : 0);
       const maxW = w * 0.92;
@@ -340,10 +347,20 @@ export class OverlayStage {
       node.blur.enabled = blurStrength > 0.1;
 
       if (node.text && node.typewriterFullText && overlay.type === 'text' && overlay.typewriter) {
-        const elapsed = Math.max(0, tMs - overlay.typewriter.startMs) / 1000;
-        const chars = Math.floor(elapsed * overlay.typewriter.charsPerSecond);
-        const next = node.typewriterFullText.slice(0, chars);
+        const tw = resolveTypewriter(overlay.typewriter);
+        const elapsedMs = Math.max(0, tMs - tw.startMs);
+        const next = typewriterText(node.typewriterFullText, tw, elapsedMs);
         if (node.text.text !== next) node.text.text = next;
+
+        // Hold the line where the FINISHED line will sit, and let characters
+        // fill toward it. Without this a centred block re-centres on every
+        // keystroke, so the whole line creeps leftwards as it types — the one
+        // thing that gives the effect away as an animation rather than typing.
+        const anchor = alignAnchorX(overlay.align);
+        if (anchor !== 0 && fullForFit) {
+          const fullW = CanvasTextMetrics.measureText(fullForFit, node.text.style).width;
+          node.container.x -= (fullW - node.text.width) * anchor * node.container.scale.x;
+        }
       }
     }
 

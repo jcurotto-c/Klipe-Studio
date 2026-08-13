@@ -9,11 +9,14 @@ import type { Card } from './types';
 import { DEFAULT_CARD_DURATION_MS } from './types';
 import { createCard, createCardText, sequenceWindows } from './factories';
 import { buildRevealCard, DEFAULT_REVEAL_CONFIG } from './reveal';
+import { buildBrandCard, BRAND_PRESETS } from './brand-card';
 
 export interface CardTemplate {
   id: string;
   label: string;
   build: (kind: 'intro' | 'outro') => Card;
+  /** Slots this template can be used in. Absent ⇒ all of them. */
+  slots?: ReadonlyArray<'intro' | 'outro' | 'mid'>;
 }
 
 const intro = (k: 'intro' | 'outro', a: string, b: string): string => (k === 'intro' ? a : b);
@@ -92,7 +95,18 @@ export const CARD_TEMPLATES: ReadonlyArray<CardTemplate> = [
       title: intro(kind, DEFAULT_REVEAL_CONFIG.title, 'Thanks for watching'),
     }),
   },
+  // Brand-card family: same painter, different pattern / plate presets.
+  ...BRAND_PRESETS.map((p) => ({
+    id: p.id,
+    label: p.label,
+    build: (kind: 'intro' | 'outro') => buildBrandCard(p.cfg, kind),
+  })),
 ];
+
+/** Templates offered for a given slot. */
+export function templatesFor(slot: 'intro' | 'outro' | 'mid'): ReadonlyArray<CardTemplate> {
+  return CARD_TEMPLATES.filter((t) => !t.slots || t.slots.includes(slot));
+}
 
 export function buildTemplate(id: string, kind: 'intro' | 'outro'): Card {
   const tpl = CARD_TEMPLATES.find((t) => t.id === id);

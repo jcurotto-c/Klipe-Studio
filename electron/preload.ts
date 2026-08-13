@@ -69,6 +69,13 @@ contextBridge.exposeInMainWorld('klipe', {
   },
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
   getVersion: () => ipcRenderer.invoke('app:version'),
+  ml: {
+    // Raw bytes of a bundled MediaPipe asset (WASM binary or model), by name.
+    // Needed because production runs from file:// where a renderer fetch() to a
+    // local path fails. Returns null if the name isn't allow-listed or missing.
+    readAsset: (name: string): Promise<Uint8Array | null> =>
+      ipcRenderer.invoke('ml:read-asset', name),
+  },
 });
 
 contextBridge.exposeInMainWorld('klipeCursorPreview', {
@@ -91,6 +98,8 @@ contextBridge.exposeInMainWorld('klipeUpdater', {
     return () => ipcRenderer.removeListener('updater:status', listener);
   },
   quitAndInstall: () => ipcRenderer.invoke('update:quit-and-install'),
+  check: () => ipcRenderer.invoke('update:check'),
+  getStatus: () => ipcRenderer.invoke('update:status'),
 });
 
 contextBridge.exposeInMainWorld('klipeCameraPreview', {
