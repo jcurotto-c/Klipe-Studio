@@ -9,6 +9,13 @@
  * buffer in; we post back download progress, then the timestamped chunks.
  */
 import { pipeline, env } from '@huggingface/transformers';
+// ORT's WASM runtime as real emitted files. `?url` makes Vite copy them into
+// dist and hand us their hashed paths — see the wasmPaths note below for why
+// that matters. onnxruntime-web is a transitive dep of transformers.js; the
+// specifiers are its documented subpath exports and resolve because pnpm runs
+// with node-linker=hoisted (see pnpm-workspace.yaml).
+import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
+import ortMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 
 // Models come from the Hub (and are cached); never probe the local filesystem.
 env.allowLocalModels = false;
@@ -20,6 +27,18 @@ if (wasm) {
   wasm.numThreads = self.crossOriginIsolated
     ? Math.min(8, Math.max(1, (navigator.hardwareConcurrency ?? 4) - 1))
     : 1;
+  // Left to itself, ORT loads its WASM glue by building a Blob and import()ing
+  // it. That works over http:// (dev) and dies in a packaged build, which runs
+  // from file:// where Chromium refuses to import a blob: URL:
+  //   "no available backend found. ERR: [wasm] TypeError: Failed to fetch
+  //    dynamically imported module: blob:file:///<uuid>"
+  // Pointing at the emitted files skips the blob path entirely. Absolute URLs
+  // are required, hence resolving against the worker's own location.
+  wasm.proxy = false;
+  wasm.wasmPaths = {
+    wasm: new URL(ortWasmUrl, self.location.href).href,
+    mjs: new URL(ortMjsUrl, self.location.href).href,
+  };
 }
 
 const MODEL_ID = 'Xenova/whisper-base';
