@@ -86,7 +86,8 @@
     "files": [
       "dist/**/*",
       "electron-dist/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/onnxruntime-node/**"
     ],
     "asarUnpack": [
       "dist/mediapipe/**"
